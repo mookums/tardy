@@ -15,8 +15,7 @@ const AsyncIoUring = @import("../aio/io_uring.zig").AsyncIoUring;
 const Completion = @import("../aio/completion.zig").Completion;
 
 pub fn Runtime(comptime _aio_type: AsyncIOType) type {
-    _ = _aio_type;
-    //const aio_type: AsyncIOType = comptime if (_aio_type == .auto) auto_async_match() else _aio_type;
+    const aio_type: AsyncIOType = comptime if (_aio_type == .auto) auto_async_match() else _aio_type;
     return struct {
         const Self = @This();
         pub const RuntimeTask = Task(Self);
@@ -36,55 +35,42 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
                 .ms_operation_max = null,
             };
 
-            // temporarily only use the busyloop...
             var aio: AsyncIO = blk: {
-                // this is going out of scope.
-                // needs to be allocated on heap.
-                const busy = try allocator.create(AsyncBusyLoop);
-                busy.* = try AsyncBusyLoop.init(allocator, options);
-                break :blk busy.to_async();
+                switch (comptime aio_type) {
+                    .auto => unreachable,
+                    .io_uring => unreachable,
+                    .epoll => {
+                        var epoll = try allocator.create(AsyncEpoll);
+                        epoll.* = try AsyncEpoll.init(
+                            allocator,
+                            options,
+                        );
+
+                        break :blk epoll.to_async();
+                    },
+                    .busy_loop => {
+                        var busy = try allocator.create(AsyncBusyLoop);
+                        busy.* = try AsyncBusyLoop.init(
+                            allocator,
+                            options,
+                        );
+
+                        break :blk busy.to_async();
+                    },
+                    .custom => |AsyncCustom| {
+                        var custom = try allocator.create(AsyncCustom);
+                        custom.* = try AsyncCustom.init(
+                            allocator,
+                            options,
+                        );
+
+                        break :blk custom.to_async();
+                    },
+                }
             };
 
             // attach the completions
             aio.attach(try allocator.alloc(Completion, max_tasks));
-
-            //const aio: AsyncIO = blk: {
-            //    switch (comptime aio_type) {
-            //        .auto => unreachable,
-            //        .io_uring => {
-            //            var uring = try AsyncIoUring(void).init(
-            //                allocator,
-            //                options,
-            //            );
-
-            //            break :blk uring.to_async();
-            //        },
-            //        .epoll => {
-            //            var epoll = try AsyncEpoll.init(
-            //                allocator,
-            //                options,
-            //            );
-
-            //            break :blk epoll.to_async();
-            //        },
-            //        .busy_loop => {
-            //            var busy = try AsyncBusyLoop.init(
-            //                allocator,
-            //                options,
-            //            );
-
-            //            break :blk busy.to_async();
-            //        },
-            //        .custom => |AsyncCustom| {
-            //            var custom = try AsyncCustom.init(
-            //                allocator,
-            //                options,
-            //            );
-
-            //            break :blk custom.to_async();
-            //        },
-            //    }
-            //};
 
             return .{ .storage = storage, .scheduler = scheduler, .aio = aio };
         }
@@ -131,7 +117,7 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
 
                 // if the task is an AIO one and it has completed,
                 // it is now eligible to run.
-                const completions = try self.aio.reap(0);
+                const completions = try self.aio.reap(1);
                 for (completions) |completion| {
                     const index = completion.task;
                     const task = &self.scheduler.tasks.items[index];

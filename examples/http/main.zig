@@ -4,7 +4,7 @@ const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/http");
 const Pool = @import("../../src/core/pool.zig").Pool;
 
-const Runtime = tardy.Runtime(.busy_loop);
+const Runtime = tardy.Runtime(.epoll);
 const Task = Runtime.RuntimeTask;
 
 const Provision = struct {
@@ -54,6 +54,8 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
+    log.debug("{d} - recv socket fd={d}", .{ std.time.milliTimestamp(), provision.socket });
+
     if (length <= 0) {
         const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
         close_connection(provision_pool, provision);
@@ -66,6 +68,8 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
 fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
+
+    log.debug("{d} - send socket fd={d}", .{ std.time.milliTimestamp(), provision.socket });
 
     if (length <= 0) {
         const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));

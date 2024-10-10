@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Completion = @import("completion.zig").Completion;
+const Result = @import("completion.zig").Result;
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -14,7 +15,6 @@ pub const AsyncEpoll = struct {
     epoll_fd: std.posix.fd_t,
     events: []std.os.linux.epoll_event,
     jobs: Pool(Job),
-    timeout: ?u32,
 
     const Job = struct {
         type: union(enum) {
@@ -26,8 +26,7 @@ pub const AsyncEpoll = struct {
 
         index: usize,
         socket: std.posix.socket_t,
-        context: *anyopaque,
-        time: ?i64,
+        task: usize,
     };
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !Self {
@@ -41,7 +40,6 @@ pub const AsyncEpoll = struct {
             .epoll_fd = epoll_fd,
             .events = events,
             .jobs = jobs,
-            .timeout = options.ms_operation_max,
         };
     }
 
@@ -54,7 +52,7 @@ pub const AsyncEpoll = struct {
 
     pub fn queue_accept(
         self: *AsyncIO,
-        context: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
@@ -62,9 +60,8 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .socket = socket,
-            .context = context,
+            .task = task,
             .type = .accept,
-            .time = null,
         };
 
         var event: std.os.linux.epoll_event = .{
@@ -77,7 +74,7 @@ pub const AsyncEpoll = struct {
 
     pub fn queue_recv(
         self: *AsyncIO,
-        context: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) AsyncIOError!void {
@@ -86,9 +83,8 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .socket = socket,
-            .context = context,
+            .task = task,
             .type = .{ .recv = buffer },
-            .time = null,
         };
 
         var event: std.os.linux.epoll_event = .{
@@ -105,7 +101,7 @@ pub const AsyncEpoll = struct {
 
     pub fn queue_send(
         self: *AsyncIO,
-        context: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) AsyncIOError!void {
@@ -114,9 +110,8 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .socket = socket,
-            .context = context,
+            .task = task,
             .type = .{ .send = buffer },
-            .time = null,
         };
 
         var event: std.os.linux.epoll_event = .{
@@ -129,7 +124,7 @@ pub const AsyncEpoll = struct {
 
     pub fn queue_close(
         self: *AsyncIO,
-        context: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
@@ -137,9 +132,8 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .socket = socket,
-            .context = context,
+            .task = task,
             .type = .close,
-            .time = null,
         };
 
         epoll.remove_fd(socket) catch unreachable;
@@ -159,24 +153,17 @@ pub const AsyncEpoll = struct {
 
     pub fn submit(self: *AsyncIO) AsyncIOError!void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-
-        if (epoll.timeout) |_| {
-            const ms = std.time.milliTimestamp();
-            var iter = epoll.jobs.iterator();
-            while (iter.next()) |job| {
-                if (job.time == null) job.time = ms;
-            }
-        }
+        _ = epoll;
     }
 
-    pub fn reap(self: *AsyncIO) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
         const max_events = @min(epoll.events.len, self.completions.len);
-        const timeout: i32 = if (epoll.timeout) |_| 1 else -1;
         var reaped: usize = 0;
+        var first_run: bool = true;
 
-        while (reaped < 1) {
-            const num_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..max_events], timeout);
+        while (reaped < min or first_run) {
+            const num_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..max_events], 1);
 
             epoll_loop: for (epoll.events[0..num_events]) |event| {
                 const job_index = event.data.u64;
@@ -186,7 +173,7 @@ pub const AsyncEpoll = struct {
 
                 defer if (job_complete) epoll.jobs.release(job_index);
 
-                const result: Completion.Result = blk: {
+                const result: Result = blk: {
                     switch (job.type) {
                         .accept => {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
@@ -257,32 +244,13 @@ pub const AsyncEpoll = struct {
 
                 self.completions[reaped] = .{
                     .result = result,
-                    .context = job.context,
+                    .task = job.task,
                 };
 
                 reaped += 1;
             }
 
-            if (epoll.timeout) |timeout_ms| {
-                const time = std.time.milliTimestamp();
-
-                var iter = epoll.jobs.iterator();
-                while (iter.next()) |job| {
-                    if (reaped >= self.completions.len) break;
-
-                    if (time >= job.time.? + timeout_ms) {
-                        epoll.remove_fd(job.socket) catch unreachable;
-                        epoll.jobs.release(job.index);
-
-                        self.completions[reaped] = .{
-                            .result = .timeout,
-                            .context = job.context,
-                        };
-
-                        reaped += 1;
-                    }
-                }
-            }
+            first_run = false;
         }
 
         return self.completions[0..reaped];
