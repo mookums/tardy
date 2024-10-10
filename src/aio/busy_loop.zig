@@ -18,16 +18,14 @@ pub const AsyncBusyLoop = struct {
             close,
         },
         socket: std.posix.socket_t,
-        context: *anyopaque,
-        time: ?i64,
+        task: usize,
     };
 
     inner: std.ArrayListUnmanaged(Job),
-    timeout: ?u32,
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncBusyLoop {
         const list = try std.ArrayListUnmanaged(Job).initCapacity(allocator, options.size_connections_max);
-        return AsyncBusyLoop{ .inner = list, .timeout = options.ms_operation_max };
+        return AsyncBusyLoop{ .inner = list };
     }
 
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
@@ -37,21 +35,21 @@ pub const AsyncBusyLoop = struct {
 
     pub fn queue_accept(
         self: *AsyncIO,
-        ctx: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+        log.debug("loop capacity: {d}", .{loop.inner.capacity});
         loop.inner.appendAssumeCapacity(.{
             .type = .accept,
             .socket = socket,
-            .context = ctx,
-            .time = null,
+            .task = task,
         });
     }
 
     pub fn queue_recv(
         self: *AsyncIO,
-        ctx: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) AsyncIOError!void {
@@ -59,14 +57,13 @@ pub const AsyncBusyLoop = struct {
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .recv = buffer },
             .socket = socket,
-            .context = ctx,
-            .time = null,
+            .task = task,
         });
     }
 
     pub fn queue_send(
         self: *AsyncIO,
-        ctx: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) AsyncIOError!void {
@@ -74,60 +71,37 @@ pub const AsyncBusyLoop = struct {
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .send = buffer },
             .socket = socket,
-            .context = ctx,
-            .time = null,
+            .task = task,
         });
     }
 
     pub fn queue_close(
         self: *AsyncIO,
-        ctx: *anyopaque,
+        task: usize,
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .close,
             .socket = socket,
-            .context = ctx,
-            .time = null,
+            .task = task,
         });
     }
 
     pub fn submit(self: *AsyncIO) AsyncIOError!void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        if (loop.timeout) |_| {
-            const ms = std.time.milliTimestamp();
-            for (loop.inner.items) |*job| {
-                if (job.time == null) job.time = ms;
-            }
-        }
+        _ = loop;
     }
 
-    pub fn reap(self: *AsyncIO) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
 
-        while (reaped < 1) {
+        while (reaped <= min) {
             var i: usize = 0;
 
-            const time = std.time.milliTimestamp();
             while (i < loop.inner.items.len and reaped < self.completions.len) : (i += 1) {
                 const job = loop.inner.items[i];
-
-                // Handle timeouts first.
-                if (loop.timeout) |timeout_ms| {
-                    assert(job.time != null);
-
-                    if (time >= job.time.? + timeout_ms) {
-                        const com_ptr = &self.completions[reaped];
-                        com_ptr.result = .timeout;
-                        com_ptr.context = job.context;
-                        _ = loop.inner.swapRemove(i);
-                        i -|= 1;
-                        reaped += 1;
-                        continue;
-                    }
-                }
 
                 switch (job.type) {
                     .accept => {
@@ -155,7 +129,7 @@ pub const AsyncBusyLoop = struct {
                         };
 
                         com_ptr.result = .{ .socket = res };
-                        com_ptr.context = job.context;
+                        com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;
@@ -179,7 +153,7 @@ pub const AsyncBusyLoop = struct {
                         };
 
                         com_ptr.result = .{ .value = @intCast(len) };
-                        com_ptr.context = job.context;
+                        com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;
@@ -203,7 +177,7 @@ pub const AsyncBusyLoop = struct {
                         };
 
                         com_ptr.result = .{ .value = @intCast(len) };
-                        com_ptr.context = job.context;
+                        com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;
@@ -213,7 +187,7 @@ pub const AsyncBusyLoop = struct {
                         const com_ptr = &self.completions[reaped];
                         std.posix.close(job.socket);
                         com_ptr.result = .{ .value = 0 };
-                        com_ptr.context = job.context;
+                        com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;

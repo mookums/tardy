@@ -12,59 +12,76 @@ const AsyncIOOptions = @import("../aio/lib.zig").AsyncIOOptions;
 const AsyncBusyLoop = @import("../aio/busy_loop.zig").AsyncBusyLoop;
 const AsyncEpoll = @import("../aio/epoll.zig").AsyncEpoll;
 const AsyncIoUring = @import("../aio/io_uring.zig").AsyncIoUring;
+const Completion = @import("../aio/completion.zig").Completion;
 
-fn Runtime(comptime _aio_type: AsyncIOType) type {
-    const aio_type: AsyncIOType = comptime if (_aio_type == .auto) auto_async_match() else _aio_type;
+pub fn Runtime(comptime _aio_type: AsyncIOType) type {
+    _ = _aio_type;
+    //const aio_type: AsyncIOType = comptime if (_aio_type == .auto) auto_async_match() else _aio_type;
     return struct {
         const Self = @This();
-        scheduler: Scheduler,
+        pub const RuntimeTask = Task(Self);
+        const RuntimeScheduler = Scheduler(Self);
+        scheduler: RuntimeScheduler,
         aio: AsyncIO,
 
-        pub fn init(allocator: std.mem.Allocator, size: usize) !Runtime {
-            const scheduler: Scheduler = Scheduler.init(allocator, size);
+        pub fn init(allocator: std.mem.Allocator, max_tasks: usize) !Self {
+            const scheduler: RuntimeScheduler = try RuntimeScheduler.init(allocator, max_tasks);
 
             const options: AsyncIOOptions = .{
-                .size_connections_max = size,
-                .size_completions_reap_max = size,
+                .size_connections_max = @intCast(max_tasks),
+                .size_completions_reap_max = @intCast(max_tasks),
+                .ms_operation_max = null,
             };
 
-            const aio: AsyncIO = blk: {
-                switch (comptime aio_type) {
-                    .auto => unreachable,
-                    .io_uring => {
-                        var uring = try AsyncIoUring(void).init(
-                            allocator,
-                            options,
-                        );
-
-                        break :blk uring.to_async();
-                    },
-                    .epoll => {
-                        var epoll = try AsyncEpoll.init(
-                            allocator,
-                            options,
-                        );
-
-                        break :blk epoll.to_async();
-                    },
-                    .busy_loop => {
-                        var busy = try AsyncBusyLoop.init(
-                            allocator,
-                            options,
-                        );
-
-                        break :blk busy.to_async();
-                    },
-                    .custom => |AsyncCustom| {
-                        var custom = try AsyncCustom.init(
-                            allocator,
-                            options,
-                        );
-
-                        break :blk custom.to_async();
-                    },
-                }
+            // temporarily only use the busyloop...
+            var aio: AsyncIO = blk: {
+                // this is going out of scope.
+                // needs to be allocated on heap.
+                const busy = try allocator.create(AsyncBusyLoop);
+                busy.* = try AsyncBusyLoop.init(allocator, options);
+                break :blk busy.to_async();
             };
+
+            // attach the completions
+            aio.attach(try allocator.alloc(Completion, max_tasks));
+
+            //const aio: AsyncIO = blk: {
+            //    switch (comptime aio_type) {
+            //        .auto => unreachable,
+            //        .io_uring => {
+            //            var uring = try AsyncIoUring(void).init(
+            //                allocator,
+            //                options,
+            //            );
+
+            //            break :blk uring.to_async();
+            //        },
+            //        .epoll => {
+            //            var epoll = try AsyncEpoll.init(
+            //                allocator,
+            //                options,
+            //            );
+
+            //            break :blk epoll.to_async();
+            //        },
+            //        .busy_loop => {
+            //            var busy = try AsyncBusyLoop.init(
+            //                allocator,
+            //                options,
+            //            );
+
+            //            break :blk busy.to_async();
+            //        },
+            //        .custom => |AsyncCustom| {
+            //            var custom = try AsyncCustom.init(
+            //                allocator,
+            //                options,
+            //            );
+
+            //            break :blk custom.to_async();
+            //        },
+            //    }
+            //};
 
             return .{ .scheduler = scheduler, .aio = aio };
         }
@@ -73,27 +90,45 @@ fn Runtime(comptime _aio_type: AsyncIOType) type {
             _ = self;
         }
 
-        pub fn spawn(self: *Self, task: Task) void {
-            try self.scheduler.spawn(task);
+        pub fn accept(self: *Self, socket: std.posix.socket_t, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {
+            // we need to
+            // 1. spawn a job within the scheduler with the accept task
+            // 2. queue an accept with the aio with this jobs index as the idnex
+            const index = try self.scheduler.spawn(task_fn, task_ctx, .waiting);
+            try self.aio.queue_accept(index, socket);
         }
 
-        pub fn run(self: *Self) noreturn {
+        pub fn spawn(self: *Self, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {
+            _ = try self.scheduler.spawn(task_fn, task_ctx, .runnable);
+        }
+
+        pub fn run(self: *Self) !noreturn {
             const running = true;
             while (running) {
-                try self.aio.submit();
-
                 var iter = self.scheduler.tasks.iterator();
                 while (iter.next_ptr()) |task| {
-                    if (task.predicate()) {
+                    if (task.state == .runnable) {
                         // run task
-                        @call(.auto, task.func, .{task.context});
+                        @call(.auto, task.func, .{ self, task, task.context });
 
                         // release task from pool.
+                        task.state = .dead;
                         self.scheduler.release(task.index);
                     }
                 }
 
-                const completions = self.aio.reap();
+                try self.aio.submit();
+
+                // if the task is an AIO one and it has completed,
+                // it is now eligible to run.
+                const completions = try self.aio.reap(0);
+                for (completions) |completion| {
+                    const index = completion.task;
+                    const task = &self.scheduler.tasks.items[index];
+                    assert(task.state == .waiting);
+                    task.state = .runnable;
+                    task.result = completion.result;
+                }
             }
         }
     };

@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    _ = tardy;
+    add_example(b, "basic", target, optimize, tardy);
 
     const tests = b.addTest(.{
         .name = "tests",
@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_test.step);
 }
 
-fn addExample(
+fn add_example(
     b: *std.Build,
     name: []const u8,
     target: std.Build.ResolvedTarget,

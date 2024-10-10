@@ -1,7 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
-const Socket = @import("../core/socket.zig").Socket;
 const Completion = @import("completion.zig").Completion;
 
 pub const AsyncIOType = union(enum) {
@@ -91,31 +90,31 @@ pub const AsyncIO = struct {
 
     _queue_accept: *const fn (
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
     ) AsyncIOError!void,
 
     _queue_recv: *const fn (
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
         buffer: []u8,
     ) AsyncIOError!void,
 
     _queue_send: *const fn (
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
         buffer: []const u8,
     ) AsyncIOError!void,
 
     _queue_close: *const fn (
         self: *AsyncIO,
-        context: *anyopaque,
+        task: usize,
         fd: std.posix.fd_t,
     ) AsyncIOError!void,
 
-    _reap: *const fn (self: *AsyncIO) AsyncIOError![]Completion,
+    _reap: *const fn (self: *AsyncIO, min: usize) AsyncIOError![]Completion,
     _submit: *const fn (self: *AsyncIO) AsyncIOError!void,
 
     /// This provides the completions that the backend will utilize when
@@ -135,45 +134,45 @@ pub const AsyncIO = struct {
 
     pub fn queue_accept(
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_accept, .{ self, context, socket });
+        try @call(.auto, self._queue_accept, .{ self, task, socket });
     }
 
     pub fn queue_recv(
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
         buffer: []u8,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_recv, .{ self, context, socket, buffer });
+        try @call(.auto, self._queue_recv, .{ self, task, socket, buffer });
     }
 
     pub fn queue_send(
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
         buffer: []const u8,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_send, .{ self, context, socket, buffer });
+        try @call(.auto, self._queue_send, .{ self, task, socket, buffer });
     }
 
     pub fn queue_close(
         self: *AsyncIO,
-        context: *anyopaque,
-        socket: Socket,
+        task: usize,
+        socket: std.posix.socket_t,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_close, .{ self, context, socket });
+        try @call(.auto, self._queue_close, .{ self, task, socket });
     }
 
-    pub fn reap(self: *AsyncIO) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
         assert(self.attached);
-        return try @call(.auto, self._reap, .{self});
+        return try @call(.auto, self._reap, .{ self, min });
     }
 
     pub fn submit(self: *AsyncIO) AsyncIOError!void {
