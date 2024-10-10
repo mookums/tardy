@@ -73,9 +73,6 @@ pub const AsyncIOOptions = struct {
     size_connections_max: u16,
     /// Maximum number of completions reaped.
     size_completions_reap_max: u16,
-    /// Maximum length of time before operation is timed out.
-    /// null if no timeout
-    ms_operation_max: ?u32,
 };
 
 pub const AsyncIO = struct {

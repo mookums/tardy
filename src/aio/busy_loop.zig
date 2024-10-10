@@ -1,26 +1,16 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const log = std.log.scoped(.@"tardy/aio/busy_loop");
+
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
-
-const log = std.log.scoped(.@"tardy/async/busy_loop");
+const Job = @import("job.zig").Job;
 
 pub const AsyncBusyLoop = struct {
-    pub const Job = struct {
-        type: union(enum) {
-            accept,
-            recv: []u8,
-            send: []const u8,
-            close,
-        },
-        socket: std.posix.socket_t,
-        task: usize,
-    };
-
     inner: std.ArrayListUnmanaged(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncBusyLoop {

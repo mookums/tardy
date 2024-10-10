@@ -1,11 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const log = std.log.scoped(.@"tardy/aio/io_uring");
+
 const Completion = @import("completion.zig").Completion;
+
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
-
-const log = std.log.scoped(.@"tardy/async/io_uring");
 
 pub fn AsyncIoUring(comptime Provision: type) type {
     return struct {

@@ -32,7 +32,6 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
             const options: AsyncIOOptions = .{
                 .size_connections_max = @intCast(max_tasks),
                 .size_completions_reap_max = @intCast(max_tasks),
-                .ms_operation_max = null,
             };
 
             var aio: AsyncIO = blk: {

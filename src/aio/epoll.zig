@@ -1,13 +1,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const log = std.log.scoped(.@"tardy/aio/epoll");
+
 const Completion = @import("completion.zig").Completion;
 const Result = @import("completion.zig").Result;
+
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
+const Job = @import("job.zig").Job;
 const Pool = @import("../core/pool.zig").Pool;
-
-const log = std.log.scoped(.@"tardy/async/epoll");
 
 pub const AsyncEpoll = struct {
     const Self = @This();
@@ -15,19 +17,6 @@ pub const AsyncEpoll = struct {
     epoll_fd: std.posix.fd_t,
     events: []std.os.linux.epoll_event,
     jobs: Pool(Job),
-
-    const Job = struct {
-        type: union(enum) {
-            accept,
-            recv: []u8,
-            send: []const u8,
-            close,
-        },
-
-        index: usize,
-        socket: std.posix.socket_t,
-        task: usize,
-    };
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !Self {
         const epoll_fd = try std.posix.epoll_create1(0);
