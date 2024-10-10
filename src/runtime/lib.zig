@@ -34,35 +34,28 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
                 .size_completions_reap_max = @intCast(max_tasks),
             };
 
+            log.debug("aio backend: {s}", .{@tagName(aio_type)});
             var aio: AsyncIO = blk: {
                 switch (comptime aio_type) {
                     .auto => unreachable,
-                    .io_uring => unreachable,
+                    .io_uring => {
+                        var uring = try allocator.create(AsyncIoUring);
+                        uring.* = try AsyncIoUring.init(allocator, options);
+                        break :blk uring.to_async();
+                    },
                     .epoll => {
                         var epoll = try allocator.create(AsyncEpoll);
-                        epoll.* = try AsyncEpoll.init(
-                            allocator,
-                            options,
-                        );
-
+                        epoll.* = try AsyncEpoll.init(allocator, options);
                         break :blk epoll.to_async();
                     },
                     .busy_loop => {
                         var busy = try allocator.create(AsyncBusyLoop);
-                        busy.* = try AsyncBusyLoop.init(
-                            allocator,
-                            options,
-                        );
-
+                        busy.* = try AsyncBusyLoop.init(allocator, options);
                         break :blk busy.to_async();
                     },
                     .custom => |AsyncCustom| {
                         var custom = try allocator.create(AsyncCustom);
-                        custom.* = try AsyncCustom.init(
-                            allocator,
-                            options,
-                        );
-
+                        custom.* = try AsyncCustom.init(allocator, options);
                         break :blk custom.to_async();
                     },
                 }
@@ -114,15 +107,18 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
 
                 try self.aio.submit();
 
-                // if the task is an AIO one and it has completed,
-                // it is now eligible to run.
-                const completions = try self.aio.reap(1);
+                // If we don't have any runnable tasks, we just want to wait for an Async I/O.
+                // Otherwise, we want to just reap whatever completion we have and continue running.
+                const wait_for_io: usize = @intFromBool(self.scheduler.runnable.count() == 0);
+                log.debug("Wait for I/O: {d}", .{wait_for_io});
+
+                const completions = try self.aio.reap(wait_for_io);
                 for (completions) |completion| {
                     const index = completion.task;
                     const task = &self.scheduler.tasks.items[index];
                     assert(task.state == .waiting);
-                    task.state = .runnable;
                     task.result = completion.result;
+                    self.scheduler.set_runnable(index);
                 }
             }
         }

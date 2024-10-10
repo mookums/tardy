@@ -152,7 +152,7 @@ pub const AsyncEpoll = struct {
         var first_run: bool = true;
 
         while (reaped < min or first_run) {
-            const num_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..max_events], 1);
+            const num_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..max_events], -1);
 
             epoll_loop: for (epoll.events[0..num_events]) |event| {
                 const job_index = event.data.u64;

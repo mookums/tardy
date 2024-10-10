@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/basic");
 
-const Runtime = tardy.Runtime(.busy_loop);
+const Runtime = tardy.Runtime(.auto);
 const Task = Runtime.RuntimeTask;
 
 fn log_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {

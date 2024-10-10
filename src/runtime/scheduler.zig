@@ -12,12 +12,21 @@ pub fn Scheduler(comptime Runtime: type) type {
         const Self = @This();
         allocator: std.mem.Allocator,
         tasks: Pool(RuntimeTask),
+        runnable: std.DynamicBitSetUnmanaged,
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
                 .allocator = allocator,
                 .tasks = try Pool(RuntimeTask).init(allocator, size, null, null),
+                .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             };
+        }
+
+        pub fn set_runnable(self: *Self, index: usize) void {
+            assert(!self.runnable.isSet(index));
+            const task: *RuntimeTask = &self.tasks.items[index];
+            task.state = .runnable;
+            self.runnable.set(index);
         }
 
         /// Spawns a Task by adding it into the scheduler pool.
@@ -31,18 +40,15 @@ pub fn Scheduler(comptime Runtime: type) type {
                 .context = task_ctx,
             };
 
+            if (task_state == .runnable) self.set_runnable(borrowed.index);
+
             return borrowed.index;
         }
 
         pub fn release(self: *Self, index: usize) void {
+            assert(self.runnable.isSet(index));
+            self.runnable.unset(index);
             self.tasks.release(index);
-        }
-
-        /// Get the next Task that has been scheduled.
-        /// Returns null if it has not been scheduled.
-        pub fn next(self: *Self) ?*RuntimeTask {
-            var iter = self.tasks.iterator();
-            return iter.next();
         }
     };
 }

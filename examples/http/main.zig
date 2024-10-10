@@ -4,7 +4,7 @@ const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/http");
 const Pool = @import("../../src/core/pool.zig").Pool;
 
-const Runtime = tardy.Runtime(.epoll);
+const Runtime = tardy.Runtime(.auto);
 const Task = Runtime.RuntimeTask;
 
 const Provision = struct {

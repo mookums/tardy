@@ -12,7 +12,7 @@ pub fn Pool(comptime T: type) type {
     return struct {
         const Iterator = struct {
             items: []T,
-            inner: std.DynamicBitSet.Iterator(.{}),
+            inner: std.DynamicBitSetUnmanaged.Iterator(.{}),
 
             pub fn next(self: *Iterator) ?T {
                 const index = self.inner.next() orelse return null;
@@ -29,7 +29,7 @@ pub fn Pool(comptime T: type) type {
         allocator: std.mem.Allocator,
         // Buffer for the Pool.
         items: []T,
-        dirty: std.DynamicBitSet,
+        dirty: std.DynamicBitSetUnmanaged,
 
         /// Initalizes our items buffer as undefined.
         pub fn init(
@@ -42,7 +42,7 @@ pub fn Pool(comptime T: type) type {
             const self = Self{
                 .allocator = allocator,
                 .items = items,
-                .dirty = try std.DynamicBitSet.initEmpty(allocator, size),
+                .dirty = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             };
 
             if (init_hook) |hook| {
@@ -63,7 +63,7 @@ pub fn Pool(comptime T: type) type {
             }
 
             self.allocator.free(self.items);
-            self.dirty.deinit();
+            self.dirty.deinit(self.allocator);
         }
 
         fn get(self: Self, index: usize) T {
