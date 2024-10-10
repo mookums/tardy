@@ -77,19 +77,18 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    //log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
     rt.recv(provision.socket, provision.buffer, recv_task, ctx) catch unreachable;
 }
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
     const size = 1024;
-    var runtime = try Runtime.init(allocator, size);
-    defer runtime.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
-
     const addr = try std.net.Address.resolveIp(host, port);
 
     var socket: std.posix.socket_t = blk: {
@@ -128,6 +127,41 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, size);
 
+    var runtime = try Runtime.init(allocator, size);
+    defer runtime.deinit();
+
+    var threads = std.ArrayList(std.Thread).init(allocator);
+    const thread_count = (try std.Thread.getCpuCount() / 2) - 2;
+
+    for (0..thread_count - 1) |_| {
+        const handle = try std.Thread.spawn(.{ .allocator = allocator }, struct {
+            fn thread_init(t_allocator: std.mem.Allocator, t_socket: *std.posix.socket_t) void {
+                var thread_rt = Runtime.init(t_allocator, size) catch return;
+                defer thread_rt.deinit();
+
+                var thread_pool: Pool(Provision) = Pool(Provision).init(t_allocator, size, struct {
+                    fn init(items: []Provision, all: anytype) void {
+                        for (items) |*item| {
+                            item.buffer = all.alloc(u8, size) catch return;
+                        }
+                    }
+                }.init, t_allocator) catch unreachable;
+
+                thread_rt.storage.put("provision_pool", &thread_pool) catch return;
+
+                thread_rt.accept(t_socket.*, accept_task, t_socket) catch return;
+                thread_rt.run() catch return;
+            }
+        }.thread_init, .{
+            allocator,
+            &socket,
+        });
+
+        try threads.append(handle);
+    }
+
+    errdefer for (threads.items) |thread| thread.join();
+
     var pool: Pool(Provision) = try Pool(Provision).init(allocator, size, struct {
         fn init(items: []Provision, all: anytype) void {
             for (items) |*item| {
@@ -137,7 +171,6 @@ pub fn main() !void {
     }.init, allocator);
 
     try runtime.storage.put("provision_pool", &pool);
-
     try runtime.accept(socket, accept_task, &socket);
     try runtime.run();
 }
