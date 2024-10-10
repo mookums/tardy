@@ -21,11 +21,14 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
         const Self = @This();
         pub const RuntimeTask = Task(Self);
         const RuntimeScheduler = Scheduler(Self);
+        storage: std.StringHashMap(*anyopaque),
         scheduler: RuntimeScheduler,
         aio: AsyncIO,
 
         pub fn init(allocator: std.mem.Allocator, max_tasks: usize) !Self {
             const scheduler: RuntimeScheduler = try RuntimeScheduler.init(allocator, max_tasks);
+
+            const storage = std.StringHashMap(*anyopaque).init(allocator);
 
             const options: AsyncIOOptions = .{
                 .size_connections_max = @intCast(max_tasks),
@@ -83,7 +86,7 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
             //    }
             //};
 
-            return .{ .scheduler = scheduler, .aio = aio };
+            return .{ .storage = storage, .scheduler = scheduler, .aio = aio };
         }
 
         pub fn deinit(self: *const Self) void {
@@ -91,11 +94,18 @@ pub fn Runtime(comptime _aio_type: AsyncIOType) type {
         }
 
         pub fn accept(self: *Self, socket: std.posix.socket_t, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {
-            // we need to
-            // 1. spawn a job within the scheduler with the accept task
-            // 2. queue an accept with the aio with this jobs index as the idnex
             const index = try self.scheduler.spawn(task_fn, task_ctx, .waiting);
             try self.aio.queue_accept(index, socket);
+        }
+
+        pub fn recv(self: *Self, socket: std.posix.socket_t, buffer: []u8, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {
+            const index = try self.scheduler.spawn(task_fn, task_ctx, .waiting);
+            try self.aio.queue_recv(index, socket, buffer);
+        }
+
+        pub fn send(self: *Self, socket: std.posix.socket_t, buffer: []const u8, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {
+            const index = try self.scheduler.spawn(task_fn, task_ctx, .waiting);
+            try self.aio.queue_send(index, socket, buffer);
         }
 
         pub fn spawn(self: *Self, task_fn: RuntimeTask.TaskFn, task_ctx: ?*anyopaque) !void {

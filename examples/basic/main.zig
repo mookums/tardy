@@ -7,11 +7,11 @@ const Runtime = tardy.Runtime(.busy_loop);
 const Task = Runtime.RuntimeTask;
 
 fn log_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
-    _ = rt;
     _ = ctx;
     _ = t;
-    std.time.sleep(1 * std.time.ns_per_s);
     log.debug("{d} - tardy example", .{std.time.milliTimestamp()});
+    std.time.sleep(1 * std.time.ns_per_s);
+    rt.spawn(log_task, null) catch unreachable;
 }
 
 fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {

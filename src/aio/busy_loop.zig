@@ -39,7 +39,6 @@ pub const AsyncBusyLoop = struct {
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        log.debug("loop capacity: {d}", .{loop.inner.capacity});
         loop.inner.appendAssumeCapacity(.{
             .type = .accept,
             .socket = socket,
@@ -95,9 +94,10 @@ pub const AsyncBusyLoop = struct {
 
     pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+        var first_run: bool = true;
         var reaped: usize = 0;
 
-        while (reaped <= min) {
+        while (reaped < min or first_run) {
             var i: usize = 0;
 
             while (i < loop.inner.items.len and reaped < self.completions.len) : (i += 1) {
@@ -194,6 +194,8 @@ pub const AsyncBusyLoop = struct {
                     },
                 }
             }
+
+            first_run = false;
         }
 
         return self.completions[0..reaped];

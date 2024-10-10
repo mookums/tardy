@@ -32,6 +32,7 @@
             # Debugging
             gdb
             valgrind
+            inetutils
             # Benchmarking
             linuxPackages.perf
             wrk
