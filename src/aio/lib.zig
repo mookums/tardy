@@ -22,7 +22,7 @@ pub const AsyncIOType = union(enum) {
     /// Utilizes the epoll interface for handling I/O.
     epoll,
     /// Available on most targets.
-    /// Relies on non-blocking sockets and busy loop polling.
+    /// Relies on non-blocking fds and busy loop polling.
     busy_loop,
     /// Available on all targets.
     custom: type,
@@ -87,6 +87,7 @@ pub const AsyncIO = struct {
     _queue_open: *const fn (
         self: *AsyncIO,
         task: usize,
+        fd: std.posix.fd_t,
         path: []const u8,
     ) AsyncIOError!void,
 
@@ -95,6 +96,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
+        offset: usize,
     ) AsyncIOError!void,
 
     _queue_write: *const fn (
@@ -102,6 +104,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
+        offset: usize,
     ) AsyncIOError!void,
 
     _queue_close: *const fn (
@@ -114,12 +117,13 @@ pub const AsyncIO = struct {
     _queue_accept: *const fn (
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
     ) AsyncIOError!void,
 
     _queue_connect: *const fn (
         self: *AsyncIO,
         task: usize,
+        fd: std.posix.fd_t,
         host: []const u8,
         port: u16,
     ) AsyncIOError!void,
@@ -127,14 +131,14 @@ pub const AsyncIO = struct {
     _queue_recv: *const fn (
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
         buffer: []u8,
     ) AsyncIOError!void,
 
     _queue_send: *const fn (
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
         buffer: []const u8,
     ) AsyncIOError!void,
 
@@ -156,42 +160,85 @@ pub const AsyncIO = struct {
         @call(.auto, self._deinit, .{ self, allocator });
     }
 
-    pub fn queue_accept(
+    pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
+        path: []const u8,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_accept, .{ self, task, socket });
+        try @call(.auto, self._queue_open, .{ self, task, fd, path });
     }
 
-    pub fn queue_recv(
+    pub fn queue_read(
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
         buffer: []u8,
+        offset: usize,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_recv, .{ self, task, socket, buffer });
+        try @call(.auto, self._queue_read, .{ self, task, fd, buffer, offset });
     }
 
-    pub fn queue_send(
+    pub fn queue_write(
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
         buffer: []const u8,
+        offset: usize,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_send, .{ self, task, socket, buffer });
+        try @call(.auto, self._queue_write, .{ self, task, fd, buffer, offset });
     }
 
     pub fn queue_close(
         self: *AsyncIO,
         task: usize,
-        socket: std.posix.socket_t,
+        fd: std.posix.fd_t,
     ) AsyncIOError!void {
         assert(self.attached);
-        try @call(.auto, self._queue_close, .{ self, task, socket });
+        try @call(.auto, self._queue_close, .{ self, task, fd });
+    }
+
+    pub fn queue_accept(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) AsyncIOError!void {
+        assert(self.attached);
+        try @call(.auto, self._queue_accept, .{ self, task, fd });
+    }
+
+    pub fn queue_connect(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        host: []const u8,
+        port: u16,
+    ) AsyncIOError!void {
+        assert(self.attached);
+        try @call(.auto, self._queue_connect, .{ self, task, fd, host, port });
+    }
+
+    pub fn queue_recv(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        buffer: []u8,
+    ) AsyncIOError!void {
+        assert(self.attached);
+        try @call(.auto, self._queue_recv, .{ self, task, fd, buffer });
+    }
+
+    pub fn queue_send(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        buffer: []const u8,
+    ) AsyncIOError!void {
+        assert(self.attached);
+        try @call(.auto, self._queue_send, .{ self, task, fd, buffer });
     }
 
     pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
