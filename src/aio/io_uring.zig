@@ -13,7 +13,6 @@ const Job = @import("job.zig").Job;
 const Pool = @import("../core/pool.zig").Pool;
 
 pub const AsyncIoUring = struct {
-    const Self = @This();
     const base_flags = blk: {
         var flags = std.os.linux.IORING_SETUP_COOP_TASKRUN;
         flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
@@ -24,14 +23,14 @@ pub const AsyncIoUring = struct {
     cqes: []std.os.linux.io_uring_cqe,
     jobs: Pool(Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !Self {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
         // with io_uring, our timeouts take up an additional slot in the ring.
         // this means if they are enabled, we need 2x the slots.
         const size = options.size_aio_jobs_max;
 
         const uring = blk: {
             if (options.parent_async) |parent| {
-                const parent_uring: *Self = @ptrCast(
+                const parent_uring: *AsyncIoUring = @ptrCast(
                     @alignCast(parent.runner),
                 );
                 assert(parent_uring.inner.fd >= 0);
@@ -64,7 +63,7 @@ pub const AsyncIoUring = struct {
             }
         };
 
-        return Self{
+        return AsyncIoUring{
             .inner = uring,
             .jobs = try Pool(Job).init(allocator, size, null, null),
             .cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max),
@@ -72,7 +71,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         uring.inner.deinit();
         uring.jobs.deinit(null, null);
         allocator.free(uring.cqes);
@@ -84,7 +83,7 @@ pub const AsyncIoUring = struct {
         task: usize,
         socket: std.posix.socket_t,
     ) AsyncIOError!void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -105,7 +104,7 @@ pub const AsyncIoUring = struct {
         socket: std.posix.socket_t,
         buffer: []u8,
     ) AsyncIOError!void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -126,7 +125,7 @@ pub const AsyncIoUring = struct {
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) AsyncIOError!void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -146,7 +145,7 @@ pub const AsyncIoUring = struct {
         task: usize,
         fd: std.posix.fd_t,
     ) AsyncIOError!void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -161,7 +160,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn submit(self: *AsyncIO) AsyncIOError!void {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         _ = uring.inner.submit() catch |e| switch (e) {
             // TODO: match error states.
             else => unreachable,
@@ -169,7 +168,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
-        const uring: *Self = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
 
         const min_length = @min(uring.cqes.len, self.completions.len);
         const count = uring.inner.copy_cqes(uring.cqes[0..min_length], @intCast(min)) catch |e| switch (e) {
@@ -205,7 +204,7 @@ pub const AsyncIoUring = struct {
         return self.completions[0..count];
     }
 
-    pub fn to_async(self: *Self) AsyncIO {
+    pub fn to_async(self: *AsyncIoUring) AsyncIO {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
