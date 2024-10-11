@@ -85,7 +85,6 @@ pub fn Pool(comptime T: type) type {
         /// Linearly probes for an available slot in the pool.
         ///
         /// Returns a tuple of the index into the pool and a pointer to the item.
-        /// Returns null otherwise.
         pub fn borrow(self: *Self) !Borrow(T) {
             if (self.full()) {
                 return error.Full;
@@ -95,6 +94,27 @@ pub fn Pool(comptime T: type) type {
             const index = iter.next() orelse unreachable;
             self.dirty.set(index);
             return .{ .index = index, .item = self.get_ptr(index) };
+        }
+
+        /// Linearly probes for an available slot in the pool.
+        /// Uses a provided hint value as the starting index.
+        ///
+        /// Returns a tuple of the index into the pool and a pointer to the item.
+        pub fn borrow_hint(self: *Self, hint: usize) !Borrow(T) {
+            if (self.full()) {
+                return error.Full;
+            }
+
+            var index: usize = hint;
+            for (0..self.items.len) |i| {
+                index = @mod(index + i, self.items.len);
+                if (!self.dirty.isSet(index)) {
+                    self.dirty.set(index);
+                    return .{ .index = index, .item = self.get_ptr(index) };
+                }
+            }
+
+            unreachable;
         }
 
         /// Attempts to borrow at the given index.
