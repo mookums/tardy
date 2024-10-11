@@ -81,7 +81,6 @@ pub const AsyncIoUring = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
         path: []const u8,
     ) AsyncIOError!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
@@ -90,10 +89,16 @@ pub const AsyncIoUring = struct {
             .index = borrowed.index,
             .type = .open,
             .task = task,
-            .fd = fd,
+            .fd = undefined,
         };
 
-        _ = uring.inner.openat(@intFromPtr(borrowed.item), fd, @ptrCast(path.ptr), .{}, 0) catch |e| switch (e) {
+        _ = uring.inner.openat(
+            @intFromPtr(borrowed.item),
+            std.posix.AT.FDCWD,
+            @ptrCast(path.ptr),
+            .{},
+            0,
+        ) catch |e| switch (e) {
             error.SubmissionQueueFull => return AsyncIOError.QueueFull,
             else => unreachable,
         };
