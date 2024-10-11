@@ -83,10 +83,45 @@ pub const AsyncIO = struct {
         allocator: std.mem.Allocator,
     ) void,
 
+    // Filesystem Operations
+    _queue_open: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        path: []const u8,
+    ) AsyncIOError!void,
+
+    _queue_read: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        buffer: []u8,
+    ) AsyncIOError!void,
+
+    _queue_write: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        buffer: []const u8,
+    ) AsyncIOError!void,
+
+    _queue_close: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) AsyncIOError!void,
+
+    // Network Operations
     _queue_accept: *const fn (
         self: *AsyncIO,
         task: usize,
         socket: std.posix.socket_t,
+    ) AsyncIOError!void,
+
+    _queue_connect: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        host: []const u8,
+        port: u16,
     ) AsyncIOError!void,
 
     _queue_recv: *const fn (
@@ -101,12 +136,6 @@ pub const AsyncIO = struct {
         task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
-    ) AsyncIOError!void,
-
-    _queue_close: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
     ) AsyncIOError!void,
 
     _reap: *const fn (self: *AsyncIO, min: usize) AsyncIOError![]Completion,
