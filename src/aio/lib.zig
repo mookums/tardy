@@ -64,15 +64,13 @@ pub const AsyncIOError = error{
 };
 
 pub const AsyncIOOptions = struct {
-    /// The root AsyncIO that this should inherit
-    /// parameters from. This is useful for io_uring.
-    root_async: ?AsyncIO = null,
-    /// Is this AsyncIO instance spawning within a thread?
-    in_thread: bool = false,
-    /// Maximum number of connections for this backend.
-    size_connections_max: u16,
+    /// The parent AsyncIO that this should
+    /// inherit parameters from.
+    parent_async: ?*const AsyncIO = null,
+    /// Maximum number of aio jobs.
+    size_aio_jobs_max: u16,
     /// Maximum number of completions reaped.
-    size_completions_reap_max: u16,
+    size_aio_reap_max: u16,
 };
 
 pub const AsyncIO = struct {

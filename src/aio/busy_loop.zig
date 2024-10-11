@@ -14,7 +14,7 @@ pub const AsyncBusyLoop = struct {
     inner: std.ArrayListUnmanaged(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncBusyLoop {
-        const list = try std.ArrayListUnmanaged(Job).initCapacity(allocator, options.size_connections_max);
+        const list = try std.ArrayListUnmanaged(Job).initCapacity(allocator, options.size_aio_jobs_max);
         return AsyncBusyLoop{ .inner = list };
     }
 

@@ -22,8 +22,8 @@ pub const AsyncEpoll = struct {
         const epoll_fd = try std.posix.epoll_create1(0);
         assert(epoll_fd > -1);
 
-        const events = try allocator.alloc(std.os.linux.epoll_event, options.size_connections_max);
-        const jobs = try Pool(Job).init(allocator, options.size_connections_max, null, null);
+        const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
+        const jobs = try Pool(Job).init(allocator, options.size_aio_jobs_max, null, null);
 
         return Self{
             .epoll_fd = epoll_fd,

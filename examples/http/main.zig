@@ -5,7 +5,7 @@ const log = std.log.scoped(.@"tardy/example/http");
 const Pool = @import("../../src/core/pool.zig").Pool;
 
 const Runtime = tardy.Runtime(.auto);
-const Task = Runtime.RuntimeTask;
+const Task = Runtime.Task;
 
 const Provision = struct {
     index: usize,
@@ -32,13 +32,25 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
+fn accept_predicate(rt: *Runtime, _: *Task) bool {
+    const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+    const remaining = provision_pool.items.len - provision_pool.dirty.count();
+    // We need atleast two because we requeue the accept and the recv.
+    return remaining >= 2;
+}
+
 fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
     const child_socket = t.result.?.socket;
     socket_to_nonblocking(child_socket) catch unreachable;
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    rt.accept(server_socket.*, accept_task, ctx) catch unreachable;
+    rt.accept(.{
+        .socket = server_socket.*,
+        .func = accept_task,
+        .ctx = ctx,
+        .predicate = accept_predicate,
+    }) catch unreachable;
 
     // get provision
     // assign based on index
@@ -47,7 +59,12 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const borrowed = provision_pool.borrow() catch unreachable;
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.recv(child_socket, borrowed.item.buffer, recv_task, borrowed.item) catch unreachable;
+    rt.recv(.{
+        .socket = child_socket,
+        .buffer = borrowed.item.buffer,
+        .func = recv_task,
+        .ctx = borrowed.item,
+    }) catch unreachable;
 }
 
 fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
@@ -62,7 +79,12 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.send(provision.socket, HTTP_RESPONSE[0..], send_task, ctx) catch unreachable;
+    rt.send(.{
+        .socket = provision.socket,
+        .buffer = HTTP_RESPONSE[0..],
+        .func = send_task,
+        .ctx = ctx,
+    }) catch unreachable;
 }
 
 fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
@@ -77,7 +99,12 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.recv(provision.socket, provision.buffer, recv_task, ctx) catch unreachable;
+    rt.recv(.{
+        .socket = provision.socket,
+        .buffer = provision.buffer,
+        .func = recv_task,
+        .ctx = ctx,
+    }) catch unreachable;
 }
 
 pub fn main() !void {
@@ -86,7 +113,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     const thread_count = (try std.Thread.getCpuCount() / 2) - 2;
-    const size: usize = try std.math.divCeil(usize, 2000, thread_count);
+    const conn_per_thread: usize = try std.math.divCeil(usize, 2000, thread_count);
 
     const host = "0.0.0.0";
     const port = 9862;
@@ -128,18 +155,35 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, 1024);
 
-    var runtime = try Runtime.init(allocator, size);
+    var runtime = try Runtime.init(.{
+        .allocator = allocator,
+        .size_tasks_max = @intCast(conn_per_thread + 2),
+        .size_aio_jobs_max = @intCast(conn_per_thread),
+        .size_aio_reap_max = 128,
+    });
     defer runtime.deinit();
 
     var threads = std.ArrayList(std.Thread).init(allocator);
+    defer threads.deinit();
 
     for (0..thread_count - 1) |_| {
         const handle = try std.Thread.spawn(.{ .allocator = allocator }, struct {
-            fn thread_init(t_allocator: std.mem.Allocator, t_socket: *std.posix.socket_t, t_size: usize) void {
-                var thread_rt = Runtime.init(t_allocator, t_size) catch return;
+            fn thread_init(
+                t_runtime: *const Runtime,
+                t_allocator: std.mem.Allocator,
+                t_socket: *std.posix.socket_t,
+                t_conn_per: usize,
+            ) void {
+                var thread_rt = Runtime.init(.{
+                    .allocator = t_allocator,
+                    .parent_async = &t_runtime.aio,
+                    .size_tasks_max = @intCast(t_conn_per + 2),
+                    .size_aio_jobs_max = @intCast(t_conn_per),
+                    .size_aio_reap_max = 128,
+                }) catch return;
                 defer thread_rt.deinit();
 
-                var thread_pool: Pool(Provision) = Pool(Provision).init(t_allocator, t_size, struct {
+                var thread_pool: Pool(Provision) = Pool(Provision).init(t_allocator, t_conn_per, struct {
                     fn init(items: []Provision, ctx: anytype) void {
                         for (items) |*item| {
                             item.buffer = ctx.allocator.alloc(u8, 512) catch return;
@@ -149,17 +193,26 @@ pub fn main() !void {
 
                 thread_rt.storage.put("provision_pool", &thread_pool) catch return;
 
-                thread_rt.accept(t_socket.*, accept_task, t_socket) catch return;
+                thread_rt.accept(.{
+                    .socket = t_socket.*,
+                    .func = accept_task,
+                    .ctx = t_socket,
+                    .predicate = accept_predicate,
+                }) catch return;
                 thread_rt.run() catch return;
             }
-        }.thread_init, .{ allocator, &socket, size });
+        }.thread_init, .{
+            &runtime,
+            allocator,
+            &socket,
+            conn_per_thread,
+        });
 
         try threads.append(handle);
     }
-
     errdefer for (threads.items) |thread| thread.join();
 
-    var pool: Pool(Provision) = try Pool(Provision).init(allocator, size, struct {
+    var pool: Pool(Provision) = try Pool(Provision).init(allocator, conn_per_thread, struct {
         fn init(items: []Provision, ctx: anytype) void {
             for (items) |*item| {
                 item.buffer = ctx.allocator.alloc(u8, 512) catch return;
@@ -168,6 +221,11 @@ pub fn main() !void {
     }.init, .{ .allocator = allocator });
 
     try runtime.storage.put("provision_pool", &pool);
-    try runtime.accept(socket, accept_task, &socket);
+    try runtime.accept(.{
+        .socket = socket,
+        .func = accept_task,
+        .ctx = &socket,
+        .predicate = accept_predicate,
+    });
     try runtime.run();
 }

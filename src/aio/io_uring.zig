@@ -27,13 +27,12 @@ pub const AsyncIoUring = struct {
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !Self {
         // with io_uring, our timeouts take up an additional slot in the ring.
         // this means if they are enabled, we need 2x the slots.
-        const size = options.size_connections_max;
+        const size = options.size_aio_jobs_max;
 
         const uring = blk: {
-            if (options.in_thread) {
-                assert(options.root_async != null);
+            if (options.parent_async) |parent| {
                 const parent_uring: *Self = @ptrCast(
-                    @alignCast(options.root_async.?.runner),
+                    @alignCast(parent.runner),
                 );
                 assert(parent_uring.inner.fd >= 0);
 
@@ -68,7 +67,7 @@ pub const AsyncIoUring = struct {
         return Self{
             .inner = uring,
             .jobs = try Pool(Job).init(allocator, size, null, null),
-            .cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_completions_reap_max),
+            .cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max),
         };
     }
 

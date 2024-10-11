@@ -5,7 +5,7 @@ const log = std.log.scoped(.@"tardy/example/echo");
 const Pool = @import("../../src/core/pool.zig").Pool;
 
 const Runtime = tardy.Runtime(.auto);
-const Task = Runtime.RuntimeTask;
+const Task = Runtime.Task;
 
 const Provision = struct {
     index: usize,
@@ -36,7 +36,11 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     socket_to_nonblocking(child_socket) catch unreachable;
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    rt.accept(server_socket.*, accept_task, ctx) catch unreachable;
+    rt.accept(.{
+        .socket = server_socket.*,
+        .func = accept_task,
+        .ctx = ctx,
+    }) catch unreachable;
 
     // get provision
     // assign based on index
@@ -45,7 +49,12 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const borrowed = provision_pool.borrow() catch unreachable;
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.recv(child_socket, borrowed.item.buffer, recv_task, borrowed.item) catch unreachable;
+    rt.recv(.{
+        .socket = child_socket,
+        .buffer = borrowed.item.buffer,
+        .func = recv_task,
+        .ctx = borrowed.item,
+    }) catch unreachable;
 }
 
 fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
@@ -58,7 +67,12 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.send(provision.socket, provision.buffer[0..@intCast(length)], send_task, ctx) catch unreachable;
+    rt.send(.{
+        .socket = provision.socket,
+        .buffer = provision.buffer[0..@intCast(length)],
+        .func = send_task,
+        .ctx = ctx,
+    }) catch unreachable;
 }
 
 fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
@@ -71,14 +85,19 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    //log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
-    rt.recv(provision.socket, provision.buffer, recv_task, ctx) catch unreachable;
+    log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
+    rt.recv(.{
+        .socket = provision.socket,
+        .buffer = provision.buffer,
+        .func = recv_task,
+        .ctx = ctx,
+    }) catch unreachable;
 }
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const size = 1024;
-    var runtime = try Runtime.init(allocator, size);
+    var runtime = try Runtime.init(.{ .allocator = allocator });
     defer runtime.deinit();
 
     const host = "0.0.0.0";
@@ -131,7 +150,6 @@ pub fn main() !void {
     }.init, allocator);
 
     try runtime.storage.put("provision_pool", &pool);
-
-    try runtime.accept(socket, accept_task, &socket);
+    try runtime.accept(.{ .socket = socket, .func = accept_task, .ctx = &socket });
     try runtime.run();
 }
