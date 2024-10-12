@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
     add_example(b, "basic", target, optimize, tardy);
     add_example(b, "echo", target, optimize, tardy);
     add_example(b, "http", target, optimize, tardy);
+    add_example(b, "file", target, optimize, tardy);
 
     const tests = b.addTest(.{
         .name = "tests",

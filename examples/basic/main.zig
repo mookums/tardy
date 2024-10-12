@@ -14,10 +14,11 @@ fn log_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    var tardy = Tardy.init(.{
+    var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .single_threaded,
     });
+    defer tardy.deinit();
 
     try tardy.entry(struct {
         fn start(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {

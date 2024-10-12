@@ -59,6 +59,16 @@ pub fn auto_async_match() AsyncIOType {
     }
 }
 
+pub fn async_to_type(comptime aio: AsyncIOType) type {
+    return comptime switch (aio) {
+        .io_uring => @import("../aio/io_uring.zig").AsyncIoUring,
+        .epoll => @import("../aio/epoll.zig").AsyncEpoll,
+        .busy_loop => @import("../aio/busy_loop.zig").AsyncBusyLoop,
+        .custom => |inner| inner,
+        .auto => unreachable,
+    };
+}
+
 pub const AsyncIOError = error{
     QueueFull,
 };

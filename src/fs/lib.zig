@@ -3,61 +3,66 @@ const std = @import("std");
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const Task = @import("../runtime/task.zig").Task;
 
-pub const Net = struct {
-    const AcceptParams = struct {
-        socket: std.posix.socket_t,
+pub const Filesystem = struct {
+    const OpenParams = struct {
+        path: []const u8,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
         predicate: ?Task.PredicateFn = null,
     };
 
-    pub fn accept(self: *Net, params: AcceptParams) !void {
-        const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
+    pub fn open(self: *Filesystem, params: OpenParams) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
             params.predicate,
             .waiting,
         );
-        try rt.aio.queue_accept(index, params.socket);
+
+        try rt.aio.queue_open(index, params.path);
     }
 
-    const RecvParams = struct {
-        socket: std.posix.socket_t,
+    const ReadParams = struct {
+        fd: std.posix.fd_t,
         buffer: []u8,
+        offset: usize,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
         predicate: ?Task.PredicateFn = null,
     };
 
-    pub fn recv(self: *Net, params: RecvParams) !void {
-        const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
+    pub fn read(self: *Filesystem, params: ReadParams) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
             params.predicate,
             .waiting,
         );
-        try rt.aio.queue_recv(index, params.socket, params.buffer);
+
+        try rt.aio.queue_read(index, params.fd, params.buffer, params.offset);
     }
 
-    const SendParams = struct {
-        socket: std.posix.socket_t,
+    const WriteParams = struct {
+        fd: std.posix.fd_t,
         buffer: []const u8,
+        offset: usize,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
         predicate: ?Task.PredicateFn = null,
     };
 
-    pub fn send(self: *Net, params: SendParams) !void {
-        const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
+    pub fn write(self: *Filesystem, params: WriteParams) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
             params.predicate,
             .waiting,
         );
-        try rt.aio.queue_send(index, params.socket, params.buffer);
+
+        try rt.aio.queue_write(index, params.fd, params.buffer, params.offset);
     }
 
     const CloseParams = struct {
@@ -67,8 +72,8 @@ pub const Net = struct {
         predicate: ?Task.PredicateFn = null,
     };
 
-    pub fn close(self: *Net, params: CloseParams) !void {
-        const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
+    pub fn close(self: *Filesystem, params: CloseParams) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,

@@ -7,6 +7,7 @@ const Scheduler = @import("./scheduler.zig").Scheduler;
 const Task = @import("task.zig").Task;
 
 const Net = @import("../net/lib.zig").Net;
+const Filesystem = @import("../fs/lib.zig").Filesystem;
 
 const RuntimeOptions = struct {
     allocator: std.mem.Allocator,
@@ -23,6 +24,7 @@ pub const Runtime = struct {
     scheduler: Scheduler,
     aio: AsyncIO,
     net: Net = .{},
+    fs: Filesystem = .{},
     running: bool = true,
 
     pub fn init(aio: AsyncIO, options: RuntimeOptions) !Runtime {
@@ -41,6 +43,9 @@ pub const Runtime = struct {
 
     pub fn deinit(self: *Runtime) void {
         self.storage.deinit();
+        self.scheduler.deinit(self.allocator);
+        self.allocator.free(self.aio.completions);
+        self.aio.deinit(self.allocator);
     }
 
     const SpawnParams = struct {
@@ -65,7 +70,7 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
-        while (self.running) {
+        while (true) {
             var iter = self.scheduler.runnable.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
                 const task: *Task = &self.scheduler.tasks.items[index];
@@ -87,6 +92,7 @@ pub const Runtime = struct {
             }
 
             try self.aio.submit();
+            if (!self.running) break;
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.

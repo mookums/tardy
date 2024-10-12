@@ -154,13 +154,14 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, 1024);
 
-    var tardy = Tardy.init(.{
+    var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .{ .multi_threaded = .auto },
         .size_tasks_max = @intCast(conn_per_thread),
         .size_aio_jobs_max = @intCast(conn_per_thread),
         .size_aio_reap_max = 128,
     });
+    defer tardy.deinit();
 
     const EntryParams = struct {
         size: u16,

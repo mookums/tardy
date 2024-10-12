@@ -6,6 +6,7 @@ pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
 
 const auto_async_match = @import("aio/lib.zig").auto_async_match;
+const async_to_type = @import("aio/lib.zig").async_to_type;
 const AsyncIO = @import("aio/lib.zig").AsyncIO;
 const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
 const AsyncIOOptions = @import("aio/lib.zig").AsyncIOOptions;
@@ -48,13 +49,27 @@ const TardyOptions = struct {
 
 pub fn Tardy(comptime _aio_type: AsyncIOType) type {
     const aio_type: AsyncIOType = comptime if (_aio_type == .auto) auto_async_match() else _aio_type;
+    const AioInnerType = comptime async_to_type(aio_type);
     return struct {
         const Self = @This();
+        aios: std.ArrayListUnmanaged(*AioInnerType),
         options: TardyOptions,
 
-        pub fn init(options: TardyOptions) Self {
+        pub fn init(options: TardyOptions) !Self {
             log.debug("aio backend: {s}", .{@tagName(aio_type)});
-            return .{ .options = options };
+
+            return .{
+                .options = options,
+                .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(options.allocator, 1),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            for (self.aios.items) |aio| {
+                self.options.allocator.destroy(aio);
+            }
+
+            self.aios.deinit(self.options.allocator);
         }
 
         /// This will spawn a new Runtime.
@@ -65,21 +80,25 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                     .io_uring => {
                         var uring = try self.options.allocator.create(AsyncIoUring);
                         uring.* = try AsyncIoUring.init(self.options.allocator, options);
+                        try self.aios.append(self.options.allocator, uring);
                         break :blk uring.to_async();
                     },
                     .epoll => {
                         var epoll = try self.options.allocator.create(AsyncEpoll);
                         epoll.* = try AsyncEpoll.init(self.options.allocator, options);
+                        try self.aios.append(self.options.allocator, epoll);
                         break :blk epoll.to_async();
                     },
                     .busy_loop => {
                         var busy = try self.options.allocator.create(AsyncBusyLoop);
                         busy.* = try AsyncBusyLoop.init(self.options.allocator, options);
+                        try self.aios.append(self.options.allocator, busy);
                         break :blk busy.to_async();
                     },
                     .custom => |AsyncCustom| {
                         var custom = try self.options.allocator.create(AsyncCustom);
                         custom.* = try AsyncCustom.init(self.options.allocator, options);
+                        try self.aios.append(self.options.allocator, custom);
                         break :blk custom.to_async();
                     },
                 }
@@ -87,7 +106,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
             aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
 
-            const runtime: Runtime = try Runtime.init(aio, .{
+            const runtime = try Runtime.init(aio, .{
                 .allocator = self.options.allocator,
                 .size_tasks_max = self.options.size_tasks_max,
                 .size_aio_jobs_max = self.options.size_aio_jobs_max,
@@ -115,6 +134,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
                     try @call(.auto, func, .{ &runtime, arena.allocator(), params });
                     try runtime.run();
+
                     defer runtime.deinit();
                     defer arena.deinit();
                 },

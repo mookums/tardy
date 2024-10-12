@@ -98,10 +98,11 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const size = 1024;
 
-    var tardy = Tardy.init(.{
+    var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .single_threaded,
     });
+    defer tardy.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
