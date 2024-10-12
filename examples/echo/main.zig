@@ -1,11 +1,11 @@
 const std = @import("std");
-const assert = std.debug.assert;
-const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/echo");
+
 const Pool = @import("../../src/core/pool.zig").Pool;
 
-const Runtime = tardy.Runtime(.auto);
-const Task = Runtime.Task;
+const Runtime = @import("tardy").Runtime;
+const Task = @import("tardy").Task;
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Provision = struct {
     index: usize,
@@ -36,7 +36,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     socket_to_nonblocking(child_socket) catch unreachable;
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    rt.accept(.{
+    rt.net.accept(.{
         .socket = server_socket.*,
         .func = accept_task,
         .ctx = ctx,
@@ -49,7 +49,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const borrowed = provision_pool.borrow() catch unreachable;
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.recv(.{
+    rt.net.recv(.{
         .socket = child_socket,
         .buffer = borrowed.item.buffer,
         .func = recv_task,
@@ -67,7 +67,7 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.send(.{
+    rt.net.send(.{
         .socket = provision.socket,
         .buffer = provision.buffer[0..@intCast(length)],
         .func = send_task,
@@ -86,7 +86,7 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     }
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
-    rt.recv(.{
+    rt.net.recv(.{
         .socket = provision.socket,
         .buffer = provision.buffer,
         .func = recv_task,
@@ -97,8 +97,11 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const size = 1024;
-    var runtime = try Runtime.init(.{ .allocator = allocator });
-    defer runtime.deinit();
+
+    var tardy = Tardy.init(.{
+        .allocator = allocator,
+        .threading = .single_threaded,
+    });
 
     const host = "0.0.0.0";
     const port = 9862;
@@ -141,15 +144,23 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, size);
 
-    var pool: Pool(Provision) = try Pool(Provision).init(allocator, size, struct {
-        fn init(items: []Provision, all: anytype) void {
-            for (items) |*item| {
-                item.buffer = all.alloc(u8, size) catch unreachable;
-            }
-        }
-    }.init, allocator);
+    try tardy.entry(struct {
+        fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
+            const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
+            pool.* = try Pool(Provision).init(alloc, size, struct {
+                fn init(items: []Provision, all: anytype) void {
+                    for (items) |*item| {
+                        item.buffer = all.alloc(u8, size) catch unreachable;
+                    }
+                }
+            }.init, alloc);
 
-    try runtime.storage.put("provision_pool", &pool);
-    try runtime.accept(.{ .socket = socket, .func = accept_task, .ctx = &socket });
-    try runtime.run();
+            try rt.storage.put("provision_pool", pool);
+            try rt.net.accept(.{
+                .socket = t_socket.*,
+                .func = accept_task,
+                .ctx = t_socket,
+            });
+        }
+    }.rt_start, &socket);
 }

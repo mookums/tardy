@@ -1,11 +1,10 @@
 const std = @import("std");
-const assert = std.debug.assert;
-const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/http");
 const Pool = @import("../../src/core/pool.zig").Pool;
 
-const Runtime = tardy.Runtime(.auto);
-const Task = Runtime.Task;
+const Runtime = @import("tardy").Runtime;
+const Task = @import("tardy").Task;
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Provision = struct {
     index: usize,
@@ -45,7 +44,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     socket_to_nonblocking(child_socket) catch unreachable;
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    rt.accept(.{
+    rt.net.accept(.{
         .socket = server_socket.*,
         .func = accept_task,
         .ctx = ctx,
@@ -59,7 +58,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const borrowed = provision_pool.borrow() catch unreachable;
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.recv(.{
+    rt.net.recv(.{
         .socket = child_socket,
         .buffer = borrowed.item.buffer,
         .func = recv_task,
@@ -79,7 +78,7 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.send(.{
+    rt.net.send(.{
         .socket = provision.socket,
         .buffer = HTTP_RESPONSE[0..],
         .func = send_task,
@@ -99,7 +98,7 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.recv(.{
+    rt.net.recv(.{
         .socket = provision.socket,
         .buffer = provision.buffer,
         .func = recv_task,
@@ -155,77 +154,40 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, 1024);
 
-    var runtime = try Runtime.init(.{
+    var tardy = Tardy.init(.{
         .allocator = allocator,
-        .size_tasks_max = @intCast(conn_per_thread + 2),
+        .threading = .{ .multi_threaded = .auto },
+        .size_tasks_max = @intCast(conn_per_thread),
         .size_aio_jobs_max = @intCast(conn_per_thread),
-        .size_aio_reap_max = 128,
+        .size_aio_reap_max = 256,
     });
-    defer runtime.deinit();
 
-    var threads = std.ArrayList(std.Thread).init(allocator);
-    defer threads.deinit();
+    const EntryParams = struct {
+        size: u16,
+        socket: *std.posix.socket_t,
+    };
 
-    for (0..thread_count - 1) |_| {
-        const handle = try std.Thread.spawn(.{ .allocator = allocator }, struct {
-            fn thread_init(
-                t_runtime: *const Runtime,
-                t_allocator: std.mem.Allocator,
-                t_socket: *std.posix.socket_t,
-                t_conn_per: usize,
-            ) void {
-                var thread_rt = Runtime.init(.{
-                    .allocator = t_allocator,
-                    .parent_async = &t_runtime.aio,
-                    .size_tasks_max = @intCast(t_conn_per + 2),
-                    .size_aio_jobs_max = @intCast(t_conn_per),
-                    .size_aio_reap_max = 128,
-                }) catch return;
-                defer thread_rt.deinit();
-
-                var thread_pool: Pool(Provision) = Pool(Provision).init(t_allocator, t_conn_per, struct {
-                    fn init(items: []Provision, ctx: anytype) void {
+    try tardy.entry(
+        struct {
+            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, params: EntryParams) !void {
+                const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
+                pool.* = try Pool(Provision).init(alloc, params.size, struct {
+                    fn init(items: []Provision, all: anytype) void {
                         for (items) |*item| {
-                            item.buffer = ctx.allocator.alloc(u8, 512) catch return;
+                            item.buffer = all.alloc(u8, 512) catch unreachable;
                         }
                     }
-                }.init, .{ .allocator = t_allocator }) catch unreachable;
+                }.init, alloc);
 
-                thread_rt.storage.put("provision_pool", &thread_pool) catch return;
-
-                thread_rt.accept(.{
-                    .socket = t_socket.*,
+                try rt.storage.put("provision_pool", pool);
+                try rt.net.accept(.{
+                    .socket = params.socket.*,
                     .func = accept_task,
-                    .ctx = t_socket,
+                    .ctx = params.socket,
                     .predicate = accept_predicate,
-                }) catch return;
-                thread_rt.run() catch return;
+                });
             }
-        }.thread_init, .{
-            &runtime,
-            allocator,
-            &socket,
-            conn_per_thread,
-        });
-
-        try threads.append(handle);
-    }
-    errdefer for (threads.items) |thread| thread.join();
-
-    var pool: Pool(Provision) = try Pool(Provision).init(allocator, conn_per_thread, struct {
-        fn init(items: []Provision, ctx: anytype) void {
-            for (items) |*item| {
-                item.buffer = ctx.allocator.alloc(u8, 512) catch return;
-            }
-        }
-    }.init, .{ .allocator = allocator });
-
-    try runtime.storage.put("provision_pool", &pool);
-    try runtime.accept(.{
-        .socket = socket,
-        .func = accept_task,
-        .ctx = &socket,
-        .predicate = accept_predicate,
-    });
-    try runtime.run();
+        }.rt_start,
+        EntryParams{ .size = @intCast(conn_per_thread), .socket = &socket },
+    );
 }

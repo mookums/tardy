@@ -1,10 +1,9 @@
 const std = @import("std");
-const assert = std.debug.assert;
-const tardy = @import("tardy");
 const log = std.log.scoped(.@"tardy/example/basic");
 
-const Runtime = tardy.Runtime(.auto);
-const Task = Runtime.Task;
+const Runtime = @import("tardy").Runtime;
+const Task = @import("tardy").Task;
+const Tardy = @import("tardy").Tardy(.auto);
 
 fn log_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
     log.debug("{d} - tardy example", .{std.time.milliTimestamp()});
@@ -14,9 +13,15 @@ fn log_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-    var runtime = try Runtime.init(.{ .allocator = allocator });
-    defer runtime.deinit();
 
-    try runtime.spawn(.{ .func = log_task });
-    try runtime.run();
+    var tardy = Tardy.init(.{
+        .allocator = allocator,
+        .threading = .single_threaded,
+    });
+
+    try tardy.entry(struct {
+        fn start(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {
+            try rt.spawn(.{ .func = log_task });
+        }
+    }.start, void);
 }
