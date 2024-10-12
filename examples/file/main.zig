@@ -56,8 +56,19 @@ fn read_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     }) catch unreachable;
 }
 
-fn write_task(rt: *Runtime, _: *Task, ctx: ?*anyopaque) void {
+fn write_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
+    const length: i32 = t.result.?.value;
+
+    if (length <= 0) {
+        rt.fs.close(.{
+            .fd = provision.fd,
+            .func = close_task,
+            .ctx = ctx,
+        }) catch unreachable;
+
+        return;
+    }
 
     rt.fs.read(.{
         .fd = provision.fd,
@@ -68,8 +79,9 @@ fn write_task(rt: *Runtime, _: *Task, ctx: ?*anyopaque) void {
     }) catch unreachable;
 }
 
-fn close_task(_: *Runtime, _: *Task, _: ?*anyopaque) void {
-    log.debug("All done!", .{});
+fn close_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
+    log.debug("all done!", .{});
+    rt.stop();
 }
 
 pub fn main() !void {
@@ -81,8 +93,8 @@ pub fn main() !void {
         .allocator = allocator,
         .threading = .single_threaded,
         .size_tasks_max = 2,
-        .size_aio_jobs_max = 2,
-        .size_aio_reap_max = 2,
+        .size_aio_jobs_max = 1,
+        .size_aio_reap_max = 1,
     });
     defer tardy.deinit();
 
