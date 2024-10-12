@@ -6,7 +6,6 @@ const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
-const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
 const Job = @import("job.zig").Job;
 
@@ -27,7 +26,7 @@ pub const AsyncBusyLoop = struct {
         self: *AsyncIO,
         task: usize,
         path: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .open = path },
@@ -42,7 +41,7 @@ pub const AsyncBusyLoop = struct {
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
@@ -57,7 +56,7 @@ pub const AsyncBusyLoop = struct {
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
@@ -70,7 +69,7 @@ pub const AsyncBusyLoop = struct {
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .close,
@@ -83,7 +82,7 @@ pub const AsyncBusyLoop = struct {
         self: *AsyncIO,
         task: usize,
         socket: std.posix.socket_t,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .accept,
@@ -98,10 +97,10 @@ pub const AsyncBusyLoop = struct {
         socket: std.posix.socket_t,
         host: []const u8,
         port: u16,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
 
-        const addr = std.net.Address.parseIp(host, port) catch unreachable;
+        const addr = try std.net.Address.parseIp(host, port);
 
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .connect = addr.any },
@@ -115,7 +114,7 @@ pub const AsyncBusyLoop = struct {
         task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .recv = buffer },
@@ -129,7 +128,7 @@ pub const AsyncBusyLoop = struct {
         task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .send = buffer },
@@ -138,12 +137,12 @@ pub const AsyncBusyLoop = struct {
         });
     }
 
-    pub fn submit(self: *AsyncIO) AsyncIOError!void {
+    pub fn submit(self: *AsyncIO) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         _ = loop;
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         var first_run: bool = true;
         var reaped: usize = 0;

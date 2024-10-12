@@ -69,10 +69,6 @@ pub fn async_to_type(comptime aio: AsyncIOType) type {
     };
 }
 
-pub const AsyncIOError = error{
-    QueueFull,
-};
-
 pub const AsyncIOOptions = struct {
     /// The parent AsyncIO that this should
     /// inherit parameters from.
@@ -98,7 +94,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         path: []const u8,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_read: *const fn (
         self: *AsyncIO,
@@ -106,7 +102,7 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_write: *const fn (
         self: *AsyncIO,
@@ -114,20 +110,20 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_close: *const fn (
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     // Network Operations
     _queue_accept: *const fn (
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_connect: *const fn (
         self: *AsyncIO,
@@ -135,24 +131,24 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         host: []const u8,
         port: u16,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_recv: *const fn (
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
     _queue_send: *const fn (
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-    ) AsyncIOError!void,
+    ) anyerror!void,
 
-    _reap: *const fn (self: *AsyncIO, min: usize) AsyncIOError![]Completion,
-    _submit: *const fn (self: *AsyncIO) AsyncIOError!void,
+    _reap: *const fn (self: *AsyncIO, min: usize) anyerror![]Completion,
+    _submit: *const fn (self: *AsyncIO) anyerror!void,
 
     /// This provides the completions that the backend will utilize when
     /// submitting and reaping. This MUST be called before any other
@@ -173,7 +169,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         path: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_open, .{ self, task, path });
     }
@@ -184,7 +180,7 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_read, .{ self, task, fd, buffer, offset });
     }
@@ -195,7 +191,7 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_write, .{ self, task, fd, buffer, offset });
     }
@@ -204,7 +200,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_close, .{ self, task, fd });
     }
@@ -213,7 +209,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_accept, .{ self, task, fd });
     }
@@ -224,7 +220,7 @@ pub const AsyncIO = struct {
         fd: std.posix.fd_t,
         host: []const u8,
         port: u16,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_connect, .{ self, task, fd, host, port });
     }
@@ -234,7 +230,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_recv, .{ self, task, fd, buffer });
     }
@@ -244,17 +240,17 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_send, .{ self, task, fd, buffer });
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
         assert(self.attached);
         return try @call(.auto, self._reap, .{ self, min });
     }
 
-    pub fn submit(self: *AsyncIO) AsyncIOError!void {
+    pub fn submit(self: *AsyncIO) !void {
         assert(self.attached);
         try @call(.auto, self._submit, .{self});
     }

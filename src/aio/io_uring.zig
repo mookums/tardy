@@ -6,7 +6,6 @@ const Completion = @import("completion.zig").Completion;
 const Result = @import("completion.zig").Result;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
-const AsyncIOError = @import("lib.zig").AsyncIOError;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
 
 const Job = @import("job.zig").Job;
@@ -82,26 +81,23 @@ pub const AsyncIoUring = struct {
         self: *AsyncIO,
         task: usize,
         path: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = uring.jobs.borrow() catch return error.QueueFull;
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .open,
+            .type = .{ .open = path },
             .task = task,
             .fd = undefined,
         };
 
-        _ = uring.inner.openat(
+        _ = try uring.inner.openat(
             @intFromPtr(borrowed.item),
             std.posix.AT.FDCWD,
             @ptrCast(path.ptr),
             .{},
             0,
-        ) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        );
     }
 
     pub fn queue_read(
@@ -110,20 +106,22 @@ pub const AsyncIoUring = struct {
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .read = buffer },
+            .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
             .task = task,
             .fd = fd,
         };
 
-        _ = uring.inner.read(@intFromPtr(borrowed.item), fd, .{ .buffer = buffer }, offset) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        _ = try uring.inner.read(
+            @intFromPtr(borrowed.item),
+            fd,
+            .{ .buffer = buffer },
+            offset,
+        );
     }
 
     pub fn queue_write(
@@ -132,48 +130,42 @@ pub const AsyncIoUring = struct {
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .write = buffer },
+            .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
             .task = task,
             .fd = fd,
         };
 
-        _ = uring.inner.write(@intFromPtr(borrowed.item), fd, buffer, offset) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        _ = try uring.inner.write(@intFromPtr(borrowed.item), fd, buffer, offset);
     }
 
     pub fn queue_close(
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .close,
             .task = task,
             .fd = fd,
         };
-        _ = uring.inner.close(@intFromPtr(borrowed.item), fd) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        _ = try uring.inner.close(@intFromPtr(borrowed.item), fd);
     }
 
     pub fn queue_accept(
         self: *AsyncIO,
         task: usize,
         fd: std.posix.fd_t,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .accept,
@@ -181,16 +173,13 @@ pub const AsyncIoUring = struct {
             .fd = fd,
         };
 
-        _ = uring.inner.accept(
+        _ = try uring.inner.accept(
             @intFromPtr(borrowed.item),
             fd,
             null,
             null,
             0,
-        ) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        );
     }
 
     pub fn queue_connect(
@@ -199,10 +188,10 @@ pub const AsyncIoUring = struct {
         fd: std.posix.fd_t,
         host: []const u8,
         port: u16,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
-        const addr = std.net.Address.parseIp(host, port) catch unreachable;
+        const borrowed = try uring.jobs.borrow();
+        const addr = try std.net.Address.parseIp(host, port);
 
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -211,15 +200,12 @@ pub const AsyncIoUring = struct {
             .fd = fd,
         };
 
-        _ = uring.inner.connect(
+        _ = try uring.inner.connect(
             @intFromPtr(borrowed.item),
             fd,
             &borrowed.item.type.connect,
             addr.getOsSockLen(),
-        ) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        );
     }
 
     pub fn queue_recv(
@@ -227,9 +213,9 @@ pub const AsyncIoUring = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .recv = buffer },
@@ -237,10 +223,7 @@ pub const AsyncIoUring = struct {
             .fd = fd,
         };
 
-        _ = uring.inner.recv(@intFromPtr(borrowed.item), fd, .{ .buffer = buffer }, 0) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        _ = try uring.inner.recv(@intFromPtr(borrowed.item), fd, .{ .buffer = buffer }, 0);
     }
 
     pub fn queue_send(
@@ -248,9 +231,9 @@ pub const AsyncIoUring = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-    ) AsyncIOError!void {
+    ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return AsyncIOError.QueueFull;
+        const borrowed = try uring.jobs.borrow();
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .send = buffer },
@@ -258,28 +241,19 @@ pub const AsyncIoUring = struct {
             .fd = fd,
         };
 
-        _ = uring.inner.send(@intFromPtr(borrowed.item), fd, buffer, 0) catch |e| switch (e) {
-            error.SubmissionQueueFull => return AsyncIOError.QueueFull,
-            else => unreachable,
-        };
+        _ = try uring.inner.send(@intFromPtr(borrowed.item), fd, buffer, 0);
     }
 
-    pub fn submit(self: *AsyncIO) AsyncIOError!void {
+    pub fn submit(self: *AsyncIO) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        _ = uring.inner.submit() catch |e| switch (e) {
-            // TODO: match error states.
-            else => unreachable,
-        };
+        _ = try uring.inner.submit();
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) AsyncIOError![]Completion {
+    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
 
         const min_length = @min(uring.cqes.len, self.completions.len);
-        const count = uring.inner.copy_cqes(uring.cqes[0..min_length], @intCast(min)) catch |e| switch (e) {
-            // TODO: match error states.
-            else => unreachable,
-        };
+        const count = try uring.inner.copy_cqes(uring.cqes[0..min_length], @intCast(min));
 
         for (uring.cqes[0..count], 0..) |cqe, i| {
             const job: *Job = @ptrFromInt(@as(usize, cqe.user_data));
