@@ -75,33 +75,10 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         /// This will spawn a new Runtime.
         fn spawn_runtime(self: *Self, options: AsyncIOOptions) !Runtime {
             var aio: AsyncIO = blk: {
-                switch (comptime aio_type) {
-                    .auto => unreachable,
-                    .io_uring => {
-                        var uring = try self.options.allocator.create(AsyncIoUring);
-                        uring.* = try AsyncIoUring.init(self.options.allocator, options);
-                        try self.aios.append(self.options.allocator, uring);
-                        break :blk uring.to_async();
-                    },
-                    .epoll => {
-                        var epoll = try self.options.allocator.create(AsyncEpoll);
-                        epoll.* = try AsyncEpoll.init(self.options.allocator, options);
-                        try self.aios.append(self.options.allocator, epoll);
-                        break :blk epoll.to_async();
-                    },
-                    .busy_loop => {
-                        var busy = try self.options.allocator.create(AsyncBusyLoop);
-                        busy.* = try AsyncBusyLoop.init(self.options.allocator, options);
-                        try self.aios.append(self.options.allocator, busy);
-                        break :blk busy.to_async();
-                    },
-                    .custom => |AsyncCustom| {
-                        var custom = try self.options.allocator.create(AsyncCustom);
-                        custom.* = try AsyncCustom.init(self.options.allocator, options);
-                        try self.aios.append(self.options.allocator, custom);
-                        break :blk custom.to_async();
-                    },
-                }
+                var io = try self.options.allocator.create(AioInnerType);
+                io.* = try AioInnerType.init(self.options.allocator, options);
+                try self.aios.append(self.options.allocator, io);
+                break :blk io.to_async();
             };
 
             aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
