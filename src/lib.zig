@@ -89,6 +89,9 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
             const runtime: Runtime = try Runtime.init(aio, .{
                 .allocator = self.options.allocator,
+                .size_tasks_max = self.options.size_tasks_max,
+                .size_aio_jobs_max = self.options.size_aio_jobs_max,
+                .size_aio_reap_max = self.options.size_aio_reap_max,
             });
 
             return runtime;
@@ -144,7 +147,12 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
                     for (0..thread_count - 1) |_| {
                         const handle = try std.Thread.spawn(.{}, struct {
-                            fn thread_init(tardy: *Self, options: TardyOptions, parent: *AsyncIO, parameters: anytype) void {
+                            fn thread_init(
+                                tardy: *Self,
+                                options: TardyOptions,
+                                parent: *AsyncIO,
+                                parameters: anytype,
+                            ) void {
                                 var arena = std.heap.ArenaAllocator.init(options.allocator);
 
                                 var thread_rt = tardy.spawn_runtime(.{

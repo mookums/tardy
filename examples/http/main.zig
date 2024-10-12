@@ -159,7 +159,7 @@ pub fn main() !void {
         .threading = .{ .multi_threaded = .auto },
         .size_tasks_max = @intCast(conn_per_thread),
         .size_aio_jobs_max = @intCast(conn_per_thread),
-        .size_aio_reap_max = 256,
+        .size_aio_reap_max = 128,
     });
 
     const EntryParams = struct {

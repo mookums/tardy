@@ -1,30 +1,18 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const log = std.log.scoped(.@"tardy/scheduler/runtime");
-
-const Scheduler = @import("./scheduler.zig").Scheduler;
-const Task = @import("task.zig").Task;
+const log = std.log.scoped(.@"tardy/runtime");
 
 const AsyncIO = @import("../aio/lib.zig").AsyncIO;
+const Scheduler = @import("./scheduler.zig").Scheduler;
+const Task = @import("task.zig").Task;
 
 const Net = @import("../net/lib.zig").Net;
 
 const RuntimeOptions = struct {
-    /// The allocator that server will use.
     allocator: std.mem.Allocator,
-    /// Number of Maximum Tasks.
-    ///
-    /// Default: 1024
-    size_tasks_max: u16 = 1024,
-    /// Number of Maximum Asynchronous I/O Jobs.
-    ///
-    /// Default: 1024
-    size_aio_jobs_max: u16 = 1024,
-    /// Maximum number of aio completions we can reap
-    /// with a single call of reap().
-    ///
-    /// Default: 256
-    size_aio_reap_max: u16 = 256,
+    size_tasks_max: u16,
+    size_aio_jobs_max: u16,
+    size_aio_reap_max: u16,
 };
 
 /// A runtime is what runs tasks and handles the Async I/O.

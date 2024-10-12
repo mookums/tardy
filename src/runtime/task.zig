@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const log = std.log.scoped(.@"tardy/scheduler/task");
+const log = std.log.scoped(.@"tardy/runtime/task");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const Result = @import("../aio/completion.zig").Result;
