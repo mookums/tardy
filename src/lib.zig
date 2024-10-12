@@ -60,7 +60,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
             return .{
                 .options = options,
-                .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(options.allocator, 1),
+                .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(options.allocator, 0),
             };
         }
 

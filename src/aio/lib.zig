@@ -22,7 +22,7 @@ pub const AsyncIOType = union(enum) {
     /// Utilizes the epoll interface for handling I/O.
     epoll,
     /// Available on most targets.
-    /// Relies on non-blocking fds and busy loop polling.
+    /// Relies on non-blocking fd operations and busy loop polling.
     busy_loop,
     /// Available on all targets.
     custom: type,
