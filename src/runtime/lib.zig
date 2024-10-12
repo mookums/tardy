@@ -91,8 +91,8 @@ pub const Runtime = struct {
                 self.scheduler.release(task.index);
             }
 
-            try self.aio.submit();
             if (!self.running) break;
+            try self.aio.submit();
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
