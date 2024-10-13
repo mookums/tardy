@@ -35,7 +35,7 @@ fn add_example(
     tardy_module: *std.Build.Module,
 ) void {
     const example = b.addExecutable(.{
-        .name = b.fmt("tardy_example_{s}", .{name}),
+        .name = b.fmt("{s}", .{name}),
         .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{name})),
         .target = target,
         .optimize = optimize,
@@ -44,13 +44,15 @@ fn add_example(
 
     example.root_module.addImport("tardy", tardy_module);
     const install_artifact = b.addInstallArtifact(example, .{});
+    b.getInstallStep().dependOn(&install_artifact.step);
 
-    const run_cmd = b.addRunArtifact(example);
-    run_cmd.step.dependOn(&install_artifact.step);
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    const build_step = b.step(b.fmt("{s}", .{name}), b.fmt("Build tardy example ({s})", .{name}));
+    build_step.dependOn(&install_artifact.step);
+
+    const run_artifact = b.addRunArtifact(example);
+    run_artifact.step.dependOn(&install_artifact.step);
 
     const run_step = b.step(b.fmt("run_{s}", .{name}), b.fmt("Run tardy example ({s})", .{name}));
-    run_step.dependOn(&run_cmd.step);
+    run_step.dependOn(&install_artifact.step);
+    run_step.dependOn(&run_artifact.step);
 }
