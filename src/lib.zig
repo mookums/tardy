@@ -136,6 +136,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         parameters: anytype,
                     ) void {
                         var arena = std.heap.ArenaAllocator.init(options.allocator);
+                        defer arena.deinit();
 
                         var thread_rt = tardy.spawn_runtime(.{
                             .parent_async = parent,
@@ -153,6 +154,8 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             }
 
             var arena = std.heap.ArenaAllocator.init(self.options.allocator);
+            defer arena.deinit();
+
             try @call(.auto, func, .{ &runtime, arena.allocator(), params });
             try runtime.run();
         }
