@@ -15,15 +15,11 @@ const AsyncEpoll = @import("aio/epoll.zig").AsyncEpoll;
 const AsyncIoUring = @import("aio/io_uring.zig").AsyncIoUring;
 const Completion = @import("aio/completion.zig").Completion;
 
-const TardyThreadCount = union(enum) {
-    /// Calculated by `(cpu_count / 2) - 1`
-    auto,
-    count: u32,
-};
-
 const TardyThreading = union(enum) {
-    single_threaded,
-    multi_threaded: TardyThreadCount,
+    single,
+    multi: usize,
+    /// Calculated by `@max((cpu_count / 2) - 1, 1)`
+    auto,
 };
 
 const TardyOptions = struct {
@@ -31,8 +27,8 @@ const TardyOptions = struct {
     allocator: std.mem.Allocator,
     /// Threading Mode that Tardy runtime will use.
     ///
-    /// Default = .{ .multi_threaded = .auto }
-    threading: TardyThreading = .{ .multi_threaded = .auto },
+    /// Default = .auto
+    threading: TardyThreading = .auto,
     /// Number of Maximum Tasks.
     ///
     /// Default: 1024
@@ -103,13 +99,9 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         pub fn entry(self: *Self, func: anytype, params: anytype) !void {
             const thread_count: usize = blk: {
                 switch (self.options.threading) {
-                    .single_threaded => break :blk 1,
-                    .multi_threaded => |threading| {
-                        switch (threading) {
-                            .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
-                            .count => |count| break :blk count,
-                        }
-                    },
+                    .single => break :blk 1,
+                    .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
+                    .multi => |count| break :blk count,
                 }
             };
 

@@ -1,10 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.@"tardy/example/http");
 
-pub const std_options = .{
-    .log_level = .err,
-};
-
 const Pool = @import("../../src/core/pool.zig").Pool;
 
 const Runtime = @import("tardy").Runtime;
@@ -39,8 +35,8 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
 fn accept_predicate(rt: *Runtime, _: *Task) bool {
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
     const remaining = provision_pool.items.len - provision_pool.dirty.count();
-    // We need atleast two because we requeue the accept and the recv.
-    return remaining >= 2;
+    // We need atleast three because the new tasks and the underlying task.
+    return remaining > 2;
 }
 
 fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
@@ -67,7 +63,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     // assign based on index
     // get buffer
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const borrowed = provision_pool.borrow_assume_unset(@intCast(child_socket));
+    const borrowed = provision_pool.borrow_hint(@intCast(child_socket)) catch unreachable;
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
     rt.net.recv(.{
@@ -163,12 +159,12 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, 1024);
 
-    const thread_count = @max(@as(u16, @intCast(try std.Thread.getCpuCount() / 2 - 1)), 2);
+    const thread_count = @max(@as(u16, @intCast(try std.Thread.getCpuCount() / 2 - 1)), 1);
     const conn_per_thread = try std.math.divCeil(u16, 2000, thread_count);
 
     var tardy = try Tardy.init(.{
         .allocator = allocator,
-        .threading = .single_threaded,
+        .threading = .auto,
         .size_tasks_max = conn_per_thread,
         .size_aio_jobs_max = conn_per_thread,
         .size_aio_reap_max = 128,

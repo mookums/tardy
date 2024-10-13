@@ -91,7 +91,7 @@ pub fn main() !void {
 
     var tardy = try Tardy.init(.{
         .allocator = allocator,
-        .threading = .single_threaded,
+        .threading = .single,
         .size_tasks_max = 2,
         .size_aio_jobs_max = 1,
         .size_aio_reap_max = 1,

@@ -100,7 +100,7 @@ pub fn main() !void {
 
     var tardy = try Tardy.init(.{
         .allocator = allocator,
-        .threading = .single_threaded,
+        .threading = .single,
     });
     defer tardy.deinit();
 
