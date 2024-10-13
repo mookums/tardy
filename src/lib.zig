@@ -16,6 +16,7 @@ const AsyncIoUring = @import("aio/io_uring.zig").AsyncIoUring;
 const Completion = @import("aio/completion.zig").Completion;
 
 const TardyThreadCount = union(enum) {
+    /// Calculated by `(cpu_count / 2) - 1`
     auto,
     count: u32,
 };
@@ -100,78 +101,67 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         /// The provided allocator is meant to just initialize any structures that will exist throughout the lifetime
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
         pub fn entry(self: *Self, func: anytype, params: anytype) !void {
-            switch (self.options.threading) {
-                .single_threaded => {
-                    var arena = std.heap.ArenaAllocator.init(self.options.allocator);
-                    var runtime = try self.spawn_runtime(.{
-                        .parent_async = null,
-                        .size_aio_jobs_max = self.options.size_aio_jobs_max,
-                        .size_aio_reap_max = self.options.size_aio_reap_max,
-                    });
-
-                    try @call(.auto, func, .{ &runtime, arena.allocator(), params });
-                    try runtime.run();
-
-                    defer runtime.deinit();
-                    defer arena.deinit();
-                },
-                .multi_threaded => |threading| {
-                    const thread_count = blk: {
+            const thread_count: usize = blk: {
+                switch (self.options.threading) {
+                    .single_threaded => break :blk 1,
+                    .multi_threaded => |threading| {
                         switch (threading) {
-                            .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 2),
+                            .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
                             .count => |count| break :blk count,
                         }
-                    };
+                    },
+                }
+            };
 
-                    var threads = try std.ArrayListUnmanaged(std.Thread).initCapacity(
-                        self.options.allocator,
-                        thread_count,
-                    );
-                    defer {
-                        for (threads.items) |thread| {
-                            thread.join();
-                        }
+            log.info("thread count: {d}", .{thread_count});
 
-                        threads.deinit(self.options.allocator);
-                    }
+            var threads = try std.ArrayListUnmanaged(std.Thread).initCapacity(
+                self.options.allocator,
+                thread_count -| 1,
+            );
+            defer {
+                for (threads.items) |thread| {
+                    thread.join();
+                }
 
-                    var runtime = try self.spawn_runtime(.{
-                        .parent_async = null,
-                        .size_aio_jobs_max = self.options.size_aio_jobs_max,
-                        .size_aio_reap_max = self.options.size_aio_reap_max,
-                    });
-                    defer runtime.deinit();
-
-                    for (0..thread_count - 1) |_| {
-                        const handle = try std.Thread.spawn(.{}, struct {
-                            fn thread_init(
-                                tardy: *Self,
-                                options: TardyOptions,
-                                parent: *AsyncIO,
-                                parameters: anytype,
-                            ) void {
-                                var arena = std.heap.ArenaAllocator.init(options.allocator);
-
-                                var thread_rt = tardy.spawn_runtime(.{
-                                    .parent_async = parent,
-                                    .size_aio_jobs_max = options.size_aio_jobs_max,
-                                    .size_aio_reap_max = options.size_aio_reap_max,
-                                }) catch return;
-                                defer thread_rt.deinit();
-
-                                @call(.auto, func, .{ &thread_rt, arena.allocator(), parameters }) catch return;
-                                thread_rt.run() catch return;
-                            }
-                        }.thread_init, .{ self, self.options, &runtime.aio, params });
-
-                        threads.appendAssumeCapacity(handle);
-                    }
-
-                    var arena = std.heap.ArenaAllocator.init(self.options.allocator);
-                    try @call(.auto, func, .{ &runtime, arena.allocator(), params });
-                    try runtime.run();
-                },
+                threads.deinit(self.options.allocator);
             }
+
+            var runtime = try self.spawn_runtime(.{
+                .parent_async = null,
+                .size_aio_jobs_max = self.options.size_aio_jobs_max,
+                .size_aio_reap_max = self.options.size_aio_reap_max,
+            });
+            defer runtime.deinit();
+
+            for (0..thread_count - 1) |_| {
+                const handle = try std.Thread.spawn(.{}, struct {
+                    fn thread_init(
+                        tardy: *Self,
+                        options: TardyOptions,
+                        parent: *AsyncIO,
+                        parameters: anytype,
+                    ) void {
+                        var arena = std.heap.ArenaAllocator.init(options.allocator);
+
+                        var thread_rt = tardy.spawn_runtime(.{
+                            .parent_async = parent,
+                            .size_aio_jobs_max = options.size_aio_jobs_max,
+                            .size_aio_reap_max = options.size_aio_reap_max,
+                        }) catch return;
+                        defer thread_rt.deinit();
+
+                        @call(.auto, func, .{ &thread_rt, arena.allocator(), parameters }) catch return;
+                        thread_rt.run() catch return;
+                    }
+                }.thread_init, .{ self, self.options, &runtime.aio, params });
+
+                threads.appendAssumeCapacity(handle);
+            }
+
+            var arena = std.heap.ArenaAllocator.init(self.options.allocator);
+            try @call(.auto, func, .{ &runtime, arena.allocator(), params });
+            try runtime.run();
         }
     };
 }
