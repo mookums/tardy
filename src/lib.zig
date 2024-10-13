@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.tardy);
 
+pub const Pool = @import("core/pool.zig").Pool;
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
 
