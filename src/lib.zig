@@ -118,7 +118,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                 .multi_threaded => |threading| {
                     const thread_count = blk: {
                         switch (threading) {
-                            .auto => break :blk try std.Thread.getCpuCount() / 2 - 1,
+                            .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 2),
                             .count => |count| break :blk count,
                         }
                     };

@@ -111,9 +111,6 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    const thread_count = (try std.Thread.getCpuCount() / 2) - 2;
-    const conn_per_thread: usize = try std.math.divCeil(usize, 2000, thread_count);
-
     const host = "0.0.0.0";
     const port = 9862;
     const addr = try std.net.Address.resolveIp(host, port);
@@ -154,11 +151,14 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, 1024);
 
+    const thread_count = @max(@as(u16, @intCast(try std.Thread.getCpuCount() / 2 - 1)), 2);
+    const conn_per_thread = try std.math.divCeil(u16, 2000, thread_count);
+
     var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .{ .multi_threaded = .auto },
-        .size_tasks_max = @intCast(conn_per_thread),
-        .size_aio_jobs_max = @intCast(conn_per_thread),
+        .size_tasks_max = conn_per_thread,
+        .size_aio_jobs_max = conn_per_thread,
         .size_aio_reap_max = 128,
     });
     defer tardy.deinit();
@@ -189,6 +189,6 @@ pub fn main() !void {
                 });
             }
         }.rt_start,
-        EntryParams{ .size = @intCast(conn_per_thread), .socket = &socket },
+        EntryParams{ .size = conn_per_thread, .socket = &socket },
     );
 }
