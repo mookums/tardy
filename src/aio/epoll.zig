@@ -52,7 +52,7 @@ pub const AsyncEpoll = struct {
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
 
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .open = path },
@@ -72,7 +72,7 @@ pub const AsyncEpoll = struct {
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
 
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
@@ -91,7 +91,7 @@ pub const AsyncEpoll = struct {
         offset: usize,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
@@ -108,7 +108,7 @@ pub const AsyncEpoll = struct {
         fd: std.posix.fd_t,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .close,
@@ -126,7 +126,7 @@ pub const AsyncEpoll = struct {
         socket: std.posix.socket_t,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .accept,
@@ -150,7 +150,7 @@ pub const AsyncEpoll = struct {
         port: u16,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         const addr = try std.net.Address.parseIp(host, port);
 
         borrowed.item.* = .{
@@ -175,7 +175,7 @@ pub const AsyncEpoll = struct {
         buffer: []u8,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .recv = buffer },
@@ -198,7 +198,7 @@ pub const AsyncEpoll = struct {
         buffer: []const u8,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = epoll.jobs.borrow_assume_unset(task);
+        const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .send = buffer },
