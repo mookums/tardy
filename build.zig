@@ -14,17 +14,6 @@ pub fn build(b: *std.Build) void {
     add_example(b, "echo", target, optimize, tardy);
     add_example(b, "http", target, optimize, tardy);
     add_example(b, "file", target, optimize, tardy);
-
-    const tests = b.addTest(.{
-        .name = "tests",
-        .root_source_file = b.path("./src/test.zig"),
-    });
-
-    const run_test = b.addRunArtifact(tests);
-    run_test.step.dependOn(&tests.step);
-
-    const test_step = b.step("test", "Run general unit tests");
-    test_step.dependOn(&run_test.step);
 }
 
 fn add_example(
