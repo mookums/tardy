@@ -9,14 +9,14 @@ pub const Task = @import("runtime/task.zig").Task;
 const auto_async_match = @import("aio/lib.zig").auto_async_match;
 const async_to_type = @import("aio/lib.zig").async_to_type;
 const AsyncIO = @import("aio/lib.zig").AsyncIO;
-const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
+pub const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
 const AsyncIOOptions = @import("aio/lib.zig").AsyncIOOptions;
 const AsyncBusyLoop = @import("aio/busy_loop.zig").AsyncBusyLoop;
 const AsyncEpoll = @import("aio/epoll.zig").AsyncEpoll;
 const AsyncIoUring = @import("aio/io_uring.zig").AsyncIoUring;
 const Completion = @import("aio/completion.zig").Completion;
 
-const TardyThreading = union(enum) {
+pub const TardyThreading = union(enum) {
     single,
     multi: usize,
     /// Calculated by `@max((cpu_count / 2) - 1, 1)`
