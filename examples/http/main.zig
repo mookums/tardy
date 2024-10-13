@@ -1,5 +1,10 @@
 const std = @import("std");
 const log = std.log.scoped(.@"tardy/example/http");
+
+pub const std_options = .{
+    .log_level = .err,
+};
+
 const Pool = @import("../../src/core/pool.zig").Pool;
 
 const Runtime = @import("tardy").Runtime;
@@ -41,9 +46,16 @@ fn accept_predicate(rt: *Runtime, _: *Task) bool {
 fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
     const child_socket = t.result.?.socket;
+
+    if (child_socket <= 0) {
+        log.err("failed to accept socket", .{});
+        rt.stop();
+        return;
+    }
+
     socket_to_nonblocking(child_socket) catch unreachable;
 
-    log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
+    log.debug("accepted socket fd={d}", .{child_socket});
     rt.net.accept(.{
         .socket = server_socket.*,
         .func = accept_task,
@@ -55,7 +67,7 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     // assign based on index
     // get buffer
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const borrowed = provision_pool.borrow() catch unreachable;
+    const borrowed = provision_pool.borrow_assume_unset(@intCast(child_socket));
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
     rt.net.recv(.{
@@ -70,7 +82,7 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
-    log.debug("{d} - recv socket fd={d}", .{ std.time.milliTimestamp(), provision.socket });
+    log.debug("recv socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
         const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
@@ -90,7 +102,7 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
-    log.debug("{d} - send socket fd={d}", .{ std.time.milliTimestamp(), provision.socket });
+    log.debug("send socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
         const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
@@ -156,7 +168,7 @@ pub fn main() !void {
 
     var tardy = try Tardy.init(.{
         .allocator = allocator,
-        .threading = .{ .multi_threaded = .auto },
+        .threading = .single_threaded,
         .size_tasks_max = conn_per_thread,
         .size_aio_jobs_max = conn_per_thread,
         .size_aio_reap_max = 128,

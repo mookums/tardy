@@ -88,7 +88,7 @@ pub const Runtime = struct {
 
                 // release task from pool.
                 task.state = .dead;
-                self.scheduler.release(task.index);
+                try self.scheduler.release(task.index);
             }
 
             if (!self.running) break;

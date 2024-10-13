@@ -7,17 +7,20 @@ const Pool = @import("../core/pool.zig").Pool;
 pub const Scheduler = struct {
     tasks: Pool(Task),
     runnable: std.DynamicBitSetUnmanaged,
+    released: std.ArrayList(usize),
 
     pub fn init(allocator: std.mem.Allocator, size: usize) !Scheduler {
         return .{
             .tasks = try Pool(Task).init(allocator, size, null, null),
             .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
+            .released = try std.ArrayList(usize).initCapacity(allocator, @divFloor(size, 2)),
         };
     }
 
     pub fn deinit(self: *Scheduler, allocator: std.mem.Allocator) void {
         self.tasks.deinit(null, null);
         self.runnable.deinit(allocator);
+        self.released.deinit();
     }
 
     pub fn set_runnable(self: *Scheduler, index: usize) void {
@@ -36,7 +39,14 @@ pub const Scheduler = struct {
         task_predicate: ?Task.PredicateFn,
         task_state: Task.State,
     ) !usize {
-        const borrowed = try self.tasks.borrow();
+        const borrowed = blk: {
+            if (self.released.popOrNull()) |index| {
+                break :blk self.tasks.borrow_assume_unset(index);
+            } else {
+                break :blk try self.tasks.borrow();
+            }
+        };
+
         borrowed.item.* = .{
             .index = borrowed.index,
             .func = task_fn,
@@ -46,13 +56,13 @@ pub const Scheduler = struct {
         };
 
         if (task_state == .runnable) self.set_runnable(borrowed.index);
-
         return borrowed.index;
     }
 
-    pub fn release(self: *Scheduler, index: usize) void {
+    pub fn release(self: *Scheduler, index: usize) !void {
         assert(self.runnable.isSet(index));
         self.runnable.unset(index);
         self.tasks.release(index);
+        try self.released.append(index);
     }
 };

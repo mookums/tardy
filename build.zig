@@ -39,6 +39,7 @@ fn add_example(
         .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{name})),
         .target = target,
         .optimize = optimize,
+        .strip = false,
     });
 
     example.root_module.addImport("tardy", tardy_module);

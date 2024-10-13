@@ -66,7 +66,7 @@ pub fn Pool(comptime T: type) type {
             self.dirty.deinit(self.allocator);
         }
 
-        fn get(self: Self, index: usize) T {
+        fn get(self: *const Self, index: usize) T {
             return self.items[index];
         }
 
@@ -86,12 +86,8 @@ pub fn Pool(comptime T: type) type {
         ///
         /// Returns a tuple of the index into the pool and a pointer to the item.
         pub fn borrow(self: *Self) !Borrow(T) {
-            if (self.full()) {
-                return error.Full;
-            }
-
             var iter = self.dirty.iterator(.{ .kind = .unset });
-            const index = iter.next() orelse unreachable;
+            const index = iter.next() orelse return error.Full;
             self.dirty.set(index);
             return .{ .index = index, .item = self.get_ptr(index) };
         }
@@ -101,10 +97,6 @@ pub fn Pool(comptime T: type) type {
         ///
         /// Returns a tuple of the index into the pool and a pointer to the item.
         pub fn borrow_hint(self: *Self, hint: usize) !Borrow(T) {
-            if (self.full()) {
-                return error.Full;
-            }
-
             var index: usize = hint;
             for (0..self.items.len) |i| {
                 index = @mod(index + i, self.items.len);
@@ -114,13 +106,12 @@ pub fn Pool(comptime T: type) type {
                 }
             }
 
-            unreachable;
+            return error.Full;
         }
 
         /// Attempts to borrow at the given index.
         /// Asserts that it is an available slot.
         pub fn borrow_assume_unset(self: *Self, index: usize) Borrow(T) {
-            assert(!self.full());
             assert(!self.dirty.isSet(index));
 
             self.dirty.set(index);

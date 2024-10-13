@@ -83,7 +83,7 @@ pub const AsyncIoUring = struct {
         path: []const u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = uring.jobs.borrow() catch return error.QueueFull;
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .open = path },
@@ -108,7 +108,7 @@ pub const AsyncIoUring = struct {
         offset: usize,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
@@ -132,7 +132,7 @@ pub const AsyncIoUring = struct {
         offset: usize,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
@@ -149,7 +149,7 @@ pub const AsyncIoUring = struct {
         fd: std.posix.fd_t,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .close,
@@ -165,7 +165,7 @@ pub const AsyncIoUring = struct {
         fd: std.posix.fd_t,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .accept,
@@ -190,7 +190,7 @@ pub const AsyncIoUring = struct {
         port: u16,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         const addr = try std.net.Address.parseIp(host, port);
 
         borrowed.item.* = .{
@@ -215,7 +215,7 @@ pub const AsyncIoUring = struct {
         buffer: []u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .recv = buffer },
@@ -233,7 +233,7 @@ pub const AsyncIoUring = struct {
         buffer: []const u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const borrowed = try uring.jobs.borrow();
+        const borrowed = uring.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .send = buffer },

@@ -52,7 +52,7 @@ pub const AsyncEpoll = struct {
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
 
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .open = path },
@@ -72,7 +72,7 @@ pub const AsyncEpoll = struct {
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
 
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
@@ -91,7 +91,7 @@ pub const AsyncEpoll = struct {
         offset: usize,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
@@ -108,7 +108,7 @@ pub const AsyncEpoll = struct {
         fd: std.posix.fd_t,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .close,
@@ -126,7 +126,7 @@ pub const AsyncEpoll = struct {
         socket: std.posix.socket_t,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .accept,
@@ -150,7 +150,7 @@ pub const AsyncEpoll = struct {
         port: u16,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         const addr = try std.net.Address.parseIp(host, port);
 
         borrowed.item.* = .{
@@ -175,7 +175,7 @@ pub const AsyncEpoll = struct {
         buffer: []u8,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .recv = buffer },
@@ -198,7 +198,7 @@ pub const AsyncEpoll = struct {
         buffer: []const u8,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
-        const borrowed = try epoll.jobs.borrow();
+        const borrowed = epoll.jobs.borrow_assume_unset(task);
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .send = buffer },
@@ -350,9 +350,14 @@ pub const AsyncEpoll = struct {
                 reaped += 1;
             }
 
+            // if we've already reaped enough, dont block
+            // if we have blocking tasks, dont block
+            // otherwise, block on I/O
+            const timeout: i32 = if (reaped >= min or epoll.blocking.items.len > 0) 0 else -1;
+
             rem_events -= reaped;
             if (rem_events == 0) break;
-            const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..rem_events], -1);
+            const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..rem_events], timeout);
 
             // Handle all of the epoll I/O
             epoll_loop: for (epoll.events[0..epoll_events]) |event| {
