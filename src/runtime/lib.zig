@@ -75,14 +75,10 @@ pub const Runtime = struct {
                 assert(task.state == .runnable);
 
                 const cloned_task: Task = task.*;
-
-                // release task from pool.
                 task.state = .dead;
                 try self.scheduler.release(task.index);
 
-                // run task
-                // on error, it just continues.
-                @call(.auto, task.func, .{ self, &cloned_task, cloned_task.context }) catch |e| {
+                @call(.auto, cloned_task.func, .{ self, &cloned_task, cloned_task.context }) catch |e| {
                     log.debug("task failed: {}", .{e});
                 };
             }
