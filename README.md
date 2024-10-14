@@ -17,15 +17,15 @@ exe.root_module.addImport(tardy);
 ```
 
 ## tardy?
-tardy (def: delaying or delayed beyond the right or expected time; late.) is an asynchronous runtime written for Zig. Most of the code for this project originated in [zzz]("https://github.com/mookums/zzz"), a performance oriented networking framework.
+tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime written for Zig. Most of the code for this project originated in [zzz](https://github.com/mookums/zzz), a performance oriented networking framework.
 
 tardy natively supports Linux, Mac and Windows. You can also port tardy to any target by providing an implementation for the Async I/O.
 
 > [!IMPORTANT]
-> tardy is currently **alpha** software and there is still a lot changing at a fairly quick pace and certain places where things are less polished.
+> tardy is currently **alpha** software. It's fast and it works but is still experimental!
 
 ## Performance
-tardy is pretty quick. you can reference the [zzz]("https://github.com/mookums/zzz") benchmarks as it uses tardy internally.
+tardy is pretty quick. you can reference the [zzz](https://github.com/mookums/zzz) benchmarks as it uses tardy internally.
 
 ## Features
 - Modular Asynchronous Implementation
