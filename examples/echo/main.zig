@@ -29,34 +29,34 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
     const child_socket = t.result.?.socket;
-    socket_to_nonblocking(child_socket) catch unreachable;
+    try socket_to_nonblocking(child_socket);
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    rt.net.accept(.{
+    try rt.net.accept(.{
         .socket = server_socket.*,
         .func = accept_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 
     // get provision
     // assign based on index
     // get buffer
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const borrowed = provision_pool.borrow() catch unreachable;
+    const borrowed = try provision_pool.borrow();
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.net.recv(.{
+    try rt.net.recv(.{
         .socket = child_socket,
         .buffer = borrowed.item.buffer,
         .func = recv_task,
         .ctx = borrowed.item,
-    }) catch unreachable;
+    });
 }
 
-fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
@@ -66,15 +66,15 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.net.send(.{
+    try rt.net.send(.{
         .socket = provision.socket,
         .buffer = provision.buffer[0..@intCast(length)],
         .func = send_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
-fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
@@ -85,12 +85,12 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
     }
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
-    rt.net.recv(.{
+    try rt.net.recv(.{
         .socket = provision.socket,
         .buffer = provision.buffer,
         .func = recv_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
 pub fn main() !void {

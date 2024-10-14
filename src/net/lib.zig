@@ -8,7 +8,6 @@ pub const Net = struct {
         socket: std.posix.socket_t,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn accept(self: *Net, params: AcceptParams) !void {
@@ -16,7 +15,6 @@ pub const Net = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
         try rt.aio.queue_accept(index, params.socket);
@@ -27,7 +25,6 @@ pub const Net = struct {
         buffer: []u8,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn recv(self: *Net, params: RecvParams) !void {
@@ -35,7 +32,6 @@ pub const Net = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
         try rt.aio.queue_recv(index, params.socket, params.buffer);
@@ -46,7 +42,6 @@ pub const Net = struct {
         buffer: []const u8,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn send(self: *Net, params: SendParams) !void {
@@ -54,7 +49,6 @@ pub const Net = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
         try rt.aio.queue_send(index, params.socket, params.buffer);
@@ -64,7 +58,6 @@ pub const Net = struct {
         fd: std.posix.fd_t,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn close(self: *Net, params: CloseParams) !void {
@@ -72,7 +65,6 @@ pub const Net = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
 

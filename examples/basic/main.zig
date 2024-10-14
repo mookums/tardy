@@ -5,7 +5,7 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
-fn log_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
+fn log_task(rt: *Runtime, _: *const Task, _: ?*anyopaque) !void {
     log.debug("{d} - tardy example", .{std.time.milliTimestamp()});
     std.time.sleep(1 * std.time.ns_per_s);
     rt.spawn(.{ .func = log_task }) catch unreachable;

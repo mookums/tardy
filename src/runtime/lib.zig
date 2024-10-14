@@ -51,7 +51,6 @@ pub const Runtime = struct {
     const SpawnParams = struct {
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     /// Spawns a new async Task. It will be immediately added to the
@@ -60,7 +59,6 @@ pub const Runtime = struct {
         _ = try self.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .runnable,
         );
     }
@@ -70,25 +68,23 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
-        while (true) {
+        while (self.running) {
             var iter = self.scheduler.runnable.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
                 const task: *Task = &self.scheduler.tasks.items[index];
                 assert(task.state == .runnable);
 
-                // if we have a predicate,
-                // we want to check it before running.
-                if (task.predicate) |predicate| {
-                    const state = @call(.auto, predicate, .{ self, task });
-                    if (!state) continue;
-                }
-
-                // run task
-                @call(.auto, task.func, .{ self, task, task.context });
+                const cloned_task: Task = task.*;
 
                 // release task from pool.
                 task.state = .dead;
                 try self.scheduler.release(task.index);
+
+                // run task
+                // on error, it just continues.
+                @call(.auto, task.func, .{ self, &cloned_task, cloned_task.context }) catch |e| {
+                    log.debug("task failed: {}", .{e});
+                };
             }
 
             if (!self.running) break;
@@ -96,16 +92,21 @@ pub const Runtime = struct {
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
-            const wait_for_io: usize = @intFromBool(self.scheduler.runnable.count() == 0);
-            log.debug("Wait for I/O: {d}", .{wait_for_io});
+            const wait_for_io = self.scheduler.runnable.count() == 0;
+            log.debug("Wait for I/O: {}", .{wait_for_io});
 
-            const completions = try self.aio.reap(wait_for_io);
+            const completions = try self.aio.reap(@intFromBool(wait_for_io));
             for (completions) |completion| {
                 const index = completion.task;
                 const task = &self.scheduler.tasks.items[index];
                 assert(task.state == .waiting);
                 task.result = completion.result;
                 self.scheduler.set_runnable(index);
+            }
+
+            if (self.scheduler.runnable.count() == 0) {
+                log.err("no more runnable tasks", .{});
+                break;
             }
         }
     }

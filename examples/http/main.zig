@@ -67,14 +67,7 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_predicate(rt: *Runtime, _: *Task) bool {
-    const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const remaining = provision_pool.items.len - provision_pool.dirty.count();
-    // We need atleast three because the new tasks and the underlying task.
-    return remaining > 2;
-}
-
-fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
     const child_socket = t.result.?.socket;
 
@@ -84,32 +77,32 @@ fn accept_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    socket_to_nonblocking(child_socket) catch unreachable;
+    try socket_to_nonblocking(child_socket);
 
     log.debug("accepted socket fd={d}", .{child_socket});
-    rt.net.accept(.{
+
+    try rt.net.accept(.{
         .socket = server_socket.*,
         .func = accept_task,
         .ctx = ctx,
-        .predicate = accept_predicate,
-    }) catch unreachable;
+    });
 
     // get provision
     // assign based on index
     // get buffer
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const borrowed = provision_pool.borrow_hint(@intCast(child_socket)) catch unreachable;
+    const borrowed = try provision_pool.borrow_hint(@intCast(child_socket));
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    rt.net.recv(.{
+    try rt.net.recv(.{
         .socket = child_socket,
         .buffer = borrowed.item.buffer,
         .func = recv_task,
         .ctx = borrowed.item,
-    }) catch unreachable;
+    });
 }
 
-fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
@@ -121,15 +114,15 @@ fn recv_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.net.send(.{
+    try rt.net.send(.{
         .socket = provision.socket,
         .buffer = HTTP_RESPONSE[0..],
         .func = send_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
-fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *Provision = @ptrCast(@alignCast(ctx.?));
     const length = t.result.?.value;
 
@@ -141,12 +134,12 @@ fn send_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.net.recv(.{
+    try rt.net.recv(.{
         .socket = provision.socket,
         .buffer = provision.buffer,
         .func = recv_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
 pub fn main() !void {
@@ -162,10 +155,11 @@ pub fn main() !void {
 
     var tardy = try Tardy.init(.{
         .allocator = allocator,
-        .threading = .auto,
-        .size_tasks_max = conn_per_thread,
-        .size_aio_jobs_max = conn_per_thread,
-        .size_aio_reap_max = 128,
+        .threading = .{ .multi = thread_count },
+        // technically, accept spawns two so we need to support max_conn + 1;
+        .size_tasks_max = conn_per_thread + 1,
+        .size_aio_jobs_max = conn_per_thread + 1,
+        .size_aio_reap_max = conn_per_thread,
     });
     defer tardy.deinit();
 
@@ -178,7 +172,7 @@ pub fn main() !void {
                 socket.* = try create_socket(addr);
                 try socket_to_nonblocking(socket.*);
                 try std.posix.bind(socket.*, &addr.any, addr.getOsSockLen());
-                try std.posix.listen(socket.*, 1024);
+                try std.posix.listen(socket.*, size);
 
                 const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
                 pool.* = try Pool(Provision).init(alloc, size, struct {
@@ -194,7 +188,6 @@ pub fn main() !void {
                     .socket = socket.*,
                     .func = accept_task,
                     .ctx = socket,
-                    .predicate = accept_predicate,
                 });
             }
         }.rt_start,

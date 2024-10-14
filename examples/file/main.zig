@@ -11,7 +11,7 @@ const FileProvision = struct {
     offset: usize,
 };
 
-fn open_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn open_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
     const fd: std.posix.fd_t = t.result.?.fd;
     provision.fd = fd;
@@ -22,64 +22,64 @@ fn open_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
         return;
     }
 
-    rt.fs.read(.{
+    try rt.fs.read(.{
         .fd = fd,
         .buffer = provision.buffer,
         .offset = provision.offset,
         .func = read_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
-fn read_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn read_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
     const length: i32 = t.result.?.value;
     provision.offset += @intCast(length);
 
     // either done OR we have read EOF.
     if (length <= 0 or provision.buffer[@intCast(length - 1)] == 0x04) {
-        rt.fs.close(.{
+        try rt.fs.close(.{
             .fd = provision.fd,
             .func = close_task,
             .ctx = ctx,
-        }) catch unreachable;
+        });
 
         return;
     }
 
-    rt.fs.write(.{
+    try rt.fs.write(.{
         .fd = std.posix.STDOUT_FILENO,
         .buffer = provision.buffer[0..@intCast(length)],
         .offset = provision.offset,
         .func = write_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
-fn write_task(rt: *Runtime, t: *Task, ctx: ?*anyopaque) void {
+fn write_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
     const length: i32 = t.result.?.value;
 
     if (length <= 0) {
-        rt.fs.close(.{
+        try rt.fs.close(.{
             .fd = provision.fd,
             .func = close_task,
             .ctx = ctx,
-        }) catch unreachable;
+        });
 
         return;
     }
 
-    rt.fs.read(.{
+    try rt.fs.read(.{
         .fd = provision.fd,
         .buffer = provision.buffer,
         .offset = provision.offset,
         .func = read_task,
         .ctx = ctx,
-    }) catch unreachable;
+    });
 }
 
-fn close_task(rt: *Runtime, _: *Task, _: ?*anyopaque) void {
+fn close_task(rt: *Runtime, _: *const Task, _: ?*anyopaque) !void {
     log.debug("all done!", .{});
     rt.stop();
 }

@@ -31,12 +31,11 @@ pub const Scheduler = struct {
     }
 
     /// Spawns a Task by adding it into the scheduler pool.
-    /// This means that if the predicate is true that it might run.
+    /// This means that if the predicate is true that it will run.
     pub fn spawn(
         self: *Scheduler,
         task_fn: Task.TaskFn,
         task_ctx: ?*anyopaque,
-        task_predicate: ?Task.PredicateFn,
         task_state: Task.State,
     ) !usize {
         const borrowed = blk: {
@@ -51,7 +50,6 @@ pub const Scheduler = struct {
             .index = borrowed.index,
             .func = task_fn,
             .context = task_ctx,
-            .predicate = task_predicate,
             .state = task_state,
         };
 

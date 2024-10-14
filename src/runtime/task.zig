@@ -6,14 +6,12 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const Result = @import("../aio/completion.zig").Result;
 
 pub const Task = struct {
-    pub const PredicateFn = *const fn (*Runtime, *Task) bool;
-    pub const TaskFn = *const fn (*Runtime, *Task, ?*anyopaque) void;
-    pub const State = union(enum) {
+    pub const TaskFn = *const fn (*Runtime, *const Task, ?*anyopaque) anyerror!void;
+    pub const State = enum(u8) {
         waiting,
         runnable,
         dead,
     };
-    predicate: ?PredicateFn = null,
     // 1 byte
     state: State = .dead,
     // no idea on bytes.

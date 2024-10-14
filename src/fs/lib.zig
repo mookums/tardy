@@ -8,7 +8,6 @@ pub const Filesystem = struct {
         path: []const u8,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn open(self: *Filesystem, params: OpenParams) !void {
@@ -16,7 +15,6 @@ pub const Filesystem = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
 
@@ -29,7 +27,6 @@ pub const Filesystem = struct {
         offset: usize,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn read(self: *Filesystem, params: ReadParams) !void {
@@ -37,7 +34,6 @@ pub const Filesystem = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
 
@@ -50,7 +46,6 @@ pub const Filesystem = struct {
         offset: usize,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn write(self: *Filesystem, params: WriteParams) !void {
@@ -58,7 +53,6 @@ pub const Filesystem = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
 
@@ -69,7 +63,6 @@ pub const Filesystem = struct {
         fd: std.posix.fd_t,
         func: Task.TaskFn,
         ctx: ?*anyopaque = null,
-        predicate: ?Task.PredicateFn = null,
     };
 
     pub fn close(self: *Filesystem, params: CloseParams) !void {
@@ -77,7 +70,6 @@ pub const Filesystem = struct {
         const index = try rt.scheduler.spawn(
             params.func,
             params.ctx,
-            params.predicate,
             .waiting,
         );
 
