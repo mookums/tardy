@@ -61,14 +61,7 @@ fn socket_to_nonblocking(socket: std.posix.socket_t) !void {
     _ = try std.posix.fcntl(socket, std.posix.F.SETFL, arg);
 }
 
-fn close_connection(provision_pool: *Pool(Provision), provision: *const Provision) void {
-    log.debug("closed connection fd={d}", .{provision.socket});
-    std.posix.close(provision.socket);
-    provision_pool.release(provision.index);
-}
-
-fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
+fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
     const child_socket = t.result.?.socket;
 
     if (child_socket <= 0) {
@@ -78,18 +71,8 @@ fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     }
 
     try socket_to_nonblocking(child_socket);
-
     log.debug("accepted socket fd={d}", .{child_socket});
 
-    try rt.net.accept(.{
-        .socket = server_socket.*,
-        .func = accept_task,
-        .ctx = ctx,
-    });
-
-    // get provision
-    // assign based on index
-    // get buffer
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
     const borrowed = try provision_pool.borrow_hint(@intCast(child_socket));
     borrowed.item.index = borrowed.index;
@@ -109,8 +92,14 @@ fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     log.debug("recv socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
-        const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-        close_connection(provision_pool, provision);
+        log.debug("recv closed fd={d}", .{provision.socket});
+        log.debug("queueing close with ctx ptr: {*}", .{ctx});
+        try rt.net.close(.{
+            .fd = provision.socket,
+            .func = close_task,
+            .ctx = ctx,
+        });
+
         return;
     }
 
@@ -129,8 +118,14 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     log.debug("send socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
-        const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-        close_connection(provision_pool, provision);
+        log.debug("send closed fd={d}", .{provision.socket});
+        log.debug("queueing close with ctx ptr: {*}", .{ctx});
+        try rt.net.close(.{
+            .fd = provision.socket,
+            .func = close_task,
+            .ctx = ctx,
+        });
+
         return;
     }
 
@@ -139,6 +134,21 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
         .buffer = provision.buffer,
         .func = recv_task,
         .ctx = ctx,
+    });
+}
+
+fn close_task(rt: *Runtime, _: *const Task, ctx: ?*anyopaque) !void {
+    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+    const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+
+    log.debug("close socket fd={d}", .{provision.socket});
+    provision_pool.release(provision.index);
+    const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(rt.storage.get("server_socket").?));
+
+    // requeue accept
+    try rt.net.accept(.{
+        .socket = server_socket.*,
+        .func = accept_task,
     });
 }
 
@@ -156,9 +166,8 @@ pub fn main() !void {
     var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .{ .multi = thread_count },
-        // technically, accept spawns two so we need to support max_conn + 1;
-        .size_tasks_max = conn_per_thread + 1,
-        .size_aio_jobs_max = conn_per_thread + 1,
+        .size_tasks_max = conn_per_thread,
+        .size_aio_jobs_max = conn_per_thread,
         .size_aio_reap_max = conn_per_thread,
     });
     defer tardy.deinit();
@@ -184,11 +193,14 @@ pub fn main() !void {
                 }.init, alloc);
 
                 try rt.storage.put("provision_pool", pool);
-                try rt.net.accept(.{
-                    .socket = socket.*,
-                    .func = accept_task,
-                    .ctx = socket,
-                });
+                try rt.storage.put("server_socket", socket);
+
+                for (0..size) |_| {
+                    try rt.net.accept(.{
+                        .socket = socket.*,
+                        .func = accept_task,
+                    });
+                }
             }
         }.rt_start,
         conn_per_thread,
