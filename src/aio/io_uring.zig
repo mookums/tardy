@@ -278,6 +278,7 @@ pub const AsyncIoUring = struct {
                         job.index,
                         @tagName(@as(std.os.linux.E, @enumFromInt(-cqe.res))),
                     });
+                    break :blk .{ .value = cqe.res };
                 }
             };
 
