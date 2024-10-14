@@ -99,7 +99,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         /// The provided allocator is meant to just initialize any structures that will exist throughout the lifetime
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
         pub fn entry(self: *Self, func: anytype, params: anytype) !void {
-            const thread_count: usize = blk: {
+            const runtime_count: usize = blk: {
                 switch (self.options.threading) {
                     .single => break :blk 1,
                     .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
@@ -107,11 +107,12 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                 }
             };
 
-            log.info("thread count: {d}", .{thread_count});
+            assert(runtime_count > 0);
+            log.info("thread count: {d}", .{runtime_count});
 
             var threads = try std.ArrayListUnmanaged(std.Thread).initCapacity(
                 self.options.allocator,
-                thread_count -| 1,
+                runtime_count -| 1,
             );
             defer {
                 for (threads.items) |thread| {
@@ -128,7 +129,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             });
             defer runtime.deinit();
 
-            for (0..thread_count - 1) |_| {
+            for (0..runtime_count - 1) |_| {
                 const handle = try std.Thread.spawn(.{}, struct {
                     fn thread_init(
                         tardy: *Self,
