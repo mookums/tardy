@@ -14,8 +14,8 @@ const Pool = @import("../core/pool.zig").Pool;
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
-        //flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
-        flags |= std.os.linux.IORING_SETUP_DEFER_TASKRUN;
+        flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
+        //flags |= std.os.linux.IORING_SETUP_DEFER_TASKRUN;
         flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
         break :blk flags;
     };
