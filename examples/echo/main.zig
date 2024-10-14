@@ -1,8 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.@"tardy/example/echo");
 
-const Pool = @import("../../src/core/pool.zig").Pool;
-
+const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);

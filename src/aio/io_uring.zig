@@ -13,7 +13,9 @@ const Pool = @import("../core/pool.zig").Pool;
 
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
-        var flags = std.os.linux.IORING_SETUP_COOP_TASKRUN;
+        var flags = 0;
+        //flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
+        flags |= std.os.linux.IORING_SETUP_DEFER_TASKRUN;
         flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
         break :blk flags;
     };
@@ -223,7 +225,12 @@ pub const AsyncIoUring = struct {
             .fd = fd,
         };
 
-        _ = try uring.inner.recv(@intFromPtr(borrowed.item), fd, .{ .buffer = buffer }, 0);
+        _ = try uring.inner.recv(
+            @intFromPtr(borrowed.item),
+            fd,
+            .{ .buffer = buffer },
+            0,
+        );
     }
 
     pub fn queue_send(
@@ -260,17 +267,17 @@ pub const AsyncIoUring = struct {
             defer uring.jobs.release(job.index);
 
             const result: Result = blk: {
-                if (cqe.res < 0) {
+                if (cqe.res >= 0) {
+                    switch (job.type) {
+                        .accept, .connect => break :blk .{ .socket = cqe.res },
+                        .open => break :blk .{ .fd = cqe.res },
+                        else => break :blk .{ .value = cqe.res },
+                    }
+                } else {
                     log.debug("{d} - other status on SQE: {s}", .{
                         job.index,
                         @tagName(@as(std.os.linux.E, @enumFromInt(-cqe.res))),
                     });
-                }
-
-                switch (job.type) {
-                    .accept, .connect => break :blk .{ .socket = cqe.res },
-                    .open => break :blk .{ .fd = cqe.res },
-                    else => break :blk .{ .value = cqe.res },
                 }
             };
 

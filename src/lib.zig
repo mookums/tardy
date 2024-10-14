@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const log = std.log.scoped(.tardy);
 
@@ -135,6 +136,13 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         parent: *AsyncIO,
                         parameters: anytype,
                     ) void {
+                        // Experimental: Should allow for avoiding contention
+                        // over a shared fd table across threads.
+                        if (comptime builtin.target.os.tag == .linux) {
+                            const result = std.os.linux.unshare(std.os.linux.CLONE.FILES);
+                            if (result < 0) unreachable;
+                        }
+
                         var arena = std.heap.ArenaAllocator.init(options.allocator);
                         defer arena.deinit();
 
