@@ -1,4 +1,11 @@
-# tardy 
+# Tardy
+
+Tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
+Most of the code for this project originated in [zzz](https://github.com/mookums/zzz), a performance oriented networking framework.
+
+- **Performant**: Tardy utilizes the latest Asynchronous APIs while minimizing allocations.
+- **Portable**: Tardy natively supports Linux, Mac and Windows. Easy to port through the custom Async I/O system.
+- **Scalable**: Tardy uses very little memory initially and can be tuned using various configuration options.
 
 ## Installing
 Tracking Latest Zig Stable: `0.13.0`
@@ -16,24 +23,20 @@ const tardy = b.dependency("tardy", .{
 exe.root_module.addImport(tardy);
 ```
 
-## tardy?
-tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime written for Zig. Most of the code for this project originated in [zzz](https://github.com/mookums/zzz), a performance oriented networking framework.
-
-tardy natively supports Linux, Mac and Windows. You can also port tardy to any target by providing an implementation for the Async I/O.
-
 > [!IMPORTANT]
-> tardy is currently **alpha** software. It's fast and it works but is still experimental!
-
-## Performance
-tardy is pretty quick. you can reference the [zzz](https://github.com/mookums/zzz) benchmarks as it uses tardy internally.
+> Tardy is currently **alpha** software. It's fast and it works but is still experimental!
 
 ## Features
 - Modular Asynchronous Implementation
-    - Allows for passing in your own Async I/O implementation.
-    - Comes with:
-        - `io_uring` for Linux (>= 5.1.0).
-        - `epoll` for Linux (>= 2.5.45).
-        - `busy_loop` for Linux, Mac and Windows.
+    - `io_uring` for Linux (>= 5.1.0).
+    - `epoll` for Linux (>= 2.5.45).
+    - `busy_loop` for Linux, Mac and Windows.
 - Single and Multi-threaded Support
 - Callbacks on Async I/O events (through `runtime.[net/fs]`)
 - Green Threads (through `runtime.spawn`)
+
+## Ecosystem
+- [zzz](https://github.com/mookums/zzz): a framework for writing performant and reliable networked services.
+
+## Contribution
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Tardy by you, shall be licensed as MPL2.0, without any additional terms or conditions.
