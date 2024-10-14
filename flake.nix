@@ -1,5 +1,5 @@
 {
-  description = "a high performance communicaton abstraction library";
+  description = "an asynchronous runtime for Zig";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.05";
@@ -29,12 +29,8 @@
             zls
             # SSL Testing
             openssl
-            # Debugging
-            gdb
-            valgrind
             inetutils
             # Benchmarking
-            linuxPackages.perf
             wrk
           ];
         };
