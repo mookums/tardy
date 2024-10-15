@@ -74,12 +74,19 @@ pub fn Pool(comptime T: type) type {
             return &self.items[index];
         }
 
+        /// Is this empty?
         pub fn empty(self: *const Self) bool {
             return self.dirty.count() == 0;
         }
 
+        /// Is this full?
         pub fn full(self: *const Self) bool {
             return self.dirty.count() == self.items.len;
+        }
+
+        /// Returns the number of clean (or available) slots.
+        pub fn clean(self: *const Self) usize {
+            return self.items.len - self.dirty.count();
         }
 
         /// Linearly probes for an available slot in the pool.
