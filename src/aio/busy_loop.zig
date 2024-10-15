@@ -142,14 +142,13 @@ pub const AsyncBusyLoop = struct {
         _ = loop;
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
+    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
+        _ = wait;
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        var first_run: bool = true;
         var reaped: usize = 0;
 
-        while (reaped < min or first_run) {
+        while (reaped < 1) {
             var i: usize = 0;
-
             while (i < loop.inner.items.len and reaped < self.completions.len) : (i += 1) {
                 const job = loop.inner.items[i];
 
@@ -373,8 +372,6 @@ pub const AsyncBusyLoop = struct {
                     },
                 }
             }
-
-            first_run = false;
         }
 
         return self.completions[0..reaped];

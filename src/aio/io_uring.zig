@@ -256,46 +256,38 @@ pub const AsyncIoUring = struct {
         _ = try uring.inner.submit();
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
+    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+        // either wait for atleast 1 or just take whats there.
+        const uring_nr: u32 = if (wait) 1 else 0;
+        //const uring_nr: u32 = @min(self.completions.len, @min(uring.inner.cq_ready(), @intFromBool(wait)));
+        const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
 
-        var first_run: bool = true;
-        var reaped: usize = 0;
+        for (uring.cqes[0..count], 0..) |cqe, i| {
+            const job: *Job = @ptrFromInt(@as(usize, cqe.user_data));
+            defer uring.jobs.release(job.index);
 
-        while (reaped < min or first_run) {
-            const copy_count: usize = self.completions.len - reaped;
-            const uring_nr: u32 = @intCast(@min(copy_count, min));
-            const count = try uring.inner.copy_cqes(uring.cqes[0..copy_count], uring_nr);
+            const result: Result = blk: {
+                if (cqe.res < 0) {
+                    log.debug("{d} - other status on SQE: {s}", .{
+                        job.index,
+                        @tagName(@as(std.os.linux.E, @enumFromInt(-cqe.res))),
+                    });
+                }
+                switch (job.type) {
+                    .accept, .connect => break :blk .{ .socket = cqe.res },
+                    .open => break :blk .{ .fd = cqe.res },
+                    else => break :blk .{ .value = cqe.res },
+                }
+            };
 
-            for (uring.cqes[0..count]) |cqe| {
-                const job: *Job = @ptrFromInt(@as(usize, cqe.user_data));
-                defer uring.jobs.release(job.index);
-
-                const result: Result = blk: {
-                    if (cqe.res < 0) {
-                        log.debug("{d} - other status on SQE: {s}", .{
-                            job.index,
-                            @tagName(@as(std.os.linux.E, @enumFromInt(-cqe.res))),
-                        });
-                    }
-                    switch (job.type) {
-                        .accept, .connect => break :blk .{ .socket = cqe.res },
-                        .open => break :blk .{ .fd = cqe.res },
-                        else => break :blk .{ .value = cqe.res },
-                    }
-                };
-
-                self.completions[reaped] = Completion{
-                    .result = result,
-                    .task = job.task,
-                };
-                reaped += 1;
-            }
-
-            first_run = false;
+            self.completions[i] = Completion{
+                .result = result,
+                .task = job.task,
+            };
         }
 
-        return self.completions[0..reaped];
+        return self.completions[0..count];
     }
 
     pub fn to_async(self: *AsyncIoUring) AsyncIO {

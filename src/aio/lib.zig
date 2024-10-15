@@ -151,7 +151,7 @@ pub const AsyncIO = struct {
         buffer: []const u8,
     ) anyerror!void,
 
-    _reap: *const fn (self: *AsyncIO, min: usize) anyerror![]Completion,
+    _reap: *const fn (self: *AsyncIO, wait: bool) anyerror![]Completion,
     _submit: *const fn (self: *AsyncIO) anyerror!void,
 
     /// This provides the completions that the backend will utilize when
@@ -249,9 +249,9 @@ pub const AsyncIO = struct {
         try @call(.auto, self._queue_send, .{ self, task, fd, buffer });
     }
 
-    pub fn reap(self: *AsyncIO, min: usize) ![]Completion {
+    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         assert(self.attached);
-        return try @call(.auto, self._reap, .{ self, min });
+        return try @call(.auto, self._reap, .{ self, wait });
     }
 
     pub fn submit(self: *AsyncIO) !void {

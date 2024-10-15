@@ -91,7 +91,7 @@ pub const Runtime = struct {
             const wait_for_io = self.scheduler.runnable.count() == 0;
             log.debug("Wait for I/O: {}", .{wait_for_io});
 
-            const completions = try self.aio.reap(@intFromBool(wait_for_io));
+            const completions = try self.aio.reap(wait_for_io);
             for (completions) |completion| {
                 const index = completion.task;
                 const task = &self.scheduler.tasks.items[index];
