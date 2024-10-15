@@ -249,12 +249,12 @@ pub const AsyncEpoll = struct {
 
             // Handle all of the blocking IO first.
             const blocking_events = @min(rem_events, epoll.blocking.items.len);
-            blocking_loop: for (epoll.blocking.items[0..blocking_events]) |job| {
+            blocking_loop: for (epoll.blocking.items[0..blocking_events], 0..) |job, block_i| {
                 assert(epoll.jobs.dirty.isSet(job.index));
 
                 var job_complete = true;
                 defer if (job_complete) {
-                    _ = epoll.blocking.swapRemove(job.index);
+                    _ = epoll.blocking.swapRemove(block_i);
                     epoll.jobs.release(job.index);
                 };
 
