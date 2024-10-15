@@ -17,7 +17,7 @@ fn open_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     provision.fd = fd;
 
     if (fd <= 0) {
-        log.debug("File not found!", .{});
+        try std.io.getStdOut().writeAll("No such file or directory");
         rt.stop();
         return;
     }
@@ -92,7 +92,7 @@ pub fn main() !void {
     var tardy = try Tardy.init(.{
         .allocator = allocator,
         .threading = .single,
-        .size_tasks_max = 2,
+        .size_tasks_max = 1,
         .size_aio_jobs_max = 1,
         .size_aio_reap_max = 1,
     });
@@ -105,7 +105,8 @@ pub fn main() !void {
             if (i == 1) break :blk arg;
         }
 
-        @panic("file name was not passed in: ./exe [file name]");
+        try std.io.getStdOut().writeAll("file name not passed in: ./cat [file name]");
+        return;
     };
 
     const EntryParams = struct {
