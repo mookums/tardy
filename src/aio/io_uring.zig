@@ -272,18 +272,16 @@ pub const AsyncIoUring = struct {
                 defer uring.jobs.release(job.index);
 
                 const result: Result = blk: {
-                    if (cqe.res >= 0) {
-                        switch (job.type) {
-                            .accept, .connect => break :blk .{ .socket = cqe.res },
-                            .open => break :blk .{ .fd = cqe.res },
-                            else => break :blk .{ .value = cqe.res },
-                        }
-                    } else {
+                    if (cqe.res < 0) {
                         log.debug("{d} - other status on SQE: {s}", .{
                             job.index,
                             @tagName(@as(std.os.linux.E, @enumFromInt(-cqe.res))),
                         });
-                        break :blk .{ .value = cqe.res };
+                    }
+                    switch (job.type) {
+                        .accept, .connect => break :blk .{ .socket = cqe.res },
+                        .open => break :blk .{ .fd = cqe.res },
+                        else => break :blk .{ .value = cqe.res },
                     }
                 };
 
