@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Task = @import("./task.zig").Task;
+const TaskFn = @import("./task.zig").TaskFn;
 const Pool = @import("../core/pool.zig").Pool;
 
 pub const Scheduler = struct {
@@ -34,7 +35,7 @@ pub const Scheduler = struct {
     /// This means that if the predicate is true that it will run.
     pub fn spawn(
         self: *Scheduler,
-        task_fn: Task.TaskFn,
+        task_fn: TaskFn,
         task_ctx: ?*anyopaque,
         task_state: Task.State,
     ) !usize {

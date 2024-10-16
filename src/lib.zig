@@ -6,6 +6,7 @@ const log = std.log.scoped(.tardy);
 pub const Pool = @import("core/pool.zig").Pool;
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
+pub const TaskFn = @import("runtime/task.zig").TaskFn;
 
 const auto_async_match = @import("aio/lib.zig").auto_async_match;
 const async_to_type = @import("aio/lib.zig").async_to_type;

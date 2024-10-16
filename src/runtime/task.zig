@@ -4,9 +4,9 @@ const log = std.log.scoped(.@"tardy/runtime/task");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const Result = @import("../aio/completion.zig").Result;
+pub const TaskFn = *const fn (*Runtime, *const Task, ?*anyopaque) anyerror!void;
 
 pub const Task = struct {
-    pub const TaskFn = *const fn (*Runtime, *const Task, ?*anyopaque) anyerror!void;
     pub const State = enum(u8) {
         waiting,
         runnable,

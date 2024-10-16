@@ -1,12 +1,12 @@
 const std = @import("std");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
-const Task = @import("../runtime/task.zig").Task;
+const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 pub const Filesystem = struct {
     const OpenParams = struct {
         path: []const u8,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -25,7 +25,7 @@ pub const Filesystem = struct {
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -44,7 +44,7 @@ pub const Filesystem = struct {
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -61,7 +61,7 @@ pub const Filesystem = struct {
 
     const CloseParams = struct {
         fd: std.posix.fd_t,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 

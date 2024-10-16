@@ -1,12 +1,12 @@
 const std = @import("std");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
-const Task = @import("../runtime/task.zig").Task;
+const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 pub const Net = struct {
     const AcceptParams = struct {
         socket: std.posix.socket_t,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -23,7 +23,7 @@ pub const Net = struct {
     const RecvParams = struct {
         socket: std.posix.socket_t,
         buffer: []u8,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -40,7 +40,7 @@ pub const Net = struct {
     const SendParams = struct {
         socket: std.posix.socket_t,
         buffer: []const u8,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
@@ -56,7 +56,7 @@ pub const Net = struct {
 
     const CloseParams = struct {
         fd: std.posix.fd_t,
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 

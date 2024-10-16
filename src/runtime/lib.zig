@@ -4,7 +4,8 @@ const log = std.log.scoped(.@"tardy/runtime");
 
 const AsyncIO = @import("../aio/lib.zig").AsyncIO;
 const Scheduler = @import("./scheduler.zig").Scheduler;
-const Task = @import("task.zig").Task;
+const Task = @import("./task.zig").Task;
+const TaskFn = @import("./task.zig").TaskFn;
 
 const Net = @import("../net/lib.zig").Net;
 const Filesystem = @import("../fs/lib.zig").Filesystem;
@@ -49,7 +50,7 @@ pub const Runtime = struct {
     }
 
     const SpawnParams = struct {
-        func: Task.TaskFn,
+        func: TaskFn,
         ctx: ?*anyopaque = null,
     };
 
