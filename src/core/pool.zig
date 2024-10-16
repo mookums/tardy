@@ -104,9 +104,8 @@ pub fn Pool(comptime T: type) type {
         ///
         /// Returns a tuple of the index into the pool and a pointer to the item.
         pub fn borrow_hint(self: *Self, hint: usize) !Borrow(T) {
-            var index: usize = hint;
             for (0..self.items.len) |i| {
-                index = @mod(index + i, self.items.len);
+                const index = @mod(hint + i, self.items.len);
                 if (!self.dirty.isSet(index)) {
                     self.dirty.set(index);
                     return .{ .index = index, .item = self.get_ptr(index) };
@@ -213,6 +212,38 @@ test "Pool Borrowing" {
     }
 }
 
+test "Pool Borrowing Hint" {
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024, struct {
+        fn init_hook(buffer: []u8, _: anytype) void {
+            for (buffer) |*item| {
+                item.* = 3;
+            }
+        }
+    }.init_hook, .{});
+    defer byte_pool.deinit(null, null);
+
+    for (0..1024) |i| {
+        const x = try byte_pool.borrow_hint(i);
+        try testing.expectEqual(3, x.item.*);
+    }
+}
+
+test "Pool Borrowing Unset" {
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024, struct {
+        fn init_hook(buffer: []u8, _: anytype) void {
+            for (buffer) |*item| {
+                item.* = 3;
+            }
+        }
+    }.init_hook, .{});
+    defer byte_pool.deinit(null, null);
+
+    for (0..1024) |i| {
+        const x = byte_pool.borrow_assume_unset(i);
+        try testing.expectEqual(3, x.item.*);
+    }
+}
+
 test "Pool Iterator" {
     var int_pool = try Pool(usize).init(testing.allocator, 1024, null, null);
     defer int_pool.deinit(null, null);
@@ -224,8 +255,8 @@ test "Pool Iterator" {
 
     var iter = int_pool.iterator();
     while (iter.next()) |item| {
-        try testing.expect(int_pool.dirty.isSet(item.*));
-        int_pool.release(item.*);
+        try testing.expect(int_pool.dirty.isSet(item));
+        int_pool.release(item);
     }
 
     try testing.expect(int_pool.empty());
