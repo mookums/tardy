@@ -8,7 +8,7 @@ pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
 pub const TaskFn = @import("runtime/task.zig").TaskFn;
 
-const auto_async_match = @import("aio/lib.zig").auto_async_match;
+pub const auto_async_match = @import("aio/lib.zig").auto_async_match;
 const async_to_type = @import("aio/lib.zig").async_to_type;
 const AsyncIO = @import("aio/lib.zig").AsyncIO;
 pub const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
