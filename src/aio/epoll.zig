@@ -240,11 +240,12 @@ pub const AsyncEpoll = struct {
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
+        var first_run: bool = true;
 
-        const busy_wait: bool = wait and epoll.blocking.items.len > 0;
+        const busy_wait: bool = !wait or epoll.blocking.items.len > 0;
         log.debug("busy wait? {}", .{busy_wait});
 
-        while (reaped < 1) {
+        while ((reaped < 1 and wait) or first_run) {
             var blocking_reaped: usize = 0;
             blocking_loop: for (epoll.blocking.items[0..], 0..) |job, block_i| {
                 assert(epoll.jobs.dirty.isSet(job.index));
@@ -462,6 +463,8 @@ pub const AsyncEpoll = struct {
 
                 reaped += 1;
             }
+
+            first_run = false;
         }
 
         return self.completions[0..reaped];
