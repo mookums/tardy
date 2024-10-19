@@ -94,7 +94,9 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
 }
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
     const size = 1024;
 
     var tardy = try Tardy.init(.{
@@ -144,23 +146,40 @@ pub fn main() !void {
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, size);
 
-    try tardy.entry(struct {
-        fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
-            const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
-            pool.* = try Pool(Provision).init(alloc, size, struct {
-                fn init(items: []Provision, all: anytype) void {
-                    for (items) |*item| {
-                        item.buffer = all.alloc(u8, size) catch unreachable;
+    try tardy.entry(
+        struct {
+            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
+                const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
+                pool.* = try Pool(Provision).init(alloc, size, struct {
+                    fn init(items: []Provision, all: anytype) void {
+                        for (items) |*item| {
+                            item.buffer = all.alloc(u8, size) catch unreachable;
+                        }
                     }
-                }
-            }.init, alloc);
+                }.init, alloc);
 
-            try rt.storage.put("provision_pool", pool);
-            try rt.net.accept(.{
-                .socket = t_socket.*,
-                .func = accept_task,
-                .ctx = t_socket,
-            });
-        }
-    }.rt_start, &socket);
+                try rt.storage.put("provision_pool", pool);
+                try rt.net.accept(.{
+                    .socket = t_socket.*,
+                    .func = accept_task,
+                    .ctx = t_socket,
+                });
+            }
+        }.rt_start,
+        &socket,
+        struct {
+            fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
+                const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+                provision_pool.deinit(struct {
+                    fn pool_deinit(items: []Provision, a: anytype) void {
+                        for (items) |item| {
+                            a.free(item.buffer);
+                        }
+                    }
+                }.pool_deinit, alloc);
+                alloc.destroy(provision_pool);
+            }
+        }.rt_end,
+        void,
+    );
 }

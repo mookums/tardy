@@ -20,9 +20,16 @@ pub fn main() !void {
     });
     defer tardy.deinit();
 
-    try tardy.entry(struct {
-        fn start(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {
-            try rt.spawn(.{ .func = log_task });
-        }
-    }.start, void);
+    try tardy.entry(
+        struct {
+            fn init(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {
+                try rt.spawn(.{ .func = log_task });
+            }
+        }.init,
+        void,
+        struct {
+            fn deinit(_: *Runtime, _: std.mem.Allocator, _: anytype) void {}
+        }.deinit,
+        void,
+    );
 }

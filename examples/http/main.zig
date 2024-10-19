@@ -204,5 +204,22 @@ pub fn main() !void {
             }
         }.rt_start,
         conn_per_thread,
+        struct {
+            fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
+                const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(rt.storage.get("server_socket").?));
+                alloc.destroy(server_socket);
+
+                const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+                provision_pool.deinit(struct {
+                    fn pool_deinit(items: []Provision, a: anytype) void {
+                        for (items) |item| {
+                            a.free(item.buffer);
+                        }
+                    }
+                }.pool_deinit, alloc);
+                alloc.destroy(provision_pool);
+            }
+        }.rt_end,
+        void,
     );
 }

@@ -99,7 +99,13 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         ///
         /// The provided allocator is meant to just initialize any structures that will exist throughout the lifetime
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
-        pub fn entry(self: *Self, func: anytype, params: anytype) !void {
+        pub fn entry(
+            self: *Self,
+            init_func: anytype,
+            init_params: anytype,
+            deinit_func: anytype,
+            deinit_params: anytype,
+        ) !void {
             const runtime_count: usize = blk: {
                 switch (self.options.threading) {
                     .single => break :blk 1,
@@ -136,7 +142,8 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         tardy: *Self,
                         options: TardyOptions,
                         parent: *AsyncIO,
-                        parameters: anytype,
+                        init_parameters: anytype,
+                        deinit_parameters: anytype,
                     ) void {
                         // Experimental: Should allow for avoiding contention
                         // over a shared fd table across threads.
@@ -145,9 +152,6 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                             if (result < 0) unreachable;
                         }
 
-                        var arena = std.heap.ArenaAllocator.init(options.allocator);
-                        defer arena.deinit();
-
                         var thread_rt = tardy.spawn_runtime(.{
                             .parent_async = parent,
                             .size_aio_jobs_max = options.size_aio_jobs_max,
@@ -155,18 +159,19 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         }) catch return;
                         defer thread_rt.deinit();
 
-                        @call(.auto, func, .{ &thread_rt, arena.allocator(), parameters }) catch return;
+                        @call(.auto, init_func, .{ &thread_rt, options.allocator, init_parameters }) catch return;
+                        defer @call(.auto, deinit_func, .{ &thread_rt, options.allocator, deinit_parameters });
+
                         thread_rt.run() catch return;
                     }
-                }.thread_init, .{ self, self.options, &runtime.aio, params });
+                }.thread_init, .{ self, self.options, &runtime.aio, init_params, deinit_params });
 
                 threads.appendAssumeCapacity(handle);
             }
 
-            var arena = std.heap.ArenaAllocator.init(self.options.allocator);
-            defer arena.deinit();
+            try @call(.auto, init_func, .{ &runtime, self.options.allocator, init_params });
+            defer @call(.auto, deinit_func, .{ &runtime, self.options.allocator, deinit_params });
 
-            try @call(.auto, func, .{ &runtime, arena.allocator(), params });
             try runtime.run();
         }
     };
