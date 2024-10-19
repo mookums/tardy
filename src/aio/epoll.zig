@@ -246,16 +246,17 @@ pub const AsyncEpoll = struct {
         log.debug("busy wait? {}", .{busy_wait});
 
         while ((reaped < 1 and wait) or first_run) {
-            var blocking_reaped: usize = 0;
-            blocking_loop: for (epoll.blocking.items[0..], 0..) |job, block_i| {
+            blocking_loop: for (0..epoll.blocking.items.len) |_| {
+                const job = epoll.blocking.popOrNull() orelse break;
                 assert(epoll.jobs.dirty.isSet(job.index));
                 if (self.completions.len - reaped == 0) break;
 
                 var job_complete = true;
                 defer if (job_complete) {
-                    _ = epoll.blocking.swapRemove(block_i);
                     epoll.jobs.release(job.index);
-                    blocking_reaped += 1;
+                } else {
+                    // if not done, readd to blocking list.
+                    epoll.blocking.appendAssumeCapacity(job);
                 };
 
                 const result: Result = result: {
@@ -350,7 +351,7 @@ pub const AsyncEpoll = struct {
                 reaped += 1;
             }
 
-            const timeout: i32 = if (busy_wait or blocking_reaped > 0) 0 else -1;
+            const timeout: i32 = if (busy_wait or reaped > 0) 0 else -1;
 
             // Handle all of the epoll I/O
             const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..], timeout);
