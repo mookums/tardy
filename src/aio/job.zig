@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const Job = struct {
     type: union(enum) {
-        open: []const u8,
+        open: [:0]const u8,
         accept,
         connect: std.posix.sockaddr,
         recv: []u8,

@@ -99,8 +99,10 @@ pub fn main() !void {
     defer tardy.deinit();
 
     var i: usize = 0;
-    var args = std.process.args();
-    const file_name: []const u8 = blk: {
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    const file_name: [:0]const u8 = blk: {
         while (args.next()) |arg| : (i += 1) {
             if (i == 1) break :blk arg;
         }
@@ -111,7 +113,7 @@ pub fn main() !void {
 
     const EntryParams = struct {
         provision: FileProvision,
-        file_name: []const u8,
+        file_name: [:0]const u8,
     };
 
     const buffer = try allocator.alloc(u8, 512);

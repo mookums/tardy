@@ -48,7 +48,7 @@ pub const AsyncEpoll = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        path: []const u8,
+        path: [:0]const u8,
     ) !void {
         const epoll: *Self = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
@@ -262,7 +262,7 @@ pub const AsyncEpoll = struct {
                     switch (job.type) {
                         else => unreachable,
                         .open => |path| {
-                            const opened = std.posix.openat(std.posix.AT.FDCWD, path, .{}, 0) catch |e| {
+                            const opened = std.posix.openatZ(std.posix.AT.FDCWD, path, .{}, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => {
                                         job_complete = false;

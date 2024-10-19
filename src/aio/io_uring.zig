@@ -82,7 +82,7 @@ pub const AsyncIoUring = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        path: []const u8,
+        path: [:0]const u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = try uring.jobs.borrow_hint(task);

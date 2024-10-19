@@ -5,7 +5,7 @@ const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 pub const Filesystem = struct {
     const OpenParams = struct {
-        path: []const u8,
+        path: [:0]const u8,
         func: TaskFn,
         ctx: ?*anyopaque = null,
     };

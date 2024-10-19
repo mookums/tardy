@@ -97,7 +97,7 @@ pub const AsyncIO = struct {
     _queue_open: *const fn (
         self: *AsyncIO,
         task: usize,
-        path: []const u8,
+        path: [:0]const u8,
     ) anyerror!void,
 
     _queue_read: *const fn (
@@ -172,7 +172,7 @@ pub const AsyncIO = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        path: []const u8,
+        path: [:0]const u8,
     ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_open, .{ self, task, path });

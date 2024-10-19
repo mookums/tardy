@@ -25,7 +25,7 @@ pub const AsyncBusyLoop = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        path: []const u8,
+        path: [:0]const u8,
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
@@ -157,7 +157,7 @@ pub const AsyncBusyLoop = struct {
                         const com_ptr = &self.completions[reaped];
 
                         const res: std.posix.fd_t = blk: {
-                            const open_result = std.posix.openat(std.posix.AT.FDCWD, path, .{}, 0) catch |e| {
+                            const open_result = std.posix.openatZ(std.posix.AT.FDCWD, path, .{}, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     else => {
