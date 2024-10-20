@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/echo");
 
 const Pool = @import("tardy").Pool;
@@ -20,36 +19,17 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    switch (comptime builtin.os.tag) {
-        .windows => {
-            const server_socket: std.os.windows.ws2_32.SOCKET = @ptrCast(
-                @alignCast(ctx.?),
-            );
-
-            try rt.net.accept(.{
-                .socket = server_socket,
-                .func = accept_task,
-                .ctx = ctx,
-            });
-        },
-        else => {
-            const server_socket: *std.posix.socket_t = @ptrCast(
-                @alignCast(ctx.?),
-            );
-
-            try rt.net.accept(.{
-                .socket = server_socket.*,
-                .func = accept_task,
-                .ctx = ctx,
-            });
-        },
-    }
+fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
+    const server_socket = rt.storage.get("server_socket", std.posix.socket_t);
 
     const child_socket = t.result.?.socket;
     try Cross.socket.to_nonblock(child_socket);
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
+    try rt.net.accept(.{
+        .socket = server_socket,
+        .func = accept_task,
+    });
 
     // get provision
     // assign based on index
@@ -120,7 +100,7 @@ pub fn main() !void {
 
     const addr = try std.net.Address.parseIp(host, port);
 
-    var socket: std.posix.socket_t = blk: {
+    const socket: std.posix.socket_t = blk: {
         const socket_flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
         break :blk try std.posix.socket(
             addr.any.family,
@@ -158,7 +138,7 @@ pub fn main() !void {
 
     try tardy.entry(
         struct {
-            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
+            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: std.posix.socket_t) !void {
                 const pool = try Pool(Provision).init(alloc, size, struct {
                     fn init(items: []Provision, all: anytype) void {
                         for (items) |*item| {
@@ -168,23 +148,15 @@ pub fn main() !void {
                 }.init, alloc);
 
                 try rt.storage.store("provision_pool", pool);
+                try rt.storage.store("server_socket", t_socket);
 
-                if (comptime builtin.os.tag == .windows) {
-                    try rt.net.accept(.{
-                        .socket = t_socket.*,
-                        .func = accept_task,
-                        .ctx = t_socket.*,
-                    });
-                } else {
-                    try rt.net.accept(.{
-                        .socket = t_socket.*,
-                        .func = accept_task,
-                        .ctx = t_socket,
-                    });
-                }
+                try rt.net.accept(.{
+                    .socket = t_socket,
+                    .func = accept_task,
+                });
             }
         }.rt_start,
-        &socket,
+        socket,
         struct {
             fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
                 const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));

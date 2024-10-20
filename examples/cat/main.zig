@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/file");
 
 const Runtime = @import("tardy").Runtime;

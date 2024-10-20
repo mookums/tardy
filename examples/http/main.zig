@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/http");
 
 const Pool = @import("tardy").Pool;
@@ -55,17 +54,10 @@ fn create_socket(addr: std.net.Address) !std.posix.socket_t {
 fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
     const child_socket = t.result.?.socket;
 
-    switch (comptime builtin.os.tag) {
-        .windows => if (child_socket == std.os.windows.ws2_32.INVALID_SOCKET) {
-            log.err("failed to accept socket", .{});
-            rt.stop();
-            return;
-        },
-        else => if (child_socket <= 0) {
-            log.err("failed to accept socket", .{});
-            rt.stop();
-            return;
-        },
+    if (!Cross.socket.is_valid(child_socket)) {
+        log.err("failed to accept socket", .{});
+        rt.stop();
+        return;
     }
 
     try Cross.socket.to_nonblock(child_socket);
