@@ -126,13 +126,13 @@ pub const AsyncIO = struct {
     _queue_accept: *const fn (
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
     ) anyerror!void,
 
     _queue_connect: *const fn (
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         host: []const u8,
         port: u16,
     ) anyerror!void,
@@ -140,14 +140,14 @@ pub const AsyncIO = struct {
     _queue_recv: *const fn (
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []u8,
     ) anyerror!void,
 
     _queue_send: *const fn (
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []const u8,
     ) anyerror!void,
 
@@ -212,41 +212,41 @@ pub const AsyncIO = struct {
     pub fn queue_accept(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_accept, .{ self, task, fd });
+        try @call(.auto, self._queue_accept, .{ self, task, socket });
     }
 
     pub fn queue_connect(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         host: []const u8,
         port: u16,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_connect, .{ self, task, fd, host, port });
+        try @call(.auto, self._queue_connect, .{ self, task, socket, host, port });
     }
 
     pub fn queue_recv(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_recv, .{ self, task, fd, buffer });
+        try @call(.auto, self._queue_recv, .{ self, task, socket, buffer });
     }
 
     pub fn queue_send(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_send, .{ self, task, fd, buffer });
+        try @call(.auto, self._queue_send, .{ self, task, socket, buffer });
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {

@@ -1,27 +1,18 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/echo");
 
 const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
+const Cross = @import("tardy").Cross;
 
 const Provision = struct {
     index: usize,
     socket: std.posix.socket_t,
     buffer: []u8,
 };
-
-fn socket_to_nonblocking(socket: std.posix.socket_t) !void {
-    const current_flags = try std.posix.fcntl(socket, std.posix.F.GETFL, 0);
-    var new_flags = @as(
-        std.posix.O,
-        @bitCast(@as(u32, @intCast(current_flags))),
-    );
-    new_flags.NONBLOCK = true;
-    const arg: u32 = @bitCast(new_flags);
-    _ = try std.posix.fcntl(socket, std.posix.F.SETFL, arg);
-}
 
 fn close_connection(provision_pool: *Pool(Provision), provision: *const Provision) void {
     log.debug("closed connection fd={d}", .{provision.socket});
@@ -30,16 +21,35 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
 }
 
 fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(ctx.?));
+    switch (comptime builtin.os.tag) {
+        .windows => {
+            const server_socket: std.os.windows.ws2_32.SOCKET = @ptrCast(
+                @alignCast(ctx.?),
+            );
+
+            try rt.net.accept(.{
+                .socket = server_socket,
+                .func = accept_task,
+                .ctx = ctx,
+            });
+        },
+        else => {
+            const server_socket: *std.posix.socket_t = @ptrCast(
+                @alignCast(ctx.?),
+            );
+
+            try rt.net.accept(.{
+                .socket = server_socket.*,
+                .func = accept_task,
+                .ctx = ctx,
+            });
+        },
+    }
+
     const child_socket = t.result.?.socket;
-    try socket_to_nonblocking(child_socket);
+    try Cross.socket.to_nonblock(child_socket);
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    try rt.net.accept(.{
-        .socket = server_socket.*,
-        .func = accept_task,
-        .ctx = ctx,
-    });
 
     // get provision
     // assign based on index
@@ -108,7 +118,7 @@ pub fn main() !void {
     const host = "0.0.0.0";
     const port = 9862;
 
-    const addr = try std.net.Address.resolveIp(host, port);
+    const addr = try std.net.Address.parseIp(host, port);
 
     var socket: std.posix.socket_t = blk: {
         const socket_flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
@@ -142,7 +152,7 @@ pub fn main() !void {
         );
     }
 
-    try socket_to_nonblocking(socket);
+    try Cross.socket.to_nonblock(socket);
     try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
     try std.posix.listen(socket, size);
 
@@ -159,11 +169,20 @@ pub fn main() !void {
                 }.init, alloc);
 
                 try rt.storage.put("provision_pool", pool);
-                try rt.net.accept(.{
-                    .socket = t_socket.*,
-                    .func = accept_task,
-                    .ctx = t_socket,
-                });
+
+                if (comptime builtin.os.tag == .windows) {
+                    try rt.net.accept(.{
+                        .socket = t_socket.*,
+                        .func = accept_task,
+                        .ctx = t_socket.*,
+                    });
+                } else {
+                    try rt.net.accept(.{
+                        .socket = t_socket.*,
+                        .func = accept_task,
+                        .ctx = t_socket,
+                    });
+                }
             }
         }.rt_start,
         &socket,

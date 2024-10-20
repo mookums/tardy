@@ -30,7 +30,6 @@ pub const AsyncBusyLoop = struct {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .open = path },
-            .fd = undefined,
             .task = task,
         });
     }
@@ -44,8 +43,13 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
-            .fd = fd,
+            .type = .{
+                .read = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
         });
     }
@@ -59,8 +63,13 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
-            .fd = fd,
+            .type = .{
+                .write = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
         });
     }
@@ -72,8 +81,7 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .close,
-            .fd = fd,
+            .type = .{ .close = fd },
             .task = task,
         });
     }
@@ -85,8 +93,7 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .accept,
-            .fd = socket,
+            .type = .{ .accept = socket },
             .task = task,
         });
     }
@@ -103,8 +110,12 @@ pub const AsyncBusyLoop = struct {
         const addr = try std.net.Address.parseIp(host, port);
 
         loop.inner.appendAssumeCapacity(.{
-            .type = .{ .connect = addr.any },
-            .fd = socket,
+            .type = .{
+                .connect = .{
+                    .socket = socket,
+                    .addr = addr.any,
+                },
+            },
             .task = task,
         });
     }
@@ -117,8 +128,12 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .{ .recv = buffer },
-            .fd = socket,
+            .type = .{
+                .recv = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
         });
     }
@@ -131,8 +146,12 @@ pub const AsyncBusyLoop = struct {
     ) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
-            .type = .{ .send = buffer },
-            .fd = socket,
+            .type = .{
+                .send = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
         });
     }
@@ -157,17 +176,21 @@ pub const AsyncBusyLoop = struct {
                         const com_ptr = &self.completions[reaped];
 
                         const res: std.posix.fd_t = blk: {
-                            const open_result = std.posix.openatZ(std.posix.AT.FDCWD, path, .{}, 0) catch |e| {
+                            const open_result = std.fs.cwd().openFileZ(path.ptr, .{}) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     else => {
                                         log.debug("open failed: {}", .{e});
-                                        break :blk -1;
+                                        if (comptime builtin.os.tag == .windows) {
+                                            break :blk std.os.windows.INVALID_HANDLE_VALUE;
+                                        } else {
+                                            break :blk -1;
+                                        }
                                     },
                                 }
                             };
 
-                            break :blk open_result;
+                            break :blk open_result.handle;
                         };
 
                         com_ptr.result = .{ .fd = res };
@@ -179,12 +202,19 @@ pub const AsyncBusyLoop = struct {
                     .read => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const res: std.posix.fd_t = blk: {
-                            const pread_result = std.posix.pread(job.fd, inner.buffer, inner.offset) catch |e| {
+                        const res: i32 = blk: {
+                            const pread_result = std.posix.pread(
+                                inner.fd,
+                                inner.buffer,
+                                inner.offset,
+                            ) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.Unseekable => {
-                                        const read_result = std.posix.read(job.fd, inner.buffer) catch |re| switch (re) {
+                                        const read_result = std.posix.read(
+                                            inner.fd,
+                                            inner.buffer,
+                                        ) catch |re| switch (re) {
                                             error.WouldBlock => continue,
                                             else => {
                                                 log.debug("read failed: {}", .{re});
@@ -213,16 +243,19 @@ pub const AsyncBusyLoop = struct {
                     .write => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const res: std.posix.fd_t = blk: {
+                        const res: i32 = blk: {
                             const pwrite_result = std.posix.pwrite(
-                                job.fd,
+                                inner.fd,
                                 inner.buffer,
                                 inner.offset,
                             ) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.Unseekable => {
-                                        const write_result = std.posix.write(job.fd, inner.buffer) catch |we| switch (we) {
+                                        const write_result = std.posix.write(
+                                            inner.fd,
+                                            inner.buffer,
+                                        ) catch |we| switch (we) {
                                             error.WouldBlock => continue,
                                             else => {
                                                 log.debug("write failed: {}", .{we});
@@ -248,20 +281,20 @@ pub const AsyncBusyLoop = struct {
                         i -|= 1;
                         reaped += 1;
                     },
-                    .close => {
+                    .close => |handle| {
                         const com_ptr = &self.completions[reaped];
-                        std.posix.close(job.fd);
+                        std.posix.close(handle);
                         com_ptr.result = .{ .value = 0 };
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;
                     },
-                    .accept => {
+                    .accept => |socket| {
                         const com_ptr = &self.completions[reaped];
 
-                        const res: std.posix.fd_t = blk: {
-                            const accept_result = std.posix.accept(job.fd, null, null, 0) catch |e| {
+                        const res: std.posix.socket_t = blk: {
+                            const accept_result = std.posix.accept(socket, null, null, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.ConnectionResetByPeer => switch (comptime builtin.target.os.tag) {
@@ -287,47 +320,47 @@ pub const AsyncBusyLoop = struct {
                         i -|= 1;
                         reaped += 1;
                     },
-                    .connect => |addr| {
+                    .connect => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const addr_len: std.posix.socklen_t = switch (addr.family) {
+                        const addr_len: std.posix.socklen_t = switch (inner.addr.family) {
                             std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
                             std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
                             std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
                             else => @panic("Unsupported!"),
                         };
 
-                        const res: std.posix.fd_t = blk: {
-                            _ = std.posix.connect(job.fd, &addr, addr_len) catch |e| {
+                        const res: i32 = blk: {
+                            _ = std.posix.connect(inner.socket, &inner.addr, addr_len) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.ConnectionResetByPeer => switch (comptime builtin.target.os.tag) {
-                                        .windows => break :blk std.os.windows.ws2_32.INVALID_SOCKET,
+                                        .windows => break :blk 0,
                                         else => break :blk 0,
                                     },
                                     else => {
                                         log.debug("connect failed: {}", .{e});
                                         switch (comptime builtin.target.os.tag) {
-                                            .windows => break :blk std.os.windows.ws2_32.INVALID_SOCKET,
+                                            .windows => break :blk -1,
                                             else => break :blk -1,
                                         }
                                     },
                                 }
                             };
 
-                            break :blk job.fd;
+                            break :blk 1;
                         };
 
-                        com_ptr.result = .{ .fd = res };
+                        com_ptr.result = .{ .value = res };
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
                         reaped += 1;
                     },
-                    .recv => |buffer| {
+                    .recv => |inner| {
                         const com_ptr = &self.completions[reaped];
                         const len: i32 = blk: {
-                            const read_len = std.posix.recv(job.fd, buffer, 0) catch |e| {
+                            const read_len = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.ConnectionResetByPeer => break :blk 0,
@@ -347,10 +380,10 @@ pub const AsyncBusyLoop = struct {
                         i -|= 1;
                         reaped += 1;
                     },
-                    .send => |buffer| {
+                    .send => |inner| {
                         const com_ptr = &self.completions[reaped];
                         const len: i32 = blk: {
-                            const send_len = std.posix.send(job.fd, buffer, 0) catch |e| {
+                            const send_len = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
                                     error.ConnectionResetByPeer => break :blk 0,

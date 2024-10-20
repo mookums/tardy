@@ -31,6 +31,10 @@ fn add_example(
         .strip = false,
     });
 
+    if (target.result.os.tag == .windows) {
+        example.linkLibC();
+    }
+
     example.root_module.addImport("tardy", tardy_module);
     const install_artifact = b.addInstallArtifact(example, .{});
     b.getInstallStep().dependOn(&install_artifact.step);

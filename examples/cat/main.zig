@@ -1,12 +1,14 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/file");
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
+const Cross = @import("tardy").Cross;
 
 const FileProvision = struct {
-    fd: std.posix.fd_t,
+    fd: std.posix.fd_t = undefined,
     buffer: []u8,
     offset: usize,
 };
@@ -16,7 +18,7 @@ fn open_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const fd: std.posix.fd_t = t.result.?.fd;
     provision.fd = fd;
 
-    if (fd <= 0) {
+    if (!Cross.fd.is_valid(fd)) {
         try std.io.getStdOut().writeAll("No such file or directory");
         rt.stop();
         return;
@@ -48,7 +50,7 @@ fn read_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     }
 
     try rt.fs.write(.{
-        .fd = std.posix.STDOUT_FILENO,
+        .fd = try Cross.get_std_out(),
         .buffer = provision.buffer[0..@intCast(length)],
         .offset = provision.offset,
         .func = write_task,
@@ -122,7 +124,6 @@ pub fn main() !void {
     var params: EntryParams = .{
         .file_name = file_name,
         .provision = .{
-            .fd = 0,
             .buffer = buffer,
             .offset = 0,
         },

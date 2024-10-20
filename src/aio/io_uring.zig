@@ -90,7 +90,6 @@ pub const AsyncIoUring = struct {
             .index = borrowed.index,
             .type = .{ .open = path },
             .task = task,
-            .fd = undefined,
         };
 
         _ = try uring.inner.openat(
@@ -113,9 +112,14 @@ pub const AsyncIoUring = struct {
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
+            .type = .{
+                .read = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
-            .fd = fd,
         };
 
         _ = try uring.inner.read(
@@ -137,9 +141,14 @@ pub const AsyncIoUring = struct {
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
+            .type = .{
+                .write = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
-            .fd = fd,
         };
 
         _ = try uring.inner.write(@intFromPtr(borrowed.item), fd, buffer, offset);
@@ -154,9 +163,8 @@ pub const AsyncIoUring = struct {
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .close,
+            .type = .{ .close = fd },
             .task = task,
-            .fd = fd,
         };
         _ = try uring.inner.close(@intFromPtr(borrowed.item), fd);
     }
@@ -164,20 +172,19 @@ pub const AsyncIoUring = struct {
     pub fn queue_accept(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .accept,
+            .type = .{ .accept = socket },
             .task = task,
-            .fd = fd,
         };
 
         _ = try uring.inner.accept(
             @intFromPtr(borrowed.item),
-            fd,
+            socket,
             null,
             null,
             0,
@@ -187,7 +194,7 @@ pub const AsyncIoUring = struct {
     pub fn queue_connect(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         host: []const u8,
         port: u16,
     ) !void {
@@ -197,15 +204,19 @@ pub const AsyncIoUring = struct {
 
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .connect = addr.any },
+            .type = .{
+                .connect = .{
+                    .socket = socket,
+                    .addr = addr.any,
+                },
+            },
             .task = task,
-            .fd = fd,
         };
 
         _ = try uring.inner.connect(
             @intFromPtr(borrowed.item),
-            fd,
-            &borrowed.item.type.connect,
+            socket,
+            &borrowed.item.type.connect.addr,
             addr.getOsSockLen(),
         );
     }
@@ -213,21 +224,25 @@ pub const AsyncIoUring = struct {
     pub fn queue_recv(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .recv = buffer },
+            .type = .{
+                .recv = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
-            .fd = fd,
         };
 
         _ = try uring.inner.recv(
             @intFromPtr(borrowed.item),
-            fd,
+            socket,
             .{ .buffer = buffer },
             0,
         );
@@ -236,19 +251,23 @@ pub const AsyncIoUring = struct {
     pub fn queue_send(
         self: *AsyncIO,
         task: usize,
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const borrowed = try uring.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .send = buffer },
+            .type = .{
+                .send = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
-            .fd = fd,
         };
 
-        _ = try uring.inner.send(@intFromPtr(borrowed.item), fd, buffer, 0);
+        _ = try uring.inner.send(@intFromPtr(borrowed.item), socket, buffer, 0);
     }
 
     pub fn submit(self: *AsyncIO) !void {
@@ -260,7 +279,6 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
-        //const uring_nr: u32 = @min(self.completions.len, @min(uring.inner.cq_ready(), @intFromBool(wait)));
         const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
 
         for (uring.cqes[0..count], 0..) |cqe, i| {

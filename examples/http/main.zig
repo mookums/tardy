@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/example/http");
 
 const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
+const Cross = @import("tardy").Cross;
 
 const Provision = struct {
     index: usize,
@@ -50,31 +52,27 @@ fn create_socket(addr: std.net.Address) !std.posix.socket_t {
     return socket;
 }
 
-fn socket_to_nonblocking(socket: std.posix.socket_t) !void {
-    const current_flags = try std.posix.fcntl(socket, std.posix.F.GETFL, 0);
-    var new_flags = @as(
-        std.posix.O,
-        @bitCast(@as(u32, @intCast(current_flags))),
-    );
-    new_flags.NONBLOCK = true;
-    const arg: u32 = @bitCast(new_flags);
-    _ = try std.posix.fcntl(socket, std.posix.F.SETFL, arg);
-}
-
 fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
     const child_socket = t.result.?.socket;
 
-    if (child_socket <= 0) {
-        log.err("failed to accept socket", .{});
-        rt.stop();
-        return;
+    switch (comptime builtin.os.tag) {
+        .windows => if (child_socket == std.os.windows.ws2_32.INVALID_SOCKET) {
+            log.err("failed to accept socket", .{});
+            rt.stop();
+            return;
+        },
+        else => if (child_socket <= 0) {
+            log.err("failed to accept socket", .{});
+            rt.stop();
+            return;
+        },
     }
 
-    try socket_to_nonblocking(child_socket);
+    try Cross.socket.to_nonblock(child_socket);
     log.debug("accepted socket fd={d}", .{child_socket});
 
     const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
-    const borrowed = try provision_pool.borrow_hint(@intCast(child_socket));
+    const borrowed = try provision_pool.borrow();
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
     try rt.net.recv(.{
@@ -95,7 +93,7 @@ fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
         log.debug("recv closed fd={d}", .{provision.socket});
         log.debug("queueing close with ctx ptr: {*}", .{ctx});
         try rt.net.close(.{
-            .fd = provision.socket,
+            .socket = provision.socket,
             .func = close_task,
             .ctx = ctx,
         });
@@ -121,7 +119,7 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
         log.debug("send closed fd={d}", .{provision.socket});
         log.debug("queueing close with ctx ptr: {*}", .{ctx});
         try rt.net.close(.{
-            .fd = provision.socket,
+            .socket = provision.socket,
             .func = close_task,
             .ctx = ctx,
         });
@@ -143,13 +141,28 @@ fn close_task(rt: *Runtime, _: *const Task, ctx: ?*anyopaque) !void {
 
     log.debug("close socket fd={d}", .{provision.socket});
     provision_pool.release(provision.index);
-    const server_socket: *std.posix.socket_t = @ptrCast(@alignCast(rt.storage.get("server_socket").?));
 
     // requeue accept
-    try rt.net.accept(.{
-        .socket = server_socket.*,
-        .func = accept_task,
-    });
+    switch (comptime builtin.os.tag) {
+        .windows => {
+            const server_socket: std.os.windows.ws2_32.SOCKET = @ptrCast(
+                @alignCast(rt.storage.get("server_socket").?),
+            );
+            try rt.net.accept(.{
+                .socket = server_socket,
+                .func = accept_task,
+            });
+        },
+        else => {
+            const server_socket: *std.posix.socket_t = @ptrCast(
+                @alignCast(rt.storage.get("server_socket").?),
+            );
+            try rt.net.accept(.{
+                .socket = server_socket.*,
+                .func = accept_task,
+            });
+        },
+    }
 }
 
 pub fn main() !void {
@@ -176,10 +189,10 @@ pub fn main() !void {
         struct {
             fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, size: u16) !void {
                 // socket per thread.
-                const addr = try std.net.Address.resolveIp(host, port);
+                const addr = try std.net.Address.parseIp(host, port);
                 const socket = try alloc.create(std.posix.socket_t);
                 socket.* = try create_socket(addr);
-                try socket_to_nonblocking(socket.*);
+                try Cross.socket.to_nonblock(socket.*);
                 try std.posix.bind(socket.*, &addr.any, addr.getOsSockLen());
                 try std.posix.listen(socket.*, size);
 
@@ -193,7 +206,11 @@ pub fn main() !void {
                 }.init, alloc);
 
                 try rt.storage.put("provision_pool", pool);
-                try rt.storage.put("server_socket", socket);
+                if (comptime builtin.os.tag == .windows) {
+                    try rt.storage.put("server_socket", socket.*);
+                } else {
+                    try rt.storage.put("server_socket", socket);
+                }
 
                 for (0..size) |_| {
                     try rt.net.accept(.{

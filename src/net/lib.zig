@@ -55,7 +55,7 @@ pub const Net = struct {
     }
 
     const CloseParams = struct {
-        fd: std.posix.fd_t,
+        socket: std.posix.socket_t,
         func: TaskFn,
         ctx: ?*anyopaque = null,
     };
@@ -68,6 +68,6 @@ pub const Net = struct {
             .waiting,
         );
 
-        try rt.aio.queue_close(index, params.fd);
+        try rt.aio.queue_close(index, params.socket);
     }
 };

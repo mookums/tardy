@@ -55,7 +55,6 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .open = path },
-            .fd = undefined,
             .task = task,
         };
 
@@ -73,8 +72,13 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .read = .{ .buffer = buffer, .offset = offset } },
-            .fd = fd,
+            .type = .{
+                .read = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
         };
 
@@ -92,8 +96,13 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .write = .{ .buffer = buffer, .offset = offset } },
-            .fd = fd,
+            .type = .{
+                .write = .{
+                    .fd = fd,
+                    .buffer = buffer,
+                    .offset = offset,
+                },
+            },
             .task = task,
         };
 
@@ -109,8 +118,7 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .close,
-            .fd = fd,
+            .type = .{ .close = fd },
             .task = task,
         };
 
@@ -127,8 +135,7 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .accept,
-            .fd = socket,
+            .type = .{ .accept = socket },
             .task = task,
         };
 
@@ -153,8 +160,12 @@ pub const AsyncEpoll = struct {
 
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .connect = addr.any },
-            .fd = socket,
+            .type = .{
+                .connect = .{
+                    .socket = socket,
+                    .addr = addr.any,
+                },
+            },
             .task = task,
         };
 
@@ -176,8 +187,12 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .recv = buffer },
-            .fd = socket,
+            .type = .{
+                .recv = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
         };
 
@@ -199,8 +214,12 @@ pub const AsyncEpoll = struct {
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
-            .type = .{ .send = buffer },
-            .fd = socket,
+            .type = .{
+                .send = .{
+                    .socket = socket,
+                    .buffer = buffer,
+                },
+            },
             .task = task,
         };
 
@@ -280,11 +299,11 @@ pub const AsyncEpoll = struct {
                         },
                         .read => |inner| {
                             const bytes_read = read: {
-                                break :read std.posix.pread(job.fd, inner.buffer, inner.offset) catch |e| {
+                                break :read std.posix.pread(inner.fd, inner.buffer, inner.offset) catch |e| {
                                     switch (e) {
                                         error.WouldBlock => unreachable,
                                         error.Unseekable => {
-                                            break :read std.posix.read(job.fd, inner.buffer) catch |re| {
+                                            break :read std.posix.read(inner.fd, inner.buffer) catch |re| {
                                                 switch (re) {
                                                     error.WouldBlock => {
                                                         job_complete = false;
@@ -309,11 +328,11 @@ pub const AsyncEpoll = struct {
                         },
                         .write => |inner| {
                             const bytes_written = write: {
-                                break :write std.posix.pwrite(job.fd, inner.buffer, inner.offset) catch |e| {
+                                break :write std.posix.pwrite(inner.fd, inner.buffer, inner.offset) catch |e| {
                                     switch (e) {
                                         error.WouldBlock => unreachable,
                                         error.Unseekable => {
-                                            break :write std.posix.write(job.fd, inner.buffer) catch |we| {
+                                            break :write std.posix.write(inner.fd, inner.buffer) catch |we| {
                                                 switch (we) {
                                                     error.WouldBlock => {
                                                         job_complete = false;
@@ -336,8 +355,8 @@ pub const AsyncEpoll = struct {
 
                             break :result .{ .value = @intCast(bytes_written) };
                         },
-                        .close => {
-                            std.posix.close(job.fd);
+                        .close => |handle| {
+                            std.posix.close(handle);
                             break :result .{ .value = 0 };
                         },
                     }
@@ -366,9 +385,9 @@ pub const AsyncEpoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         else => unreachable,
-                        .accept => {
+                        .accept => |socket| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-                            const accepted_fd = std.posix.accept(job.fd, null, null, 0) catch |e| {
+                            const accepted = std.posix.accept(socket, null, null, 0) catch |e| {
                                 switch (e) {
                                     // This is only allowed here because
                                     // multiple threads are sitting on accept.
@@ -379,30 +398,30 @@ pub const AsyncEpoll = struct {
                                     },
                                     else => {
                                         log.debug("accept failed: {}", .{e});
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(socket);
                                         break :result .{ .socket = -1 };
                                     },
                                 }
                             };
 
-                            try epoll.remove_fd(job.fd);
-                            break :result .{ .socket = accepted_fd };
+                            try epoll.remove_fd(socket);
+                            break :result .{ .socket = accepted };
                         },
-                        .connect => |addr| {
+                        .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const addr_len: std.posix.socklen_t = switch (addr.family) {
+                            const addr_len: std.posix.socklen_t = switch (inner.addr.family) {
                                 std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
                                 std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
                                 std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
                                 else => @panic("Unsupported!"),
                             };
 
-                            std.posix.connect(job.fd, &addr, addr_len) catch |e| {
+                            std.posix.connect(inner.socket, &inner.addr, addr_len) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => unreachable,
                                     else => {
                                         log.debug("connect failed: {}", .{e});
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(inner.socket);
                                         break :result .{ .value = -1 };
                                     },
                                 }
@@ -410,21 +429,21 @@ pub const AsyncEpoll = struct {
 
                             break :result .{ .value = 1 };
                         },
-                        .recv => |buffer| {
+                        .recv => |inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-                            const bytes_read = std.posix.recv(job.fd, buffer, 0) catch |e| {
+                            const bytes_read = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => {
                                         job_complete = false;
                                         continue :epoll_loop;
                                     },
                                     error.ConnectionResetByPeer => {
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(inner.socket);
                                         break :result .{ .value = 0 };
                                     },
                                     else => {
                                         log.debug("recv failed: {}", .{e});
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(inner.socket);
                                         break :result .{ .value = -1 };
                                     },
                                 }
@@ -432,21 +451,21 @@ pub const AsyncEpoll = struct {
 
                             break :result .{ .value = @intCast(bytes_read) };
                         },
-                        .send => |buffer| {
+                        .send => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const bytes_sent = std.posix.send(job.fd, buffer, 0) catch |e| {
+                            const bytes_sent = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => {
                                         job_complete = false;
                                         continue :epoll_loop;
                                     },
                                     error.ConnectionResetByPeer => {
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(inner.socket);
                                         break :result .{ .value = 0 };
                                     },
                                     else => {
                                         log.debug("send failed: {}", .{e});
-                                        try epoll.remove_fd(job.fd);
+                                        try epoll.remove_fd(inner.socket);
                                         break :result .{ .value = -1 };
                                     },
                                 }
