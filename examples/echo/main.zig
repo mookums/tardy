@@ -54,7 +54,7 @@ fn accept_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     // get provision
     // assign based on index
     // get buffer
-    const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+    const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
     const borrowed = try provision_pool.borrow();
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
@@ -71,7 +71,7 @@ fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const length = t.result.?.value;
 
     if (length <= 0) {
-        const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+        const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
         return;
     }
@@ -89,7 +89,7 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     const length = t.result.?.value;
 
     if (length <= 0) {
-        const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+        const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
         return;
     }
@@ -159,8 +159,7 @@ pub fn main() !void {
     try tardy.entry(
         struct {
             fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
-                const pool: *Pool(Provision) = try alloc.create(Pool(Provision));
-                pool.* = try Pool(Provision).init(alloc, size, struct {
+                const pool = try Pool(Provision).init(alloc, size, struct {
                     fn init(items: []Provision, all: anytype) void {
                         for (items) |*item| {
                             item.buffer = all.alloc(u8, size) catch unreachable;
@@ -168,7 +167,7 @@ pub fn main() !void {
                     }
                 }.init, alloc);
 
-                try rt.storage.put("provision_pool", pool);
+                try rt.storage.store("provision_pool", pool);
 
                 if (comptime builtin.os.tag == .windows) {
                     try rt.net.accept(.{
@@ -188,7 +187,7 @@ pub fn main() !void {
         &socket,
         struct {
             fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
-                const provision_pool: *Pool(Provision) = @ptrCast(@alignCast(rt.storage.get("provision_pool").?));
+                const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
                 provision_pool.deinit(struct {
                     fn pool_deinit(items: []Provision, a: anytype) void {
                         for (items) |item| {
@@ -196,7 +195,6 @@ pub fn main() !void {
                         }
                     }
                 }.pool_deinit, alloc);
-                alloc.destroy(provision_pool);
             }
         }.rt_end,
         void,

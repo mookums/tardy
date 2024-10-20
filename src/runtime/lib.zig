@@ -6,6 +6,7 @@ const AsyncIO = @import("../aio/lib.zig").AsyncIO;
 const Scheduler = @import("./scheduler.zig").Scheduler;
 const Task = @import("./task.zig").Task;
 const TaskFn = @import("./task.zig").TaskFn;
+const Storage = @import("storage.zig").Storage;
 
 const Net = @import("../net/lib.zig").Net;
 const Filesystem = @import("../fs/lib.zig").Filesystem;
@@ -21,7 +22,7 @@ const RuntimeOptions = struct {
 /// Every thread should have an independent Runtime.
 pub const Runtime = struct {
     allocator: std.mem.Allocator,
-    storage: std.StringHashMap(*anyopaque),
+    storage: Storage,
     scheduler: Scheduler,
     aio: AsyncIO,
     net: Net = .{},
@@ -32,7 +33,7 @@ pub const Runtime = struct {
         assert(options.size_aio_reap_max <= options.size_aio_jobs_max);
 
         const scheduler: Scheduler = try Scheduler.init(options.allocator, options.size_tasks_max);
-        const storage = std.StringHashMap(*anyopaque).init(options.allocator);
+        const storage = Storage.init(options.allocator);
 
         return .{
             .allocator = options.allocator,
