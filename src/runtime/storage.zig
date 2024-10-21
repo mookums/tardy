@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 /// Storage is deleteless and clobberless.
 pub const Storage = struct {
@@ -16,10 +17,18 @@ pub const Storage = struct {
         self.arena.deinit();
     }
 
-    /// Store a new item in the Storage.
-    /// This will CLONE the item that you pass in and manage the clone.
+    /// Store a pointer that is not managed.
+    /// This will NOT CLONE the item.
     /// This asserts that no other item has the same name.
-    pub fn store(self: *Storage, name: []const u8, item: anytype) !void {
+    pub fn store_ptr(self: *Storage, name: []const u8, item: anytype) !void {
+        assert(@typeInfo(@TypeOf(item)) == .Pointer);
+        try self.map.putNoClobber(self.arena.allocator(), name, @ptrCast(item));
+    }
+
+    /// Store a new item in the Storage.
+    /// This will CLONE (allocate) the item that you pass in and manage the clone.
+    /// This asserts that no other item has the same name.
+    pub fn store_alloc(self: *Storage, name: []const u8, item: anytype) !void {
         const allocator = self.arena.allocator();
         const clone = try allocator.create(@TypeOf(item));
         errdefer allocator.destroy(clone);
@@ -35,7 +44,14 @@ pub const Storage = struct {
         return value.*;
     }
 
-    /// Get a pointer to an item that is within the Storage.
+    /// Get a const (immutable) pointer to an item that is within the Storage.
+    /// This asserts that the item you are looking for exists.
+    pub fn get_const_ptr(self: *Storage, name: []const u8, comptime T: type) *const T {
+        const got = self.map.get(name) orelse unreachable;
+        return @ptrCast(@alignCast(got));
+    }
+
+    /// Get a (mutable) pointer to an item that is within the Storage.
     /// This asserts that the item you are looking for exists.
     pub fn get_ptr(self: *Storage, name: []const u8, comptime T: type) *T {
         const got = self.map.get(name) orelse unreachable;
@@ -50,13 +66,13 @@ test "Storage Storing" {
     defer storage.deinit();
 
     const byte: u8 = 100;
-    try storage.store("byte", byte);
+    try storage.store_alloc("byte", byte);
 
     const index: usize = 9447721;
-    try storage.store("index", index);
+    try storage.store_alloc("index", index);
 
     const value: u32 = 100;
-    try storage.store("value", value);
+    try storage.store_alloc("value", value);
 
     const value_ptr = storage.get_ptr("value", u32);
     try testing.expectEqual(value_ptr.*, 100);
