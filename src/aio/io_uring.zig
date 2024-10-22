@@ -4,6 +4,7 @@ const log = std.log.scoped(.@"tardy/aio/io_uring");
 
 const Completion = @import("completion.zig").Completion;
 const Result = @import("completion.zig").Result;
+const Stat = @import("completion.zig").Stat;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -22,6 +23,7 @@ pub const AsyncIoUring = struct {
 
     inner: *std.os.linux.IoUring,
     cqes: []std.os.linux.io_uring_cqe,
+    statx: []std.os.linux.Statx,
     jobs: Pool(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
@@ -68,6 +70,7 @@ pub const AsyncIoUring = struct {
             .inner = uring,
             .jobs = try Pool(Job).init(allocator, size, null, null),
             .cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max),
+            .statx = try allocator.alloc(std.os.linux.Statx, options.size_aio_jobs_max),
         };
     }
 
@@ -76,6 +79,7 @@ pub const AsyncIoUring = struct {
         uring.inner.deinit();
         uring.jobs.deinit(null, null);
         allocator.free(uring.cqes);
+        allocator.free(uring.statx);
         allocator.destroy(uring.inner);
     }
 
@@ -98,6 +102,31 @@ pub const AsyncIoUring = struct {
             @ptrCast(path.ptr),
             .{},
             0,
+        );
+    }
+
+    pub fn queue_stat(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) !void {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+        const borrowed = try uring.jobs.borrow_hint(task);
+        borrowed.item.* = .{
+            .index = borrowed.index,
+            .type = .{ .stat = fd },
+            .task = task,
+        };
+
+        const statx = &uring.statx[borrowed.index];
+
+        _ = try uring.inner.statx(
+            @intFromPtr(borrowed.item),
+            fd,
+            "",
+            std.os.linux.AT.EMPTY_PATH,
+            0,
+            statx,
         );
     }
 
@@ -295,6 +324,28 @@ pub const AsyncIoUring = struct {
                 switch (job.type) {
                     .accept, .connect => break :blk .{ .socket = cqe.res },
                     .open => break :blk .{ .fd = cqe.res },
+                    .stat => {
+                        const statx = &uring.statx[job.index];
+
+                        const stat: Stat = .{
+                            .size = @intCast(statx.size),
+                            .mode = @intCast(statx.mode),
+                            .accessed = .{
+                                .seconds = @intCast(statx.atime.tv_sec),
+                                .nanos = @intCast(statx.atime.tv_nsec),
+                            },
+                            .modified = .{
+                                .seconds = @intCast(statx.mtime.tv_sec),
+                                .nanos = @intCast(statx.mtime.tv_nsec),
+                            },
+                            .changed = .{
+                                .seconds = @intCast(statx.ctime.tv_sec),
+                                .nanos = @intCast(statx.ctime.tv_nsec),
+                            },
+                        };
+
+                        break :blk .{ .stat = stat };
+                    },
                     else => break :blk .{ .value = cqe.res },
                 }
             };
@@ -313,6 +364,7 @@ pub const AsyncIoUring = struct {
             .runner = self,
             ._deinit = deinit,
             ._queue_open = queue_open,
+            ._queue_stat = queue_stat,
             ._queue_read = queue_read,
             ._queue_write = queue_write,
             ._queue_close = queue_close,

@@ -21,6 +21,23 @@ pub const Filesystem = struct {
         try rt.aio.queue_open(index, params.path);
     }
 
+    const StatParams = struct {
+        fd: std.posix.fd_t,
+        func: TaskFn,
+        ctx: ?*anyopaque = null,
+    };
+
+    pub fn stat(self: *Filesystem, params: StatParams) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
+        const index = try rt.scheduler.spawn(
+            params.func,
+            params.ctx,
+            .waiting,
+        );
+
+        try rt.aio.queue_stat(index, params.fd);
+    }
+
     const ReadParams = struct {
         fd: std.posix.fd_t,
         buffer: []u8,

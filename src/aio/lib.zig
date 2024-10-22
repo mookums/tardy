@@ -100,6 +100,12 @@ pub const AsyncIO = struct {
         path: [:0]const u8,
     ) anyerror!void,
 
+    _queue_stat: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) anyerror!void,
+
     _queue_read: *const fn (
         self: *AsyncIO,
         task: usize,
@@ -176,6 +182,15 @@ pub const AsyncIO = struct {
     ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_open, .{ self, task, path });
+    }
+
+    pub fn queue_stat(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) !void {
+        assert(self.attached);
+        try @call(.auto, self._queue_stat, .{ self, task, fd });
     }
 
     pub fn queue_read(

@@ -4,6 +4,7 @@ const log = std.log.scoped(.@"tardy/aio/busy_loop");
 
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
+const Stat = @import("completion.zig").Stat;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -30,6 +31,18 @@ pub const AsyncBusyLoop = struct {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.appendAssumeCapacity(.{
             .type = .{ .open = path },
+            .task = task,
+        });
+    }
+
+    pub fn queue_stat(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) !void {
+        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+        loop.inner.appendAssumeCapacity(.{
+            .type = .{ .stat = fd },
             .task = task,
         });
     }
@@ -194,6 +207,42 @@ pub const AsyncBusyLoop = struct {
                         };
 
                         com_ptr.result = .{ .fd = res };
+                        com_ptr.task = job.task;
+                        _ = loop.inner.swapRemove(i);
+                        i -|= 1;
+                        reaped += 1;
+                    },
+                    .stat => |fd| {
+                        const com_ptr = &self.completions[reaped];
+
+                        const result = blk: {
+                            const file: std.fs.File = .{ .handle = fd };
+                            const stat_result = file.stat() catch |e| {
+                                log.debug("stat failed: {}", .{e});
+                                unreachable;
+                            };
+
+                            break :blk stat_result;
+                        };
+
+                        const stat: Stat = .{
+                            .size = result.size,
+                            .mode = result.mode,
+                            .changed = .{
+                                .seconds = @intCast(@divTrunc(result.ctime, std.time.ns_per_s)),
+                                .nanos = @intCast(@mod(result.ctime, std.time.ns_per_s)),
+                            },
+                            .modified = .{
+                                .seconds = @intCast(@divTrunc(result.mtime, std.time.ns_per_s)),
+                                .nanos = @intCast(@mod(result.mtime, std.time.ns_per_s)),
+                            },
+                            .accessed = .{
+                                .seconds = @intCast(@divTrunc(result.atime, std.time.ns_per_s)),
+                                .nanos = @intCast(@mod(result.atime, std.time.ns_per_s)),
+                            },
+                        };
+
+                        com_ptr.result = .{ .stat = stat };
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
@@ -417,6 +466,7 @@ pub const AsyncBusyLoop = struct {
             .runner = self,
             ._deinit = deinit,
             ._queue_open = queue_open,
+            ._queue_stat = queue_stat,
             ._queue_read = queue_read,
             ._queue_write = queue_write,
             ._queue_close = queue_close,

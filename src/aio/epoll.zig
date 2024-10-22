@@ -4,6 +4,7 @@ const log = std.log.scoped(.@"tardy/aio/epoll");
 
 const Completion = @import("completion.zig").Completion;
 const Result = @import("completion.zig").Result;
+const Stat = @import("completion.zig").Stat;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -55,6 +56,22 @@ pub const AsyncEpoll = struct {
         borrowed.item.* = .{
             .index = borrowed.index,
             .type = .{ .open = path },
+            .task = task,
+        };
+
+        try epoll.blocking.append(borrowed.item);
+    }
+
+    pub fn queue_stat(
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+    ) !void {
+        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const borrowed = try epoll.jobs.borrow_hint(task);
+        borrowed.item.* = .{
+            .index = borrowed.index,
+            .type = .{ .stat = fd },
             .task = task,
         };
 
@@ -297,6 +314,31 @@ pub const AsyncEpoll = struct {
 
                             break :result .{ .fd = opened };
                         },
+                        .stat => |fd| {
+                            const fstat = std.posix.fstat(fd) catch |e| {
+                                log.err("stat failed: {}", .{e});
+                                unreachable;
+                            };
+
+                            const stat: Stat = .{
+                                .size = @intCast(fstat.size),
+                                .mode = @intCast(fstat.mode),
+                                .accessed = .{
+                                    .seconds = @intCast(fstat.atim.tv_sec),
+                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                },
+                                .modified = .{
+                                    .seconds = @intCast(fstat.atim.tv_sec),
+                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                },
+                                .changed = .{
+                                    .seconds = @intCast(fstat.atim.tv_sec),
+                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                },
+                            };
+
+                            break :result .{ .stat = stat };
+                        },
                         .read => |inner| {
                             const bytes_read = read: {
                                 break :read std.posix.pread(inner.fd, inner.buffer, inner.offset) catch |e| {
@@ -495,6 +537,7 @@ pub const AsyncEpoll = struct {
             .runner = self,
             ._deinit = deinit,
             ._queue_open = queue_open,
+            ._queue_stat = queue_stat,
             ._queue_read = queue_read,
             ._queue_write = queue_write,
             ._queue_close = queue_close,

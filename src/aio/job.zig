@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Job = struct {
     type: union(enum) {
         open: [:0]const u8,
+        stat: std.posix.fd_t,
         read: struct { fd: std.posix.fd_t, buffer: []u8, offset: usize },
         write: struct { fd: std.posix.fd_t, buffer: []const u8, offset: usize },
         close: std.posix.fd_t,
