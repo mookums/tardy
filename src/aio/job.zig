@@ -1,7 +1,9 @@
 const std = @import("std");
+const Timespec = @import("timespec.zig").Timespec;
 
 pub const Job = struct {
     type: union(enum) {
+        timer: union(enum) { none, fd: std.posix.fd_t, ns: i128 },
         open: [:0]const u8,
         stat: std.posix.fd_t,
         read: struct { fd: std.posix.fd_t, buffer: []u8, offset: usize },

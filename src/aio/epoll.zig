@@ -5,6 +5,7 @@ const log = std.log.scoped(.@"tardy/aio/epoll");
 const Completion = @import("completion.zig").Completion;
 const Result = @import("completion.zig").Result;
 const Stat = @import("completion.zig").Stat;
+const Timespec = @import("timespec.zig").Timespec;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -12,8 +13,6 @@ const Job = @import("job.zig").Job;
 const Pool = @import("../core/pool.zig").Pool;
 
 pub const AsyncEpoll = struct {
-    const Self = @This();
-
     epoll_fd: std.posix.fd_t,
     events: []std.os.linux.epoll_event,
     jobs: Pool(Job),
@@ -22,7 +21,7 @@ pub const AsyncEpoll = struct {
     // to be blocking.
     blocking: std.ArrayList(*Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !Self {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncEpoll {
         const epoll_fd = try std.posix.epoll_create1(0);
         assert(epoll_fd > -1);
 
@@ -30,7 +29,7 @@ pub const AsyncEpoll = struct {
         const jobs = try Pool(Job).init(allocator, options.size_aio_jobs_max, null, null);
         const blocking = std.ArrayList(*Job).init(allocator);
 
-        return Self{
+        return AsyncEpoll{
             .epoll_fd = epoll_fd,
             .events = events,
             .jobs = jobs,
@@ -39,11 +38,48 @@ pub const AsyncEpoll = struct {
     }
 
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         std.posix.close(epoll.epoll_fd);
         allocator.free(epoll.events);
         epoll.jobs.deinit(null, null);
         epoll.blocking.deinit();
+    }
+
+    pub fn queue_timer(
+        self: *AsyncIO,
+        task: usize,
+        timespec: Timespec,
+    ) !void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+        const borrowed = try epoll.jobs.borrow_hint(task);
+
+        const timer_fd_usize = std.os.linux.timerfd_create(std.os.linux.CLOCK.MONOTONIC, .{ .NONBLOCK = true });
+        const timer_fd: i32 = @intCast(timer_fd_usize);
+        const ktimerspec: std.os.linux.itimerspec = .{
+            .it_value = .{
+                .tv_sec = @intCast(timespec.seconds),
+                .tv_nsec = @intCast(timespec.nanos),
+            },
+            .it_interval = .{
+                .tv_sec = 0,
+                .tv_nsec = 0,
+            },
+        };
+
+        _ = std.os.linux.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
+
+        borrowed.item.* = .{
+            .index = borrowed.index,
+            .type = .{ .timer = .{ .fd = timer_fd } },
+            .task = task,
+        };
+
+        var event: std.os.linux.epoll_event = .{
+            .events = std.os.linux.EPOLL.IN,
+            .data = .{ .u64 = borrowed.index },
+        };
+
+        try epoll.add_fd(timer_fd, &event);
     }
 
     pub fn queue_open(
@@ -51,7 +87,7 @@ pub const AsyncEpoll = struct {
         task: usize,
         path: [:0]const u8,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -67,7 +103,7 @@ pub const AsyncEpoll = struct {
         task: usize,
         fd: std.posix.fd_t,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -85,7 +121,7 @@ pub const AsyncEpoll = struct {
         buffer: []u8,
         offset: usize,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -109,7 +145,7 @@ pub const AsyncEpoll = struct {
         buffer: []const u8,
         offset: usize,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -131,7 +167,7 @@ pub const AsyncEpoll = struct {
         task: usize,
         fd: std.posix.fd_t,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -148,7 +184,7 @@ pub const AsyncEpoll = struct {
         task: usize,
         socket: std.posix.socket_t,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -171,7 +207,7 @@ pub const AsyncEpoll = struct {
         host: []const u8,
         port: u16,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         const addr = try std.net.Address.parseIp(host, port);
 
@@ -200,7 +236,7 @@ pub const AsyncEpoll = struct {
         socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -227,7 +263,7 @@ pub const AsyncEpoll = struct {
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         const borrowed = try epoll.jobs.borrow_hint(task);
         borrowed.item.* = .{
             .index = borrowed.index,
@@ -248,7 +284,7 @@ pub const AsyncEpoll = struct {
         try epoll.add_or_mod_fd(socket, &event);
     }
 
-    fn add_or_mod_fd(self: *Self, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
+    fn add_or_mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
         self.add_fd(fd, event) catch |e| {
             if (e == error.FileDescriptorAlreadyPresentInSet) {
                 try self.mod_fd(fd, event);
@@ -256,25 +292,25 @@ pub const AsyncEpoll = struct {
         };
     }
 
-    fn add_fd(self: *Self, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
+    fn add_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_ADD, fd, event);
     }
 
-    fn mod_fd(self: *Self, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
+    fn mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_MOD, fd, event);
     }
 
-    fn remove_fd(self: *Self, fd: std.posix.fd_t) !void {
+    fn remove_fd(self: *AsyncEpoll, fd: std.posix.fd_t) !void {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
     }
 
     pub fn submit(self: *AsyncIO) !void {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         _ = epoll;
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const epoll: *Self = @ptrCast(@alignCast(self.runner));
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
         var first_run: bool = true;
 
@@ -427,6 +463,24 @@ pub const AsyncEpoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         else => unreachable,
+                        .timer => |inner| {
+                            const timer_fd = inner.fd;
+                            defer epoll.remove_fd(timer_fd) catch unreachable;
+                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+
+                            var buffer: [8]u8 = undefined;
+                            _ = std.posix.read(timer_fd, buffer[0..]) catch |e| {
+                                switch (e) {
+                                    error.WouldBlock => unreachable,
+                                    else => {
+                                        log.debug("timer failed: {}", .{e});
+                                        break :result .{ .value = -1 };
+                                    },
+                                }
+                            };
+
+                            break :result .{ .value = 1 };
+                        },
                         .accept => |socket| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
                             const accepted = std.posix.accept(socket, null, null, 0) catch |e| {
@@ -532,10 +586,11 @@ pub const AsyncEpoll = struct {
         return self.completions[0..reaped];
     }
 
-    pub fn to_async(self: *Self) AsyncIO {
+    pub fn to_async(self: *AsyncEpoll) AsyncIO {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
+            ._queue_timer = queue_timer,
             ._queue_open = queue_open,
             ._queue_stat = queue_stat,
             ._queue_read = queue_read,

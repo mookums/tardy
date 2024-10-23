@@ -8,6 +8,8 @@ const Task = @import("./task.zig").Task;
 const TaskFn = @import("./task.zig").TaskFn;
 const Storage = @import("storage.zig").Storage;
 
+const Timespec = @import("../aio/timespec.zig").Timespec;
+
 const Net = @import("../net/lib.zig").Net;
 const Filesystem = @import("../fs/lib.zig").Filesystem;
 
@@ -63,6 +65,22 @@ pub const Runtime = struct {
             params.ctx,
             .runnable,
         );
+    }
+
+    const SpawnDelayParams = struct {
+        func: TaskFn,
+        ctx: ?*anyopaque = null,
+        timespec: Timespec,
+    };
+
+    pub fn spawn_delay(self: *Runtime, params: SpawnDelayParams) !void {
+        const index = try self.scheduler.spawn(
+            params.func,
+            params.ctx,
+            .waiting,
+        );
+
+        try self.aio.queue_timer(index, params.timespec);
     }
 
     pub fn stop(self: *Runtime) void {

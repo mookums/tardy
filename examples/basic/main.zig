@@ -7,8 +7,13 @@ const Tardy = @import("tardy").Tardy(.auto);
 
 fn log_task(rt: *Runtime, _: *const Task, _: ?*anyopaque) !void {
     log.debug("{d} - tardy example", .{std.time.milliTimestamp()});
-    std.time.sleep(1 * std.time.ns_per_s);
-    rt.spawn(.{ .func = log_task }) catch unreachable;
+    rt.spawn_delay(.{
+        .func = log_task,
+        .timespec = .{
+            .seconds = 1,
+            .nanos = 0,
+        },
+    }) catch unreachable;
 }
 
 pub fn main() !void {

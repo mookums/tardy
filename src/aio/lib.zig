@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
+const Timespec = @import("timespec.zig").Timespec;
 
 pub const AsyncIOType = union(enum) {
     /// Attempts to automatically match
@@ -93,6 +94,12 @@ pub const AsyncIO = struct {
         allocator: std.mem.Allocator,
     ) void,
 
+    _queue_timer: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        timespec: Timespec,
+    ) anyerror!void,
+
     // Filesystem Operations
     _queue_open: *const fn (
         self: *AsyncIO,
@@ -173,6 +180,15 @@ pub const AsyncIO = struct {
         allocator: std.mem.Allocator,
     ) void {
         @call(.auto, self._deinit, .{ self, allocator });
+    }
+
+    pub fn queue_timer(
+        self: *AsyncIO,
+        task: usize,
+        timespec: Timespec,
+    ) !void {
+        assert(self.attached);
+        try @call(.auto, self._queue_timer, .{ self, task, timespec });
     }
 
     pub fn queue_open(

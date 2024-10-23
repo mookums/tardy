@@ -1,18 +1,14 @@
 const std = @import("std");
-
-pub const Timestamp = struct {
-    seconds: u64,
-    nanos: u64,
-};
+const Timespec = @import("timespec.zig").Timespec;
 
 // This interface is missing a lot of the stuff you get from `stat()` normally.
 // This is minimally what I need.
 pub const Stat = struct {
     size: u64,
     mode: u64 = 0,
-    accessed: ?Timestamp = null,
-    modified: ?Timestamp = null,
-    changed: ?Timestamp = null,
+    accessed: ?Timespec = null,
+    modified: ?Timespec = null,
+    changed: ?Timespec = null,
 };
 
 pub const Result = union(enum) {

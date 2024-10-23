@@ -5,6 +5,7 @@ const log = std.log.scoped(.@"tardy/aio/busy_loop");
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
 const Stat = @import("completion.zig").Stat;
+const Timespec = @import("timespec.zig").Timespec;
 
 const AsyncIO = @import("lib.zig").AsyncIO;
 const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
@@ -21,6 +22,23 @@ pub const AsyncBusyLoop = struct {
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         loop.inner.deinit(allocator);
+    }
+
+    pub fn queue_timer(
+        self: *AsyncIO,
+        task: usize,
+        timespec: Timespec,
+    ) !void {
+        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+
+        var time = std.time.nanoTimestamp();
+        time += timespec.seconds * std.time.ns_per_s;
+        time += timespec.nanos;
+
+        loop.inner.appendAssumeCapacity(.{
+            .type = .{ .timer = .{ .ns = time } },
+            .task = task,
+        });
     }
 
     pub fn queue_open(
@@ -185,6 +203,18 @@ pub const AsyncBusyLoop = struct {
                 const job = loop.inner.items[i];
 
                 switch (job.type) {
+                    .timer => |inner| {
+                        const com_ptr = &self.completions[reaped];
+                        const target_time = inner.ns;
+                        const current = std.time.nanoTimestamp();
+                        if (current < target_time) continue;
+
+                        com_ptr.result = .{ .value = 1 };
+                        com_ptr.task = job.task;
+                        _ = loop.inner.swapRemove(i);
+                        i -|= 1;
+                        reaped += 1;
+                    },
                     .open => |path| {
                         const com_ptr = &self.completions[reaped];
 
@@ -465,6 +495,7 @@ pub const AsyncBusyLoop = struct {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
+            ._queue_timer = queue_timer,
             ._queue_open = queue_open,
             ._queue_stat = queue_stat,
             ._queue_read = queue_read,
