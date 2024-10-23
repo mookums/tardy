@@ -180,8 +180,8 @@ pub fn main() !void {
                     }
                 }.init, alloc);
 
-                try rt.storage.store("provision_pool", pool);
-                try rt.storage.store("server_socket", socket);
+                try rt.storage.store_alloc("provision_pool", pool);
+                try rt.storage.store_alloc("server_socket", socket);
 
                 for (0..size) |_| {
                     try rt.net.accept(.{

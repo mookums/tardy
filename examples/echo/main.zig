@@ -147,8 +147,8 @@ pub fn main() !void {
                     }
                 }.init, alloc);
 
-                try rt.storage.store("provision_pool", pool);
-                try rt.storage.store("server_socket", t_socket);
+                try rt.storage.store_alloc("provision_pool", pool);
+                try rt.storage.store_alloc("server_socket", t_socket);
 
                 try rt.net.accept(.{
                     .socket = t_socket,
