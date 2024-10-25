@@ -83,6 +83,7 @@ pub const AsyncIoUring = struct {
         uring.jobs.deinit(null, null);
         allocator.free(uring.cqes);
         allocator.free(uring.statx);
+        allocator.free(uring.timespec);
         allocator.destroy(uring.inner);
     }
 
