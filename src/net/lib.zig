@@ -4,70 +4,53 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 pub const Net = struct {
-    const AcceptParams = struct {
+    pub fn accept(
+        self: *Net,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         socket: std.posix.socket_t,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn accept(self: *Net, params: AcceptParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-        try rt.aio.queue_accept(index, params.socket);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_accept(index, socket);
     }
 
-    const RecvParams = struct {
+    pub fn recv(
+        self: *Net,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         socket: std.posix.socket_t,
         buffer: []u8,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn recv(self: *Net, params: RecvParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-        try rt.aio.queue_recv(index, params.socket, params.buffer);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_recv(index, socket, buffer);
     }
 
-    const SendParams = struct {
+    pub fn send(
+        self: *Net,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         socket: std.posix.socket_t,
         buffer: []const u8,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn send(self: *Net, params: SendParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-        try rt.aio.queue_send(index, params.socket, params.buffer);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_send(index, socket, buffer);
     }
 
-    const CloseParams = struct {
+    pub fn close(
+        self: *Net,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         socket: std.posix.socket_t,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn close(self: *Net, params: CloseParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_close(index, params.socket);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_close(index, socket);
     }
 };

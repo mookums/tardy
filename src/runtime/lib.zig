@@ -4,8 +4,12 @@ const log = std.log.scoped(.@"tardy/runtime");
 
 const AsyncIO = @import("../aio/lib.zig").AsyncIO;
 const Scheduler = @import("./scheduler.zig").Scheduler;
-const Task = @import("./task.zig").Task;
-const TaskFn = @import("./task.zig").TaskFn;
+
+const Task = @import("task.zig").Task;
+const TaskFn = @import("task.zig").TaskFn;
+const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
+const InnerTaskFn = @import("task.zig").InnerTaskFn;
+
 const Storage = @import("storage.zig").Storage;
 
 const Timespec = @import("../aio/timespec.zig").Timespec;
@@ -52,35 +56,28 @@ pub const Runtime = struct {
         self.aio.deinit(self.allocator);
     }
 
-    const SpawnParams = struct {
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    /// Spawns a new async Task. It will be immediately added to the
-    /// runtime as `.runnable` and will run whenever it is encountered.
-    pub fn spawn(self: *Runtime, params: SpawnParams) !void {
-        _ = try self.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .runnable,
-        );
+    /// Spawns a new Task. This task is immediately runnable
+    /// and will run as soon as possible.
+    pub fn spawn(
+        self: *Runtime,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
+    ) !void {
+        _ = try self.scheduler.spawn(Context, task_fn, task_ctx, .runnable);
     }
 
-    const SpawnDelayParams = struct {
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
+    /// Spawns a new Task. This task will be set as runnable
+    /// after the `timespec` amount of time has elasped.
+    pub fn spawn_delay(
+        self: *Runtime,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         timespec: Timespec,
-    };
-
-    pub fn spawn_delay(self: *Runtime, params: SpawnDelayParams) !void {
-        const index = try self.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try self.aio.queue_timer(index, params.timespec);
+    ) !void {
+        const index = try self.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try self.aio.queue_timer(index, timespec);
     }
 
     pub fn stop(self: *Runtime) void {

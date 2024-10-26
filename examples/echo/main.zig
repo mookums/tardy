@@ -19,17 +19,23 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
-    const server_socket = rt.storage.get("server_socket", std.posix.socket_t);
-
+fn accept_task(rt: *Runtime, t: *const Task, socket: *std.posix.socket_t) !void {
     const child_socket = t.result.?.socket;
+    if (child_socket < 0) {
+        log.err("failed to accept on socket", .{});
+        rt.stop();
+        return;
+    }
+
     try Cross.socket.to_nonblock(child_socket);
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    try rt.net.accept(.{
-        .socket = server_socket,
-        .func = accept_task,
-    });
+    try rt.net.accept(
+        std.posix.socket_t,
+        accept_task,
+        socket,
+        socket.*,
+    );
 
     // get provision
     // assign based on index
@@ -38,16 +44,17 @@ fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
     const borrowed = try provision_pool.borrow();
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    try rt.net.recv(.{
-        .socket = child_socket,
-        .buffer = borrowed.item.buffer,
-        .func = recv_task,
-        .ctx = borrowed.item,
-    });
+
+    try rt.net.recv(
+        Provision,
+        recv_task,
+        borrowed.item,
+        child_socket,
+        borrowed.item.buffer,
+    );
 }
 
-fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     const length = t.result.?.value;
 
     if (length <= 0) {
@@ -56,16 +63,16 @@ fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
         return;
     }
 
-    try rt.net.send(.{
-        .socket = provision.socket,
-        .buffer = provision.buffer[0..@intCast(length)],
-        .func = send_task,
-        .ctx = ctx,
-    });
+    try rt.net.send(
+        Provision,
+        send_task,
+        provision,
+        provision.socket,
+        provision.buffer,
+    );
 }
 
-fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     const length = t.result.?.value;
 
     if (length <= 0) {
@@ -75,12 +82,13 @@ fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
     }
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
-    try rt.net.recv(.{
-        .socket = provision.socket,
-        .buffer = provision.buffer,
-        .func = recv_task,
-        .ctx = ctx,
-    });
+    try rt.net.recv(
+        Provision,
+        recv_task,
+        provision,
+        provision.socket,
+        provision.buffer,
+    );
 }
 
 pub fn main() !void {
@@ -138,7 +146,7 @@ pub fn main() !void {
 
     try tardy.entry(
         struct {
-            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: std.posix.socket_t) !void {
+            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
                 const pool = try Pool(Provision).init(alloc, size, struct {
                     fn init(items: []Provision, all: anytype) void {
                         for (items) |*item| {
@@ -148,15 +156,16 @@ pub fn main() !void {
                 }.init, alloc);
 
                 try rt.storage.store_alloc("provision_pool", pool);
-                try rt.storage.store_alloc("server_socket", t_socket);
 
-                try rt.net.accept(.{
-                    .socket = t_socket,
-                    .func = accept_task,
-                });
+                try rt.net.accept(
+                    std.posix.socket_t,
+                    accept_task,
+                    t_socket,
+                    t_socket.*,
+                );
             }
         }.rt_start,
-        socket,
+        @constCast(&socket),
         struct {
             fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
                 const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));

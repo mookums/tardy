@@ -4,92 +4,67 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 pub const Filesystem = struct {
-    const OpenParams = struct {
+    pub fn open(
+        self: *Filesystem,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         path: [:0]const u8,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn open(self: *Filesystem, params: OpenParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_open(index, params.path);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_open(index, path);
     }
 
-    const StatParams = struct {
+    pub fn stat(
+        self: *Filesystem,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         fd: std.posix.fd_t,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn stat(self: *Filesystem, params: StatParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_stat(index, params.fd);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_stat(index, fd);
     }
 
-    const ReadParams = struct {
+    pub fn read(
+        self: *Filesystem,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn read(self: *Filesystem, params: ReadParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_read(index, params.fd, params.buffer, params.offset);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_read(index, fd, buffer, offset);
     }
 
-    const WriteParams = struct {
+    pub fn write(
+        self: *Filesystem,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn write(self: *Filesystem, params: WriteParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_write(index, params.fd, params.buffer, params.offset);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_write(index, fd, buffer, offset);
     }
 
-    const CloseParams = struct {
+    pub fn close(
+        self: *Filesystem,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         fd: std.posix.fd_t,
-        func: TaskFn,
-        ctx: ?*anyopaque = null,
-    };
-
-    pub fn close(self: *Filesystem, params: CloseParams) !void {
+    ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
-        const index = try rt.scheduler.spawn(
-            params.func,
-            params.ctx,
-            .waiting,
-        );
-
-        try rt.aio.queue_close(index, params.fd);
+        const index = try rt.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        try rt.aio.queue_close(index, fd);
     }
 };

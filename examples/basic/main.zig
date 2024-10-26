@@ -5,15 +5,9 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
-fn log_task(rt: *Runtime, _: *const Task, _: ?*anyopaque) !void {
+fn log_task(rt: *Runtime, _: *const Task, ctx: *void) !void {
     log.debug("{d} - tardy example", .{std.time.milliTimestamp()});
-    rt.spawn_delay(.{
-        .func = log_task,
-        .timespec = .{
-            .seconds = 1,
-            .nanos = 0,
-        },
-    }) catch unreachable;
+    rt.spawn_delay(void, log_task, ctx, .{ .seconds = 1 }) catch unreachable;
 }
 
 pub fn main() !void {
@@ -28,7 +22,7 @@ pub fn main() !void {
     try tardy.entry(
         struct {
             fn init(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {
-                try rt.spawn(.{ .func = log_task });
+                try rt.spawn(void, log_task, @constCast(&{}));
             }
         }.init,
         void,

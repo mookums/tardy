@@ -12,8 +12,7 @@ const FileProvision = struct {
     offset: usize,
 };
 
-fn open_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
+fn open_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     const fd: std.posix.fd_t = t.result.?.fd;
     provision.fd = fd;
 
@@ -23,64 +22,67 @@ fn open_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
         return;
     }
 
-    try rt.fs.read(.{
-        .fd = fd,
-        .buffer = provision.buffer,
-        .offset = provision.offset,
-        .func = read_task,
-        .ctx = ctx,
-    });
+    try rt.fs.read(
+        FileProvision,
+        read_task,
+        provision,
+        fd,
+        provision.buffer,
+        provision.offset,
+    );
 }
 
-fn read_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
+fn read_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     const length: i32 = t.result.?.value;
     provision.offset += @intCast(length);
 
     // either done OR we have read EOF.
     if (length <= 0 or provision.buffer[@intCast(length - 1)] == 0x04) {
-        try rt.fs.close(.{
-            .fd = provision.fd,
-            .func = close_task,
-            .ctx = ctx,
-        });
+        try rt.fs.close(
+            FileProvision,
+            close_task,
+            provision,
+            provision.fd,
+        );
 
         return;
     }
 
-    try rt.fs.write(.{
-        .fd = try Cross.get_std_out(),
-        .buffer = provision.buffer[0..@intCast(length)],
-        .offset = provision.offset,
-        .func = write_task,
-        .ctx = ctx,
-    });
+    try rt.fs.write(
+        FileProvision,
+        write_task,
+        provision,
+        try Cross.get_std_out(),
+        provision.buffer,
+        provision.offset,
+    );
 }
 
-fn write_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *FileProvision = @ptrCast(@alignCast(ctx.?));
+fn write_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     const length: i32 = t.result.?.value;
 
     if (length <= 0) {
-        try rt.fs.close(.{
-            .fd = provision.fd,
-            .func = close_task,
-            .ctx = ctx,
-        });
+        try rt.fs.close(
+            FileProvision,
+            close_task,
+            provision,
+            provision.fd,
+        );
 
         return;
     }
 
-    try rt.fs.read(.{
-        .fd = provision.fd,
-        .buffer = provision.buffer,
-        .offset = provision.offset,
-        .func = read_task,
-        .ctx = ctx,
-    });
+    try rt.fs.read(
+        FileProvision,
+        read_task,
+        provision,
+        provision.fd,
+        provision.buffer,
+        provision.offset,
+    );
 }
 
-fn close_task(rt: *Runtime, _: *const Task, _: ?*anyopaque) !void {
+fn close_task(rt: *Runtime, _: *const Task, _: *FileProvision) !void {
     log.debug("all done!", .{});
     rt.stop();
 }
@@ -131,11 +133,12 @@ pub fn main() !void {
     try tardy.entry(
         struct {
             fn start(rt: *Runtime, _: std.mem.Allocator, parameters: *EntryParams) !void {
-                try rt.fs.open(.{
-                    .path = parameters.file_name,
-                    .func = open_task,
-                    .ctx = &parameters.provision,
-                });
+                try rt.fs.open(
+                    FileProvision,
+                    open_task,
+                    &parameters.provision,
+                    parameters.file_name,
+                );
             }
         }.start,
         &params,

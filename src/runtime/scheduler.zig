@@ -1,8 +1,11 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Task = @import("./task.zig").Task;
-const TaskFn = @import("./task.zig").TaskFn;
+const Task = @import("task.zig").Task;
+const TaskFn = @import("task.zig").TaskFn;
+const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
+const InnerTaskFn = @import("task.zig").InnerTaskFn;
+
 const Pool = @import("../core/pool.zig").Pool;
 
 pub const Scheduler = struct {
@@ -35,8 +38,9 @@ pub const Scheduler = struct {
     /// This means that if the predicate is true that it will run.
     pub fn spawn(
         self: *Scheduler,
-        task_fn: TaskFn,
-        task_ctx: ?*anyopaque,
+        comptime Context: type,
+        comptime task_fn: TaskFn(Context),
+        task_ctx: *Context,
         task_state: Task.State,
     ) !usize {
         const borrowed = blk: {
@@ -49,7 +53,7 @@ pub const Scheduler = struct {
 
         borrowed.item.* = .{
             .index = borrowed.index,
-            .func = task_fn,
+            .func = TaskFnWrapper(Context, task_fn),
             .context = task_ctx,
             .state = task_state,
         };

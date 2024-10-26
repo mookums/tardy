@@ -5,7 +5,7 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
-fn stat_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
+fn stat_task(rt: *Runtime, t: *const Task, _: *void) !void {
     const result = t.result.?.stat;
     try std.io.getStdOut().writer().print("size: {d}", .{result.size});
     rt.stop();
@@ -39,10 +39,12 @@ pub fn main() !void {
         struct {
             fn init(rt: *Runtime, _: std.mem.Allocator, path: [:0]const u8) !void {
                 const file = try std.fs.cwd().openFileZ(path, .{});
-                try rt.fs.stat(.{
-                    .fd = file.handle,
-                    .func = stat_task,
-                });
+                try rt.fs.stat(
+                    void,
+                    stat_task,
+                    @constCast(&{}),
+                    file.handle,
+                );
             }
         }.init,
         file_name,

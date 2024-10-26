@@ -51,7 +51,7 @@ fn create_socket(addr: std.net.Address) !std.posix.socket_t {
     return socket;
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
+fn accept_task(rt: *Runtime, t: *const Task, _: *void) !void {
     const child_socket = t.result.?.socket;
 
     if (!Cross.socket.is_valid(child_socket)) {
@@ -67,68 +67,70 @@ fn accept_task(rt: *Runtime, t: *const Task, _: ?*anyopaque) !void {
     const borrowed = try provision_pool.borrow();
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
-    try rt.net.recv(.{
-        .socket = child_socket,
-        .buffer = borrowed.item.buffer,
-        .func = recv_task,
-        .ctx = borrowed.item,
-    });
+    try rt.net.recv(
+        Provision,
+        recv_task,
+        borrowed.item,
+        child_socket,
+        borrowed.item.buffer,
+    );
 }
 
-fn recv_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     const length = t.result.?.value;
 
     log.debug("recv socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
         log.debug("recv closed fd={d}", .{provision.socket});
-        log.debug("queueing close with ctx ptr: {*}", .{ctx});
-        try rt.net.close(.{
-            .socket = provision.socket,
-            .func = close_task,
-            .ctx = ctx,
-        });
+        log.debug("queueing close with ctx ptr: {*}", .{provision});
+        try rt.net.close(
+            Provision,
+            close_task,
+            provision,
+            provision.socket,
+        );
 
         return;
     }
 
-    try rt.net.send(.{
-        .socket = provision.socket,
-        .buffer = HTTP_RESPONSE[0..],
-        .func = send_task,
-        .ctx = ctx,
-    });
+    try rt.net.send(
+        Provision,
+        send_task,
+        provision,
+        provision.socket,
+        HTTP_RESPONSE[0..],
+    );
 }
 
-fn send_task(rt: *Runtime, t: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     const length = t.result.?.value;
 
     log.debug("send socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
         log.debug("send closed fd={d}", .{provision.socket});
-        log.debug("queueing close with ctx ptr: {*}", .{ctx});
-        try rt.net.close(.{
-            .socket = provision.socket,
-            .func = close_task,
-            .ctx = ctx,
-        });
+        log.debug("queueing close with ctx ptr: {*}", .{provision});
+        try rt.net.close(
+            Provision,
+            close_task,
+            provision,
+            provision.socket,
+        );
 
         return;
     }
 
-    try rt.net.recv(.{
-        .socket = provision.socket,
-        .buffer = provision.buffer,
-        .func = recv_task,
-        .ctx = ctx,
-    });
+    try rt.net.recv(
+        Provision,
+        recv_task,
+        provision,
+        provision.socket,
+        provision.buffer,
+    );
 }
 
-fn close_task(rt: *Runtime, _: *const Task, ctx: ?*anyopaque) !void {
-    const provision: *Provision = @ptrCast(@alignCast(ctx.?));
+fn close_task(rt: *Runtime, _: *const Task, provision: *Provision) !void {
     const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
 
     log.debug("close socket fd={d}", .{provision.socket});
@@ -136,10 +138,7 @@ fn close_task(rt: *Runtime, _: *const Task, ctx: ?*anyopaque) !void {
 
     const socket = rt.storage.get("server_socket", std.posix.socket_t);
     // requeue accept
-    try rt.net.accept(.{
-        .socket = socket,
-        .func = accept_task,
-    });
+    try rt.net.accept(void, accept_task, @constCast(&{}), socket);
 }
 
 pub fn main() !void {
@@ -184,10 +183,12 @@ pub fn main() !void {
                 try rt.storage.store_alloc("server_socket", socket);
 
                 for (0..size) |_| {
-                    try rt.net.accept(.{
-                        .socket = socket,
-                        .func = accept_task,
-                    });
+                    try rt.net.accept(
+                        void,
+                        accept_task,
+                        @constCast(&{}),
+                        socket,
+                    );
                 }
             }
         }.rt_start,
