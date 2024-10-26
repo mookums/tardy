@@ -23,7 +23,7 @@ fn open_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     }
 
     try rt.fs.read(
-        FileProvision,
+        *FileProvision,
         read_task,
         provision,
         fd,
@@ -39,7 +39,7 @@ fn read_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     // either done OR we have read EOF.
     if (length <= 0 or provision.buffer[@intCast(length - 1)] == 0x04) {
         try rt.fs.close(
-            FileProvision,
+            *FileProvision,
             close_task,
             provision,
             provision.fd,
@@ -49,7 +49,7 @@ fn read_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     }
 
     try rt.fs.write(
-        FileProvision,
+        *FileProvision,
         write_task,
         provision,
         try Cross.get_std_out(),
@@ -63,7 +63,7 @@ fn write_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
 
     if (length <= 0) {
         try rt.fs.close(
-            FileProvision,
+            *FileProvision,
             close_task,
             provision,
             provision.fd,
@@ -73,7 +73,7 @@ fn write_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     }
 
     try rt.fs.read(
-        FileProvision,
+        *FileProvision,
         read_task,
         provision,
         provision.fd,
@@ -134,7 +134,7 @@ pub fn main() !void {
         struct {
             fn start(rt: *Runtime, _: std.mem.Allocator, parameters: *EntryParams) !void {
                 try rt.fs.open(
-                    FileProvision,
+                    *FileProvision,
                     open_task,
                     &parameters.provision,
                     parameters.file_name,

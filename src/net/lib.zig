@@ -8,7 +8,7 @@ pub const Net = struct {
         self: *Net,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         socket: std.posix.socket_t,
     ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
@@ -20,7 +20,7 @@ pub const Net = struct {
         self: *Net,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
@@ -33,7 +33,7 @@ pub const Net = struct {
         self: *Net,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
@@ -46,7 +46,7 @@ pub const Net = struct {
         self: *Net,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         socket: std.posix.socket_t,
     ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));

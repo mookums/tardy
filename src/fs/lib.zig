@@ -8,7 +8,7 @@ pub const Filesystem = struct {
         self: *Filesystem,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         path: [:0]const u8,
     ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
@@ -20,7 +20,7 @@ pub const Filesystem = struct {
         self: *Filesystem,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         fd: std.posix.fd_t,
     ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));
@@ -32,7 +32,7 @@ pub const Filesystem = struct {
         self: *Filesystem,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: usize,
@@ -46,7 +46,7 @@ pub const Filesystem = struct {
         self: *Filesystem,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         fd: std.posix.fd_t,
         buffer: []const u8,
         offset: usize,
@@ -60,7 +60,7 @@ pub const Filesystem = struct {
         self: *Filesystem,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         fd: std.posix.fd_t,
     ) !void {
         const rt: *Runtime = @alignCast(@fieldParentPtr("fs", self));

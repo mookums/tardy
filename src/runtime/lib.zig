@@ -62,7 +62,7 @@ pub const Runtime = struct {
         self: *Runtime,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
     ) !void {
         _ = try self.scheduler.spawn(Context, task_fn, task_ctx, .runnable);
     }
@@ -73,7 +73,7 @@ pub const Runtime = struct {
         self: *Runtime,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         timespec: Timespec,
     ) !void {
         const index = try self.scheduler.spawn(Context, task_fn, task_ctx, .waiting);

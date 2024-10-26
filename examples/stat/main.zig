@@ -5,7 +5,7 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
-fn stat_task(rt: *Runtime, t: *const Task, _: *void) !void {
+fn stat_task(rt: *Runtime, t: *const Task, _: void) !void {
     const result = t.result.?.stat;
     try std.io.getStdOut().writer().print("size: {d}", .{result.size});
     rt.stop();
@@ -42,7 +42,7 @@ pub fn main() !void {
                 try rt.fs.stat(
                     void,
                     stat_task,
-                    @constCast(&{}),
+                    {},
                     file.handle,
                 );
             }

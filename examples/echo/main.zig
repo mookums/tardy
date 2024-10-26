@@ -19,7 +19,7 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, socket: *std.posix.socket_t) !void {
+fn accept_task(rt: *Runtime, t: *const Task, socket: std.posix.socket_t) !void {
     const child_socket = t.result.?.socket;
     if (child_socket < 0) {
         log.err("failed to accept on socket", .{});
@@ -34,7 +34,7 @@ fn accept_task(rt: *Runtime, t: *const Task, socket: *std.posix.socket_t) !void 
         std.posix.socket_t,
         accept_task,
         socket,
-        socket.*,
+        socket,
     );
 
     // get provision
@@ -46,7 +46,7 @@ fn accept_task(rt: *Runtime, t: *const Task, socket: *std.posix.socket_t) !void 
     borrowed.item.socket = child_socket;
 
     try rt.net.recv(
-        Provision,
+        *Provision,
         recv_task,
         borrowed.item,
         child_socket,
@@ -64,7 +64,7 @@ fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     }
 
     try rt.net.send(
-        Provision,
+        *Provision,
         send_task,
         provision,
         provision.socket,
@@ -83,7 +83,7 @@ fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
     try rt.net.recv(
-        Provision,
+        *Provision,
         recv_task,
         provision,
         provision.socket,
@@ -160,7 +160,7 @@ pub fn main() !void {
                 try rt.net.accept(
                     std.posix.socket_t,
                     accept_task,
-                    t_socket,
+                    t_socket.*,
                     t_socket.*,
                 );
             }

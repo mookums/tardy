@@ -40,7 +40,7 @@ pub const Scheduler = struct {
         self: *Scheduler,
         comptime Context: type,
         comptime task_fn: TaskFn(Context),
-        task_ctx: *Context,
+        task_ctx: Context,
         task_state: Task.State,
     ) !usize {
         const borrowed = blk: {
@@ -51,10 +51,40 @@ pub const Scheduler = struct {
             }
         };
 
+        const context: *allowzero anyopaque = context: {
+            switch (comptime @typeInfo(Context)) {
+                .Pointer => break :context task_ctx,
+                .Void => break :context undefined,
+                .Int => |int_info| {
+                    comptime assert(int_info.bits <= @bitSizeOf(usize));
+                    const uint = @Type(std.builtin.Type{
+                        .Int = .{
+                            .signedness = .unsigned,
+                            .bits = int_info.bits,
+                        },
+                    });
+
+                    break :context @ptrFromInt(@as(usize, @intCast(@as(uint, @bitCast(task_ctx)))));
+                },
+                .Struct => |struct_info| {
+                    comptime assert(@bitSizeOf(struct_info.backing_integer.?) <= @bitSizeOf(usize));
+                    const uint = @Type(std.builtin.Type{
+                        .Int = .{
+                            .signedness = .unsigned,
+                            .bits = @bitSizeOf(struct_info.backing_integer.?),
+                        },
+                    });
+
+                    break :context @ptrFromInt(@as(usize, @intCast(@as(uint, @bitCast(task_ctx)))));
+                },
+                else => unreachable,
+            }
+        };
+
         borrowed.item.* = .{
             .index = borrowed.index,
             .func = TaskFnWrapper(Context, task_fn),
-            .context = task_ctx,
+            .context = context,
             .state = task_state,
         };
 
