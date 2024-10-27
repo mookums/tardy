@@ -149,13 +149,6 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         init_parameters: anytype,
                         deinit_parameters: anytype,
                     ) void {
-                        // Experimental: Should allow for avoiding contention
-                        // over a shared fd table across threads.
-                        if (comptime builtin.target.os.tag == .linux) {
-                            const result = std.os.linux.unshare(std.os.linux.CLONE.FILES);
-                            if (result < 0) unreachable;
-                        }
-
                         var thread_rt = tardy.spawn_runtime(.{
                             .parent_async = parent,
                             .size_aio_jobs_max = options.size_aio_jobs_max,
