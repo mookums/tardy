@@ -38,9 +38,10 @@ pub const Scheduler = struct {
     /// This means that if the predicate is true that it will run.
     pub fn spawn(
         self: *Scheduler,
-        comptime Context: type,
-        comptime task_fn: TaskFn(Context),
-        task_ctx: Context,
+        comptime R: type,
+        comptime C: type,
+        comptime task_fn: TaskFn(R, C),
+        task_ctx: C,
         task_state: Task.State,
     ) !usize {
         const borrowed = blk: {
@@ -52,7 +53,7 @@ pub const Scheduler = struct {
         };
 
         const context: usize = context: {
-            switch (comptime @typeInfo(Context)) {
+            switch (comptime @typeInfo(C)) {
                 .Pointer => break :context @intFromPtr(task_ctx),
                 .Void => break :context undefined,
                 .Int => |int_info| {
@@ -83,7 +84,7 @@ pub const Scheduler = struct {
 
         borrowed.item.* = .{
             .index = borrowed.index,
-            .func = TaskFnWrapper(Context, task_fn),
+            .func = TaskFnWrapper(R, C, task_fn),
             .context = context,
             .state = task_state,
         };

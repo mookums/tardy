@@ -51,9 +51,7 @@ fn create_socket(addr: std.net.Address) !std.posix.socket_t {
     return socket;
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, _: void) !void {
-    const child_socket = t.result.?.socket;
-
+fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, _: void) !void {
     if (!Cross.socket.is_valid(child_socket)) {
         log.err("failed to accept socket", .{});
         rt.stop();
@@ -76,9 +74,7 @@ fn accept_task(rt: *Runtime, t: *const Task, _: void) !void {
     );
 }
 
-fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
-    const length = t.result.?.value;
-
+fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     log.debug("recv socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
@@ -103,9 +99,7 @@ fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     );
 }
 
-fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
-    const length = t.result.?.value;
-
+fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     log.debug("send socket fd={d}", .{provision.socket});
 
     if (length <= 0) {
@@ -130,7 +124,7 @@ fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     );
 }
 
-fn close_task(rt: *Runtime, _: *const Task, provision: *Provision) !void {
+fn close_task(rt: *Runtime, _: void, provision: *Provision) !void {
     const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
 
     log.debug("close socket fd={d}", .{provision.socket});

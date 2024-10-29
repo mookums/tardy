@@ -12,6 +12,7 @@ pub const Stat = struct {
 };
 
 pub const Result = union(enum) {
+    none,
     /// If we have returned a stat object.
     stat: Stat,
     /// If we have returned a socket.
@@ -20,6 +21,8 @@ pub const Result = union(enum) {
     fd: std.posix.fd_t,
     /// If we have returned a value.
     value: i32,
+    /// If we have returned a ptr.
+    ptr: *anyopaque,
 };
 
 pub const Completion = struct {

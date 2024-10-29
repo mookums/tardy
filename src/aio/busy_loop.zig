@@ -209,7 +209,7 @@ pub const AsyncBusyLoop = struct {
                         const current = std.time.nanoTimestamp();
                         if (current < target_time) continue;
 
-                        com_ptr.result = .{ .value = 1 };
+                        com_ptr.result = .none;
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
@@ -363,7 +363,7 @@ pub const AsyncBusyLoop = struct {
                     .close => |handle| {
                         const com_ptr = &self.completions[reaped];
                         std.posix.close(handle);
-                        com_ptr.result = .{ .value = 0 };
+                        com_ptr.result = .none;
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;

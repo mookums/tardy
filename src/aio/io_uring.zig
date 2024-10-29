@@ -350,7 +350,7 @@ pub const AsyncIoUring = struct {
                 switch (job.type) {
                     .accept, .connect => break :blk .{ .socket = cqe.res },
                     .open => break :blk .{ .fd = cqe.res },
-                    .timer => break :blk .{ .value = 1 },
+                    .timer, .close => break :blk .none,
                     .stat => {
                         const statx = &uring.statx[job.index];
 

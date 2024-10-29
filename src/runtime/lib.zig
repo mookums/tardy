@@ -60,23 +60,25 @@ pub const Runtime = struct {
     /// and will run as soon as possible.
     pub fn spawn(
         self: *Runtime,
-        comptime Context: type,
-        comptime task_fn: TaskFn(Context),
-        task_ctx: Context,
+        comptime R: type,
+        comptime C: type,
+        comptime task_fn: TaskFn(R, C),
+        task_ctx: C,
     ) !void {
-        _ = try self.scheduler.spawn(Context, task_fn, task_ctx, .runnable);
+        _ = try self.scheduler.spawn(R, C, task_fn, task_ctx, .runnable);
     }
 
     /// Spawns a new Task. This task will be set as runnable
     /// after the `timespec` amount of time has elasped.
     pub fn spawn_delay(
         self: *Runtime,
-        comptime Context: type,
-        comptime task_fn: TaskFn(Context),
-        task_ctx: Context,
+        comptime R: type,
+        comptime C: type,
+        comptime task_fn: TaskFn(R, C),
+        task_ctx: C,
         timespec: Timespec,
     ) !void {
-        const index = try self.scheduler.spawn(Context, task_fn, task_ctx, .waiting);
+        const index = try self.scheduler.spawn(R, C, task_fn, task_ctx, .waiting);
         try self.aio.queue_timer(index, timespec);
     }
 
@@ -95,7 +97,7 @@ pub const Runtime = struct {
                 task.state = .dead;
                 try self.scheduler.release(task.index);
 
-                @call(.auto, cloned_task.func, .{ self, &cloned_task, cloned_task.context }) catch |e| {
+                @call(.auto, cloned_task.func, .{ self, &cloned_task }) catch |e| {
                     log.debug("task failed: {}", .{e});
                 };
             }

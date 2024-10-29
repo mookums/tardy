@@ -435,7 +435,7 @@ pub const AsyncEpoll = struct {
                         },
                         .close => |handle| {
                             std.posix.close(handle);
-                            break :result .{ .value = 0 };
+                            break :result .none;
                         },
                     }
                 };
@@ -479,7 +479,7 @@ pub const AsyncEpoll = struct {
                                 }
                             };
 
-                            break :result .{ .value = 1 };
+                            break :result .none;
                         },
                         .accept => |socket| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);

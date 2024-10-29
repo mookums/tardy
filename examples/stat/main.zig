@@ -4,10 +4,10 @@ const log = std.log.scoped(.@"tardy/example/stat");
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
+const Stat = @import("tardy").Stat;
 
-fn stat_task(rt: *Runtime, t: *const Task, _: void) !void {
-    const result = t.result.?.stat;
-    try std.io.getStdOut().writer().print("size: {d}", .{result.size});
+fn stat_task(rt: *Runtime, stat: Stat, _: void) !void {
+    try std.io.getStdOut().writer().print("size: {d}", .{stat.size});
     rt.stop();
 }
 

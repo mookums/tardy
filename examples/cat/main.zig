@@ -12,8 +12,7 @@ const FileProvision = struct {
     offset: usize,
 };
 
-fn open_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
-    const fd: std.posix.fd_t = t.result.?.fd;
+fn open_task(rt: *Runtime, fd: std.posix.fd_t, provision: *FileProvision) !void {
     provision.fd = fd;
 
     if (!Cross.fd.is_valid(fd)) {
@@ -32,8 +31,7 @@ fn open_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     );
 }
 
-fn read_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
-    const length: i32 = t.result.?.value;
+fn read_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
     provision.offset += @intCast(length);
 
     // either done OR we have read EOF.
@@ -58,9 +56,7 @@ fn read_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     );
 }
 
-fn write_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
-    const length: i32 = t.result.?.value;
-
+fn write_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
     if (length <= 0) {
         try rt.fs.close(
             *FileProvision,
@@ -82,7 +78,7 @@ fn write_task(rt: *Runtime, t: *const Task, provision: *FileProvision) !void {
     );
 }
 
-fn close_task(rt: *Runtime, _: *const Task, _: *FileProvision) !void {
+fn close_task(rt: *Runtime, _: void, _: *FileProvision) !void {
     log.debug("all done!", .{});
     rt.stop();
 }

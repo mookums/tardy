@@ -19,9 +19,8 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, t: *const Task, socket: std.posix.socket_t) !void {
-    const child_socket = t.result.?.socket;
-    if (child_socket < 0) {
+fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, socket: std.posix.socket_t) !void {
+    if (!Cross.socket.is_valid(child_socket)) {
         log.err("failed to accept on socket", .{});
         rt.stop();
         return;
@@ -54,9 +53,7 @@ fn accept_task(rt: *Runtime, t: *const Task, socket: std.posix.socket_t) !void {
     );
 }
 
-fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
-    const length = t.result.?.value;
-
+fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     if (length <= 0) {
         const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
@@ -72,9 +69,7 @@ fn recv_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
     );
 }
 
-fn send_task(rt: *Runtime, t: *const Task, provision: *Provision) !void {
-    const length = t.result.?.value;
-
+fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     if (length <= 0) {
         const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
