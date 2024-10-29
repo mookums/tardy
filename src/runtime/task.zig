@@ -6,7 +6,7 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const Result = @import("../aio/completion.zig").Result;
 
 // This is what is internally passed around.
-pub const InnerTaskFn = *const fn (*Runtime, *const Task, *allowzero anyopaque) anyerror!void;
+pub const InnerTaskFn = *const fn (*Runtime, *const Task, usize) anyerror!void;
 
 pub fn TaskFn(comptime Context: type) type {
     return *const fn (*Runtime, *const Task, Context) anyerror!void;
@@ -14,10 +14,10 @@ pub fn TaskFn(comptime Context: type) type {
 
 pub fn TaskFnWrapper(comptime Context: type, comptime task_fn: TaskFn(Context)) InnerTaskFn {
     return struct {
-        fn wrapper(rt: *Runtime, t: *const Task, ctx: *allowzero anyopaque) anyerror!void {
+        fn wrapper(rt: *Runtime, t: *const Task, ctx: usize) anyerror!void {
             const context: Context = context: {
                 switch (comptime @typeInfo(Context)) {
-                    .Pointer => break :context @ptrCast(@alignCast(ctx)),
+                    .Pointer => break :context @ptrFromInt(ctx),
                     .Void => break :context {},
                     .Int => |int_info| {
                         const uint = @Type(std.builtin.Type{
@@ -27,7 +27,7 @@ pub fn TaskFnWrapper(comptime Context: type, comptime task_fn: TaskFn(Context)) 
                             },
                         });
 
-                        break :context @bitCast(@as(uint, @truncate(@intFromPtr(ctx))));
+                        break :context @bitCast(@as(uint, @truncate(ctx)));
                     },
                     .Struct => |struct_info| {
                         const uint = @Type(std.builtin.Type{
@@ -37,7 +37,7 @@ pub fn TaskFnWrapper(comptime Context: type, comptime task_fn: TaskFn(Context)) 
                             },
                         });
 
-                        break :context @bitCast(@as(uint, @truncate(@intFromPtr(ctx))));
+                        break :context @bitCast(@as(uint, @truncate(ctx)));
                     },
                     else => unreachable,
                 }
@@ -61,6 +61,5 @@ pub const Task = struct {
     index: usize,
     // 8 bytes
     func: InnerTaskFn,
-    // `@bitSizeOf(usize)` bytes
-    context: *allowzero anyopaque,
+    context: usize,
 };

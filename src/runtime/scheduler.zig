@@ -51,9 +51,9 @@ pub const Scheduler = struct {
             }
         };
 
-        const context: *allowzero anyopaque = context: {
+        const context: usize = context: {
             switch (comptime @typeInfo(Context)) {
-                .Pointer => break :context task_ctx,
+                .Pointer => break :context @intFromPtr(task_ctx),
                 .Void => break :context undefined,
                 .Int => |int_info| {
                     comptime assert(int_info.bits <= @bitSizeOf(usize));
@@ -64,7 +64,7 @@ pub const Scheduler = struct {
                         },
                     });
 
-                    break :context @ptrFromInt(@as(usize, @intCast(@as(uint, @bitCast(task_ctx)))));
+                    break :context @intCast(@as(uint, @bitCast(task_ctx)));
                 },
                 .Struct => |struct_info| {
                     comptime assert(@bitSizeOf(struct_info.backing_integer.?) <= @bitSizeOf(usize));
@@ -75,7 +75,7 @@ pub const Scheduler = struct {
                         },
                     });
 
-                    break :context @ptrFromInt(@as(usize, @intCast(@as(uint, @bitCast(task_ctx)))));
+                    break :context @intCast(@as(uint, @bitCast(task_ctx)));
                 },
                 else => unreachable,
             }
