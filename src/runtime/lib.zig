@@ -84,20 +84,33 @@ pub const Runtime = struct {
         self.running = false;
     }
 
+    inline fn run_task(self: *Runtime, task: *Task) !void {
+        const cloned_task: Task = task.*;
+        task.state = .dead;
+        try self.scheduler.release(task.index);
+
+        @call(.auto, cloned_task.func, .{ self, &cloned_task }) catch |e| {
+            log.debug("task failed: {}", .{e});
+        };
+    }
+
     pub fn run(self: *Runtime) !void {
         while (self.running) {
-            var iter = self.scheduler.runnable.iterator(.{ .kind = .set });
+            var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
                 const task: *Task = &self.scheduler.tasks.items[index];
-                assert(task.state == .runnable);
-
-                const cloned_task: Task = task.*;
-                task.state = .dead;
-                try self.scheduler.release(task.index);
-
-                @call(.auto, cloned_task.func, .{ self, &cloned_task }) catch |e| {
-                    log.debug("task failed: {}", .{e});
-                };
+                switch (task.state) {
+                    .predicate => |inner| {
+                        const predicate = inner.func(inner.ctx);
+                        if (predicate) {
+                            task.result = .{ .ptr = inner.gen(inner.ctx) };
+                            self.scheduler.set_runnable(task.index);
+                            try self.run_task(task);
+                        }
+                    },
+                    .runnable => try self.run_task(task),
+                    else => continue,
+                }
             }
 
             if (!self.running) break;
