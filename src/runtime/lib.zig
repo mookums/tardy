@@ -61,11 +61,10 @@ pub const Runtime = struct {
     pub fn spawn(
         self: *Runtime,
         comptime R: type,
-        comptime C: type,
-        comptime task_fn: TaskFn(R, C),
-        task_ctx: C,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
     ) !void {
-        _ = try self.scheduler.spawn(R, C, task_fn, task_ctx, .runnable);
+        _ = try self.scheduler.spawn(R, task_ctx, task_fn, .runnable);
     }
 
     /// Spawns a new Task. This task will be set as runnable
@@ -73,12 +72,11 @@ pub const Runtime = struct {
     pub fn spawn_delay(
         self: *Runtime,
         comptime R: type,
-        comptime C: type,
-        comptime task_fn: TaskFn(R, C),
-        task_ctx: C,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
         timespec: Timespec,
     ) !void {
-        const index = try self.scheduler.spawn(R, C, task_fn, task_ctx, .waiting);
+        const index = try self.scheduler.spawn(R, task_ctx, task_fn, .waiting);
         try self.aio.queue_timer(index, timespec);
     }
 

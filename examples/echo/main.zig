@@ -29,12 +29,7 @@ fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, socket: std.posix
     try Cross.socket.to_nonblock(child_socket);
 
     log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    try rt.net.accept(
-        std.posix.socket_t,
-        accept_task,
-        socket,
-        socket,
-    );
+    try rt.net.accept(socket, accept_task, socket);
 
     // get provision
     // assign based on index
@@ -45,9 +40,8 @@ fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, socket: std.posix
     borrowed.item.socket = child_socket;
 
     try rt.net.recv(
-        *Provision,
-        recv_task,
         borrowed.item,
+        recv_task,
         child_socket,
         borrowed.item.buffer,
     );
@@ -61,9 +55,8 @@ fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     }
 
     try rt.net.send(
-        *Provision,
-        send_task,
         provision,
+        send_task,
         provision.socket,
         provision.buffer,
     );
@@ -78,9 +71,8 @@ fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
     try rt.net.recv(
-        *Provision,
-        recv_task,
         provision,
+        recv_task,
         provision.socket,
         provision.buffer,
     );
@@ -152,12 +144,7 @@ pub fn main() !void {
 
                 try rt.storage.store_alloc("provision_pool", pool);
 
-                try rt.net.accept(
-                    std.posix.socket_t,
-                    accept_task,
-                    t_socket.*,
-                    t_socket.*,
-                );
+                try rt.net.accept(t_socket.*, accept_task, t_socket.*);
             }
         }.rt_start,
         @constCast(&socket),

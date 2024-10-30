@@ -66,9 +66,8 @@ fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, _: void) !void {
     borrowed.item.index = borrowed.index;
     borrowed.item.socket = child_socket;
     try rt.net.recv(
-        *Provision,
-        recv_task,
         borrowed.item,
+        recv_task,
         child_socket,
         borrowed.item.buffer,
     );
@@ -80,20 +79,13 @@ fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     if (length <= 0) {
         log.debug("recv closed fd={d}", .{provision.socket});
         log.debug("queueing close with ctx ptr: {*}", .{provision});
-        try rt.net.close(
-            *Provision,
-            close_task,
-            provision,
-            provision.socket,
-        );
-
+        try rt.net.close(provision, close_task, provision.socket);
         return;
     }
 
     try rt.net.send(
-        *Provision,
-        send_task,
         provision,
+        send_task,
         provision.socket,
         HTTP_RESPONSE[0..],
     );
@@ -105,20 +97,13 @@ fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     if (length <= 0) {
         log.debug("send closed fd={d}", .{provision.socket});
         log.debug("queueing close with ctx ptr: {*}", .{provision});
-        try rt.net.close(
-            *Provision,
-            close_task,
-            provision,
-            provision.socket,
-        );
-
+        try rt.net.close(provision, close_task, provision.socket);
         return;
     }
 
     try rt.net.recv(
-        *Provision,
-        recv_task,
         provision,
+        recv_task,
         provision.socket,
         provision.buffer,
     );
@@ -131,8 +116,7 @@ fn close_task(rt: *Runtime, _: void, provision: *Provision) !void {
     provision_pool.release(provision.index);
 
     const socket = rt.storage.get("server_socket", std.posix.socket_t);
-    // requeue accept
-    try rt.net.accept(void, accept_task, {}, socket);
+    try rt.net.accept({}, accept_task, socket);
 }
 
 pub fn main() !void {
@@ -178,9 +162,8 @@ pub fn main() !void {
 
                 for (0..size) |_| {
                     try rt.net.accept(
-                        void,
-                        accept_task,
                         {},
+                        accept_task,
                         socket,
                     );
                 }

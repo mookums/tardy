@@ -22,9 +22,8 @@ fn open_task(rt: *Runtime, fd: std.posix.fd_t, provision: *FileProvision) !void 
     }
 
     try rt.fs.read(
-        *FileProvision,
-        read_task,
         provision,
+        read_task,
         fd,
         provision.buffer,
         provision.offset,
@@ -36,20 +35,13 @@ fn read_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
 
     // either done OR we have read EOF.
     if (length <= 0 or provision.buffer[@intCast(length - 1)] == 0x04) {
-        try rt.fs.close(
-            *FileProvision,
-            close_task,
-            provision,
-            provision.fd,
-        );
-
+        try rt.fs.close(provision, close_task, provision.fd);
         return;
     }
 
     try rt.fs.write(
-        *FileProvision,
-        write_task,
         provision,
+        write_task,
         try Cross.get_std_out(),
         provision.buffer,
         provision.offset,
@@ -58,20 +50,13 @@ fn read_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
 
 fn write_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
     if (length <= 0) {
-        try rt.fs.close(
-            *FileProvision,
-            close_task,
-            provision,
-            provision.fd,
-        );
-
+        try rt.fs.close(provision, close_task, provision.fd);
         return;
     }
 
     try rt.fs.read(
-        *FileProvision,
-        read_task,
         provision,
+        read_task,
         provision.fd,
         provision.buffer,
         provision.offset,
@@ -129,12 +114,7 @@ pub fn main() !void {
     try tardy.entry(
         struct {
             fn start(rt: *Runtime, _: std.mem.Allocator, parameters: *EntryParams) !void {
-                try rt.fs.open(
-                    *FileProvision,
-                    open_task,
-                    &parameters.provision,
-                    parameters.file_name,
-                );
+                try rt.fs.open(&parameters.provision, open_task, parameters.file_name);
             }
         }.start,
         &params,

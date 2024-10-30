@@ -39,9 +39,8 @@ pub const Scheduler = struct {
     pub fn spawn(
         self: *Scheduler,
         comptime R: type,
-        comptime C: type,
-        comptime task_fn: TaskFn(R, C),
-        task_ctx: C,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
         task_state: Task.State,
     ) !usize {
         const borrowed = blk: {
@@ -53,7 +52,7 @@ pub const Scheduler = struct {
         };
 
         const context: usize = context: {
-            switch (comptime @typeInfo(C)) {
+            switch (comptime @typeInfo(@TypeOf(task_ctx))) {
                 .Pointer => break :context @intFromPtr(task_ctx),
                 .Void => break :context undefined,
                 .Int => |int_info| {
@@ -84,7 +83,7 @@ pub const Scheduler = struct {
 
         borrowed.item.* = .{
             .index = borrowed.index,
-            .func = TaskFnWrapper(R, C, task_fn),
+            .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
             .context = context,
             .state = task_state,
         };

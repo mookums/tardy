@@ -39,12 +39,7 @@ pub fn main() !void {
         struct {
             fn init(rt: *Runtime, _: std.mem.Allocator, path: [:0]const u8) !void {
                 const file = try std.fs.cwd().openFileZ(path, .{});
-                try rt.fs.stat(
-                    void,
-                    stat_task,
-                    {},
-                    file.handle,
-                );
+                try rt.fs.stat({}, stat_task, file.handle);
             }
         }.init,
         file_name,
