@@ -58,10 +58,6 @@ pub fn Broadcast(comptime T: type) type {
             // If we have no channels, why are we sending?
             if (self.channels.empty()) return error.BroadcastNoReceiver;
 
-            // Create list to track channels that need to be removed
-            var to_remove = std.ArrayList(usize).init(self.allocator);
-            defer to_remove.deinit();
-
             // Try to send to each channel, mark closed ones for removal
             var iter = self.channels.iterator();
             while (iter.next_ptr()) |channel| {
