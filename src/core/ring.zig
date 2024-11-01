@@ -36,14 +36,14 @@ pub fn Ring(comptime T: type) type {
         }
 
         pub fn send(self: *Self, message: T) !void {
-            if (self.full()) return error.Full;
+            if (self.full()) return error.RingFull;
             self.items[self.write_index] = message;
             self.write_index = (self.write_index + 1) % self.items.len;
             self.count += 1;
         }
 
         pub fn recv(self: *Self) !T {
-            if (self.empty()) return error.Empty;
+            if (self.empty()) return error.RingEmpty;
             const message = self.items[self.read_index];
             self.read_index = (self.read_index + 1) % self.items.len;
             self.count -= 1;
@@ -51,7 +51,7 @@ pub fn Ring(comptime T: type) type {
         }
 
         pub fn recv_ptr(self: *Self) !*T {
-            if (self.empty()) return error.Empty;
+            if (self.empty()) return error.RingEmpty;
             const message = &self.items[self.read_index];
             self.read_index = (self.read_index + 1) % self.items.len;
             self.count -= 1;

@@ -56,6 +56,10 @@ pub const Runtime = struct {
         self.aio.deinit(self.allocator);
     }
 
+    pub fn wake(self: *Runtime) !void {
+        try self.aio.wake();
+    }
+
     /// Spawns a new Task. This task is immediately runnable
     /// and will run as soon as possible.
     pub fn spawn(
@@ -80,6 +84,11 @@ pub const Runtime = struct {
         try self.aio.queue_timer(index, timespec);
     }
 
+    /// Is the runtime asleep?
+    pub inline fn asleep(self: *Runtime) bool {
+        return self.aio.asleep.load(.acquire);
+    }
+
     pub fn stop(self: *Runtime) void {
         self.running = false;
     }
@@ -95,14 +104,14 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
-        while (self.running) {
+        while (true) {
+            var force_woken = false;
             var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
                 const task: *Task = &self.scheduler.tasks.items[index];
                 switch (task.state) {
-                    .predicate => |inner| {
-                        const predicate = inner.func(inner.ctx);
-                        if (predicate) {
+                    .channel => |inner| {
+                        if (inner.check(inner.ctx)) {
                             task.result = .{ .ptr = inner.gen(inner.ctx) };
                             self.scheduler.set_runnable(task.index);
                             try self.run_task(task);
@@ -116,6 +125,11 @@ pub const Runtime = struct {
             if (!self.running) break;
             try self.aio.submit();
 
+            if (self.scheduler.tasks.empty()) {
+                log.err("no more tasks", .{});
+                break;
+            }
+
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
             const wait_for_io = self.scheduler.runnable.count() == 0;
@@ -123,6 +137,11 @@ pub const Runtime = struct {
 
             const completions = try self.aio.reap(wait_for_io);
             for (completions) |completion| {
+                if (completion.result == .wake) {
+                    force_woken = true;
+                    continue;
+                }
+
                 const index = completion.task;
                 const task = &self.scheduler.tasks.items[index];
                 assert(task.state == .waiting);
@@ -130,7 +149,7 @@ pub const Runtime = struct {
                 self.scheduler.set_runnable(index);
             }
 
-            if (self.scheduler.runnable.count() == 0) {
+            if (self.scheduler.runnable.count() == 0 and !force_woken) {
                 log.err("no more runnable tasks", .{});
                 break;
             }

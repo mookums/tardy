@@ -7,7 +7,10 @@ pub const Pool = @import("core/pool.zig").Pool;
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
 pub const TaskFn = @import("runtime/task.zig").TaskFn;
+pub const Broadcast = @import("runtime/broadcast.zig").Broadcast;
 pub const Channel = @import("runtime/channel.zig").Channel;
+pub const RxChannel = @import("runtime/channel.zig").RxChannel;
+pub const TxChannel = @import("runtime/channel.zig").TxChannel;
 pub const Stat = @import("aio/completion.zig").Stat;
 
 /// Cross-platform abstractions.

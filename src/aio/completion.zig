@@ -13,6 +13,8 @@ pub const Stat = struct {
 
 pub const Result = union(enum) {
     none,
+    /// If we want to wake the runtime up.
+    wake,
     /// If we have returned a stat object.
     stat: Stat,
     /// If we have returned a socket.
@@ -22,7 +24,7 @@ pub const Result = union(enum) {
     /// If we have returned a value.
     value: i32,
     /// If we have returned a ptr.
-    ptr: *anyopaque,
+    ptr: ?*anyopaque,
 };
 
 pub const Completion = struct {

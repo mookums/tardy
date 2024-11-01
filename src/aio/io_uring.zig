@@ -23,15 +23,18 @@ pub const AsyncIoUring = struct {
     };
 
     inner: *std.os.linux.IoUring,
+    wake_event_fd: std.posix.fd_t,
+    wake_event_buffer: []u8,
     cqes: []std.os.linux.io_uring_cqe,
     statx: []std.os.linux.Statx,
     timespec: []std.os.linux.kernel_timespec,
     jobs: Pool(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
-        // with io_uring, our timeouts take up an additional slot in the ring.
-        // this means if they are enabled, we need 2x the slots.
-        const size = options.size_aio_jobs_max;
+        // Extra job for the wake event_fd.
+        const size = options.size_aio_jobs_max + 1;
+        const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+        const wake_event_buffer = try allocator.alloc(u8, 8);
 
         const uring = blk: {
             if (options.parent_async) |parent| {
@@ -68,12 +71,41 @@ pub const AsyncIoUring = struct {
             }
         };
 
+        var jobs = try Pool(Job).init(allocator, size, null, null);
+
+        {
+            const borrowed = jobs.borrow_assume_unset(0);
+            borrowed.item.* = .{
+                .index = borrowed.index,
+                .type = .wake,
+                .task = undefined,
+            };
+
+            _ = try uring.read(
+                @intFromPtr(borrowed.item),
+                wake_event_fd,
+                .{ .buffer = wake_event_buffer },
+                0,
+            );
+        }
+
         return AsyncIoUring{
             .inner = uring,
-            .jobs = try Pool(Job).init(allocator, size, null, null),
-            .cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max),
-            .statx = try allocator.alloc(std.os.linux.Statx, options.size_aio_jobs_max),
-            .timespec = try allocator.alloc(std.os.linux.kernel_timespec, options.size_aio_jobs_max),
+            .wake_event_fd = wake_event_fd,
+            .wake_event_buffer = wake_event_buffer,
+            .jobs = jobs,
+            .cqes = try allocator.alloc(
+                std.os.linux.io_uring_cqe,
+                options.size_aio_reap_max,
+            ),
+            .statx = try allocator.alloc(
+                std.os.linux.Statx,
+                options.size_aio_jobs_max,
+            ),
+            .timespec = try allocator.alloc(
+                std.os.linux.kernel_timespec,
+                options.size_aio_jobs_max,
+            ),
         };
     }
 
@@ -81,6 +113,8 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         uring.inner.deinit();
         uring.jobs.deinit(null, null);
+        std.posix.close(uring.wake_event_fd);
+        allocator.free(uring.wake_event_buffer);
         allocator.free(uring.cqes);
         allocator.free(uring.statx);
         allocator.free(uring.timespec);
@@ -325,6 +359,32 @@ pub const AsyncIoUring = struct {
         _ = try uring.inner.send(@intFromPtr(borrowed.item), socket, buffer, 0);
     }
 
+    inline fn queue_wake(self: *AsyncIoUring) !void {
+        const borrowed = try self.jobs.borrow();
+
+        borrowed.item.* = .{
+            .index = borrowed.index,
+            .type = .wake,
+            .task = undefined,
+        };
+
+        _ = try self.inner.read(
+            @intFromPtr(borrowed.item),
+            self.wake_event_fd,
+            .{ .buffer = self.wake_event_buffer },
+            0,
+        );
+    }
+
+    pub fn wake(self: *AsyncIO) !void {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+        const bytes: []const u8 = "00000000";
+        var i: usize = 0;
+        while (i < bytes.len) {
+            i += try std.posix.write(uring.wake_event_fd, bytes);
+        }
+    }
+
     pub fn submit(self: *AsyncIO) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         _ = try uring.inner.submit();
@@ -348,6 +408,10 @@ pub const AsyncIoUring = struct {
                     });
                 }
                 switch (job.type) {
+                    .wake => {
+                        try uring.queue_wake();
+                        break :blk .wake;
+                    },
                     .accept, .connect => break :blk .{ .socket = cqe.res },
                     .open => break :blk .{ .fd = cqe.res },
                     .timer, .close => break :blk .none,
@@ -400,6 +464,7 @@ pub const AsyncIoUring = struct {
             ._queue_connect = queue_connect,
             ._queue_recv = queue_recv,
             ._queue_send = queue_send,
+            ._wake = wake,
             ._submit = submit,
             ._reap = reap,
         };

@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.@"tardy/aio/busy_loop");
 
 const builtin = @import("builtin");
+const Atomic = std.atomic.Value;
 const Completion = @import("completion.zig").Completion;
 const Stat = @import("completion.zig").Stat;
 const Timespec = @import("timespec.zig").Timespec;
@@ -13,10 +14,14 @@ const Job = @import("job.zig").Job;
 
 pub const AsyncBusyLoop = struct {
     inner: std.ArrayListUnmanaged(Job),
+    wake_signal: Atomic(bool),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncBusyLoop {
         const list = try std.ArrayListUnmanaged(Job).initCapacity(allocator, options.size_aio_jobs_max);
-        return AsyncBusyLoop{ .inner = list };
+        return AsyncBusyLoop{
+            .inner = list,
+            .wake_signal = Atomic(bool).init(false),
+        };
     }
 
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
@@ -187,6 +192,11 @@ pub const AsyncBusyLoop = struct {
         });
     }
 
+    pub fn wake(self: *AsyncIO) !void {
+        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+        loop.wake_signal.store(true, .release);
+    }
+
     pub fn submit(self: *AsyncIO) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
         _ = loop;
@@ -199,10 +209,20 @@ pub const AsyncBusyLoop = struct {
 
         while ((reaped < 1 and wait) or first_run) {
             var i: usize = 0;
+
+            if (loop.wake_signal.swap(false, .acquire)) {
+                const com_ptr = &self.completions[reaped];
+                com_ptr.result = .wake;
+                com_ptr.task = undefined;
+                reaped += 1;
+            }
+
             while (i < loop.inner.items.len and reaped < self.completions.len) : (i += 1) {
                 const job = loop.inner.items[i];
 
                 switch (job.type) {
+                    // handled above with a wake_signal.
+                    .wake => unreachable,
                     .timer => |inner| {
                         const com_ptr = &self.completions[reaped];
                         const target_time = inner.ns;
@@ -505,6 +525,7 @@ pub const AsyncBusyLoop = struct {
             ._queue_connect = queue_connect,
             ._queue_recv = queue_recv,
             ._queue_send = queue_send,
+            ._wake = wake,
             ._submit = submit,
             ._reap = reap,
         };

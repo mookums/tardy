@@ -14,23 +14,45 @@ const Pool = @import("../core/pool.zig").Pool;
 
 pub const AsyncEpoll = struct {
     epoll_fd: std.posix.fd_t,
+    wake_event_fd: std.posix.fd_t,
     events: []std.os.linux.epoll_event,
     jobs: Pool(Job),
-
     // This is for jobs that are not supported and need
     // to be blocking.
     blocking: std.ArrayList(*Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncEpoll {
+        const size = options.size_aio_jobs_max + 1;
         const epoll_fd = try std.posix.epoll_create1(0);
         assert(epoll_fd > -1);
 
+        const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+
         const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
-        const jobs = try Pool(Job).init(allocator, options.size_aio_jobs_max, null, null);
+        var jobs = try Pool(Job).init(allocator, size, null, null);
         const blocking = std.ArrayList(*Job).init(allocator);
+
+        // Queue the wake task.
+
+        {
+            const borrowed = jobs.borrow_assume_unset(0);
+            borrowed.item.* = .{
+                .index = borrowed.index,
+                .type = .wake,
+                .task = undefined,
+            };
+
+            var event: std.os.linux.epoll_event = .{
+                .events = std.os.linux.EPOLL.IN,
+                .data = .{ .u64 = borrowed.index },
+            };
+
+            try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
+        }
 
         return AsyncEpoll{
             .epoll_fd = epoll_fd,
+            .wake_event_fd = wake_event_fd,
             .events = events,
             .jobs = jobs,
             .blocking = blocking,
@@ -43,6 +65,7 @@ pub const AsyncEpoll = struct {
         allocator.free(epoll.events);
         epoll.jobs.deinit(null, null);
         epoll.blocking.deinit();
+        std.posix.close(epoll.wake_event_fd);
     }
 
     pub fn queue_timer(
@@ -304,6 +327,16 @@ pub const AsyncEpoll = struct {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
     }
 
+    pub fn wake(self: *AsyncIO) !void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+
+        const bytes: []const u8 = "00000000";
+        var i: usize = 0;
+        while (i < bytes.len) {
+            i += try std.posix.write(epoll.wake_event_fd, bytes);
+        }
+    }
+
     pub fn submit(self: *AsyncIO) !void {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         _ = epoll;
@@ -321,6 +354,7 @@ pub const AsyncEpoll = struct {
             blocking_loop: for (0..epoll.blocking.items.len) |_| {
                 const job = epoll.blocking.popOrNull() orelse break;
                 assert(epoll.jobs.dirty.isSet(job.index));
+
                 if (self.completions.len - reaped == 0) break;
 
                 var job_complete = true;
@@ -463,6 +497,23 @@ pub const AsyncEpoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         else => unreachable,
+                        .wake => {
+                            // this keeps it in the job queue and we pretty
+                            // much never want to remove this fd.
+                            job_complete = false;
+                            var buffer: [8]u8 = undefined;
+                            _ = std.posix.read(epoll.wake_event_fd, buffer[0..]) catch |e| {
+                                switch (e) {
+                                    error.WouldBlock => unreachable,
+                                    else => {
+                                        log.err("wake failed: {}", .{e});
+                                        unreachable;
+                                    },
+                                }
+                            };
+
+                            break :result .wake;
+                        },
                         .timer => |inner| {
                             const timer_fd = inner.fd;
                             defer epoll.remove_fd(timer_fd) catch unreachable;
@@ -600,6 +651,7 @@ pub const AsyncEpoll = struct {
             ._queue_connect = queue_connect,
             ._queue_recv = queue_recv,
             ._queue_send = queue_send,
+            ._wake = wake,
             ._submit = submit,
             ._reap = reap,
         };

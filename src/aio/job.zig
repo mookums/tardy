@@ -3,6 +3,7 @@ const Timespec = @import("timespec.zig").Timespec;
 
 pub const Job = struct {
     type: union(enum) {
+        wake,
         timer: union(enum) { none, fd: std.posix.fd_t, ns: i128 },
         open: [:0]const u8,
         stat: std.posix.fd_t,

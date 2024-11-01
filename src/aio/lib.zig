@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
 const Timespec = @import("timespec.zig").Timespec;
+const Atomic = std.atomic.Value;
 
 pub const AsyncIOType = union(enum) {
     /// Attempts to automatically match
@@ -42,11 +43,7 @@ pub fn auto_async_match() AsyncIOType {
                 return AsyncIOType.io_uring;
             }
 
-            if (version.isAtLeast(.{
-                .major = 2,
-                .minor = 5,
-                .patch = 45,
-            }) orelse @compileError("Unable to determine kernel version. Specify an AsyncIO Backend.")) {
+            if (version.isAtLeast(.{ .major = 2, .minor = 5, .patch = 45 }) orelse unreachable) {
                 return AsyncIOType.epoll;
             }
 
@@ -88,6 +85,7 @@ pub const AsyncIO = struct {
     runner: *anyopaque,
     attached: bool = false,
     completions: []Completion = undefined,
+    asleep: Atomic(bool) = Atomic(bool).init(false),
 
     _deinit: *const fn (
         self: *AsyncIO,
@@ -164,6 +162,7 @@ pub const AsyncIO = struct {
         buffer: []const u8,
     ) anyerror!void,
 
+    _wake: *const fn (self: *AsyncIO) anyerror!void,
     _reap: *const fn (self: *AsyncIO, wait: bool) anyerror![]Completion,
     _submit: *const fn (self: *AsyncIO) anyerror!void,
 
@@ -280,8 +279,15 @@ pub const AsyncIO = struct {
         try @call(.auto, self._queue_send, .{ self, task, socket, buffer });
     }
 
+    pub fn wake(self: *AsyncIO) !void {
+        assert(self.attached);
+        self.asleep.store(false, .release);
+        try @call(.auto, self._wake, .{self});
+    }
+
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         assert(self.attached);
+        if (wait) self.asleep.store(true, .release);
         return try @call(.auto, self._reap, .{ self, wait });
     }
 

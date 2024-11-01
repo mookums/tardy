@@ -25,15 +25,20 @@ pub const Storage = struct {
         try self.map.putNoClobber(self.arena.allocator(), name, @ptrCast(item));
     }
 
-    /// Store a new item in the Storage.
-    /// This will CLONE (allocate) the item that you pass in and manage the clone.
-    /// This asserts that no other item has the same name.
-    pub fn store_alloc(self: *Storage, name: []const u8, item: anytype) !void {
+    pub fn store_alloc_ret(self: *Storage, name: []const u8, item: anytype) !*@TypeOf(item) {
         const allocator = self.arena.allocator();
         const clone = try allocator.create(@TypeOf(item));
         errdefer allocator.destroy(clone);
         clone.* = item;
         try self.map.putNoClobber(allocator, name, @ptrCast(clone));
+        return clone;
+    }
+
+    /// Store a new item in the Storage.
+    /// This will CLONE (allocate) the item that you pass in and manage the clone.
+    /// This asserts that no other item has the same name.
+    pub fn store_alloc(self: *Storage, name: []const u8, item: anytype) !void {
+        _ = try self.store_alloc_ret(name, item);
     }
 
     /// Get an item that is within the Storage.

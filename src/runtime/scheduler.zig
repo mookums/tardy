@@ -35,7 +35,6 @@ pub const Scheduler = struct {
     }
 
     /// Spawns a Task by adding it into the scheduler pool.
-    /// This means that if the predicate is true that it will run.
     pub fn spawn(
         self: *Scheduler,
         comptime R: type,

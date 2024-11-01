@@ -51,6 +51,7 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
 
             const result: R = result: {
                 switch (t.result) {
+                    .wake => unreachable,
                     .none => {
                         if (comptime R != void) unreachable;
                         break :result {};
@@ -72,8 +73,11 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
                         break :result inner;
                     },
                     .ptr => |inner| {
-                        if (comptime @typeInfo(R) != .Pointer) unreachable;
-                        break :result @ptrCast(@alignCast(inner));
+                        if (comptime @typeInfo(R) != .Optional) unreachable;
+                        if (comptime @typeInfo(@typeInfo(R).Optional.child) != .Pointer) unreachable;
+
+                        if (inner == null) break :result null;
+                        break :result @ptrCast(@alignCast(inner.?));
                     },
                 }
             };
@@ -85,9 +89,9 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
 
 pub const Task = struct {
     pub const State = union(enum) {
-        predicate: struct {
-            func: *const fn (*anyopaque) bool,
-            gen: *const fn (*anyopaque) *anyopaque,
+        channel: struct {
+            check: *const fn (*anyopaque) bool,
+            gen: *const fn (*anyopaque) ?*anyopaque,
             ctx: *anyopaque,
         },
         waiting,
