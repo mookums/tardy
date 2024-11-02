@@ -49,6 +49,7 @@ pub fn Broadcast(comptime T: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
             self.channels.release(chan.id);
+            chan.deinit();
         }
 
         pub fn send(self: *Self, message: T) !void {
