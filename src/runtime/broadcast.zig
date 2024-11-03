@@ -64,7 +64,7 @@ pub fn Broadcast(comptime T: type) type {
             while (iter.next_ptr()) |channel| {
                 channel.send(message) catch |err| switch (err) {
                     error.ChannelClosed => self.channels.release(channel.id),
-                    else => unreachable,
+                    else => return err,
                 };
             }
         }
