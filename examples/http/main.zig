@@ -140,8 +140,9 @@ pub fn main() !void {
     defer tardy.deinit();
 
     try tardy.entry(
+        conn_per_thread,
         struct {
-            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, size: u16) !void {
+            fn rt_start(rt: *Runtime, size: u16) !void {
                 // socket per thread.
                 const addr = try std.net.Address.parseIp(host, port);
                 const socket = try create_socket(addr);
@@ -149,13 +150,13 @@ pub fn main() !void {
                 try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
                 try std.posix.listen(socket, size);
 
-                const pool = try Pool(Provision).init(alloc, size, struct {
-                    fn init(items: []Provision, all: anytype) void {
+                const pool = try Pool(Provision).init(rt.allocator, size, rt.allocator, struct {
+                    fn init(items: []Provision, a: std.mem.Allocator) void {
                         for (items) |*item| {
-                            item.buffer = all.alloc(u8, 512) catch unreachable;
+                            item.buffer = a.alloc(u8, 512) catch unreachable;
                         }
                     }
-                }.init, alloc);
+                }.init);
 
                 try rt.storage.store_alloc("provision_pool", pool);
                 try rt.storage.store_alloc("server_socket", socket);
@@ -169,22 +170,21 @@ pub fn main() !void {
                 }
             }
         }.rt_start,
-        conn_per_thread,
+        {},
         struct {
-            fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
+            fn rt_end(rt: *Runtime, _: void) !void {
                 const socket = rt.storage.get("server_socket", std.posix.socket_t);
                 std.posix.close(socket);
 
                 const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-                provision_pool.deinit(struct {
-                    fn pool_deinit(items: []Provision, a: anytype) void {
+                provision_pool.deinit(rt.allocator, struct {
+                    fn pool_deinit(items: []Provision, a: std.mem.Allocator) void {
                         for (items) |item| {
                             a.free(item.buffer);
                         }
                     }
-                }.pool_deinit, alloc);
+                }.pool_deinit);
             }
         }.rt_end,
-        void,
     );
 }

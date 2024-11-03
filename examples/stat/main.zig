@@ -36,16 +36,16 @@ pub fn main() !void {
     };
 
     try tardy.entry(
+        file_name,
         struct {
-            fn init(rt: *Runtime, _: std.mem.Allocator, path: [:0]const u8) !void {
+            fn init(rt: *Runtime, path: [:0]const u8) !void {
                 const file = try std.fs.cwd().openFileZ(path, .{});
                 try rt.fs.stat({}, stat_task, file.handle);
             }
         }.init,
-        file_name,
+        {},
         struct {
-            fn deinit(_: *Runtime, _: std.mem.Allocator, _: anytype) void {}
+            fn deinit(_: *Runtime, _: void) !void {}
         }.deinit,
-        void,
     );
 }

@@ -132,34 +132,34 @@ pub fn main() !void {
     try std.posix.listen(socket, size);
 
     try tardy.entry(
+        socket,
         struct {
-            fn rt_start(rt: *Runtime, alloc: std.mem.Allocator, t_socket: *std.posix.socket_t) !void {
-                const pool = try Pool(Provision).init(alloc, size, struct {
-                    fn init(items: []Provision, all: anytype) void {
+            fn rt_start(rt: *Runtime, t_socket: std.posix.socket_t) !void {
+                const pool = try Pool(Provision).init(rt.allocator, size, rt.allocator, struct {
+                    fn init(items: []Provision, a: std.mem.Allocator) void {
                         for (items) |*item| {
-                            item.buffer = all.alloc(u8, size) catch unreachable;
+                            item.buffer = a.alloc(u8, size) catch unreachable;
                         }
                     }
-                }.init, alloc);
+                }.init);
 
                 try rt.storage.store_alloc("provision_pool", pool);
 
-                try rt.net.accept(t_socket.*, accept_task, t_socket.*);
+                try rt.net.accept(t_socket, accept_task, t_socket);
             }
         }.rt_start,
-        @constCast(&socket),
+        {},
         struct {
-            fn rt_end(rt: *Runtime, alloc: std.mem.Allocator, _: anytype) void {
+            fn rt_end(rt: *Runtime, _: void) !void {
                 const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-                provision_pool.deinit(struct {
-                    fn pool_deinit(items: []Provision, a: anytype) void {
+                provision_pool.deinit(rt.allocator, struct {
+                    fn pool_deinit(items: []Provision, a: std.mem.Allocator) void {
                         for (items) |item| {
                             a.free(item.buffer);
                         }
                     }
-                }.pool_deinit, alloc);
+                }.pool_deinit);
             }
         }.rt_end,
-        void,
     );
 }

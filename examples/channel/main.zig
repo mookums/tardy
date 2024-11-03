@@ -45,8 +45,9 @@ pub fn main() !void {
     };
 
     try tardy.entry(
+        Params{ .broadcast = &b, .flag = &f },
         struct {
-            fn init(rt: *Runtime, _: std.mem.Allocator, params: Params) !void {
+            fn init(rt: *Runtime, params: Params) !void {
                 const broadcast = params.broadcast;
 
                 // Spawn only one writer.
@@ -59,10 +60,9 @@ pub fn main() !void {
                 try chan.recv(chan, read_channel_task);
             }
         }.init,
-        Params{ .broadcast = &b, .flag = &f },
-        struct {
-            fn deinit(_: *Runtime, _: std.mem.Allocator, _: void) void {}
-        }.deinit,
         {},
+        struct {
+            fn deinit(_: *Runtime, _: void) !void {}
+        }.deinit,
     );
 }

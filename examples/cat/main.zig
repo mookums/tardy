@@ -112,15 +112,15 @@ pub fn main() !void {
     };
 
     try tardy.entry(
+        &params,
         struct {
-            fn start(rt: *Runtime, _: std.mem.Allocator, parameters: *EntryParams) !void {
+            fn start(rt: *Runtime, parameters: *EntryParams) !void {
                 try rt.fs.open(&parameters.provision, open_task, parameters.file_name);
             }
         }.start,
-        &params,
+        {},
         struct {
-            fn end(_: *Runtime, _: std.mem.Allocator, _: anytype) void {}
+            fn end(_: *Runtime, _: void) !void {}
         }.end,
-        void,
     );
 }

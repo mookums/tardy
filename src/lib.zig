@@ -110,10 +110,16 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
         pub fn entry(
             self: *Self,
-            init_func: anytype,
             init_params: anytype,
-            deinit_func: anytype,
+            comptime init_func: *const fn (
+                *Runtime,
+                @TypeOf(init_params),
+            ) anyerror!void,
             deinit_params: anytype,
+            comptime deinit_func: *const fn (
+                *Runtime,
+                @TypeOf(deinit_params),
+            ) anyerror!void,
         ) !void {
             const runtime_count: usize = blk: {
                 switch (self.options.threading) {
@@ -151,8 +157,8 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         tardy: *Self,
                         options: TardyOptions,
                         parent: *AsyncIO,
-                        init_parameters: anytype,
-                        deinit_parameters: anytype,
+                        init_parameters: @TypeOf(init_params),
+                        deinit_parameters: @TypeOf(deinit_params),
                     ) void {
                         var thread_rt = tardy.spawn_runtime(.{
                             .parent_async = parent,
@@ -161,8 +167,15 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         }) catch return;
                         defer thread_rt.deinit();
 
-                        @call(.auto, init_func, .{ &thread_rt, options.allocator, init_parameters }) catch return;
-                        defer @call(.auto, deinit_func, .{ &thread_rt, options.allocator, deinit_parameters });
+                        @call(.auto, init_func, .{
+                            &thread_rt,
+                            init_parameters,
+                        }) catch return;
+
+                        defer @call(.auto, deinit_func, .{
+                            &thread_rt,
+                            deinit_parameters,
+                        }) catch unreachable;
 
                         thread_rt.run() catch return;
                     }
@@ -171,8 +184,15 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                 threads.appendAssumeCapacity(handle);
             }
 
-            try @call(.auto, init_func, .{ &runtime, self.options.allocator, init_params });
-            defer @call(.auto, deinit_func, .{ &runtime, self.options.allocator, deinit_params });
+            try @call(.auto, init_func, .{
+                &runtime,
+                init_params,
+            });
+
+            defer @call(.auto, deinit_func, .{
+                &runtime,
+                deinit_params,
+            }) catch unreachable;
 
             try runtime.run();
         }

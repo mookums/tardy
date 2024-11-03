@@ -34,16 +34,16 @@ pub fn main() !void {
     defer tardy.deinit();
 
     try tardy.entry(
+        {},
         struct {
-            fn init(rt: *Runtime, _: std.mem.Allocator, _: anytype) !void {
+            fn init(rt: *Runtime, _: void) !void {
                 try rt.spawn(void, @as(i8, std.math.minInt(i8)), log_task);
                 try rt.spawn(void, Counter{ .count = 0 }, log_task_struct);
             }
         }.init,
-        void,
+        {},
         struct {
-            fn deinit(_: *Runtime, _: std.mem.Allocator, _: anytype) void {}
+            fn deinit(_: *Runtime, _: void) !void {}
         }.deinit,
-        void,
     );
 }

@@ -35,8 +35,8 @@ pub fn Pool(comptime T: type) type {
         pub fn init(
             allocator: std.mem.Allocator,
             size: usize,
-            init_hook: ?*const fn (buffer: []T, args: anytype) void,
             args: anytype,
+            init_hook: ?*const fn (buffer: []T, args: @TypeOf(args)) void,
         ) !Self {
             const items: []T = try allocator.alloc(T, size);
             const self = Self{
@@ -55,8 +55,8 @@ pub fn Pool(comptime T: type) type {
         /// Deinitalizes our items buffer with a passed in hook.
         pub fn deinit(
             self: *Self,
-            deinit_hook: ?*const fn (buffer: []T, args: anytype) void,
             args: anytype,
+            deinit_hook: ?*const fn (buffer: []T, args: @TypeOf(args)) void,
         ) void {
             if (deinit_hook) |hook| {
                 @call(.auto, hook, .{ self.items, args });
