@@ -15,13 +15,13 @@ const Counter = packed struct {
 
 fn log_task(rt: *Runtime, _: void, count: i8) !void {
     log.debug("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
-    rt.spawn_delay(void, count + 1, log_task, .{ .seconds = 1 }) catch unreachable;
+    try rt.spawn_delay(void, count + 1, log_task, .{ .seconds = 1 });
 }
 
 fn log_task_struct(rt: *Runtime, _: void, counter: Counter) !void {
     const count = counter.increment().count;
     log.debug("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
-    rt.spawn_delay(void, Counter{ .count = count }, log_task_struct, .{ .seconds = 1 }) catch unreachable;
+    try rt.spawn_delay(void, Counter{ .count = count }, log_task_struct, .{ .seconds = 1 });
 }
 
 pub fn main() !void {
