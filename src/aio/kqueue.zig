@@ -401,20 +401,24 @@ pub const AsyncKQueue = struct {
                                 unreachable;
                             };
 
+                            const atim = fstat.atime();
+                            const mtim = fstat.mtime();
+                            const ctim = fstat.ctime();
+
                             const stat: Stat = .{
                                 .size = @intCast(fstat.size),
                                 .mode = @intCast(fstat.mode),
                                 .accessed = .{
-                                    .seconds = @intCast(fstat.atim.tv_sec),
-                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                    .seconds = @intCast(atim.tv_sec),
+                                    .nanos = @intCast(atim.tv_nsec),
                                 },
                                 .modified = .{
-                                    .seconds = @intCast(fstat.atim.tv_sec),
-                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                    .seconds = @intCast(mtim.tv_sec),
+                                    .nanos = @intCast(mtim.tv_nsec),
                                 },
                                 .changed = .{
-                                    .seconds = @intCast(fstat.atim.tv_sec),
-                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                    .seconds = @intCast(ctim.tv_sec),
+                                    .nanos = @intCast(ctim.tv_nsec),
                                 },
                             };
 

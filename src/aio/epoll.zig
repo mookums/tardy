@@ -398,12 +398,12 @@ pub const AsyncEpoll = struct {
                                     .nanos = @intCast(fstat.atim.tv_nsec),
                                 },
                                 .modified = .{
-                                    .seconds = @intCast(fstat.atim.tv_sec),
-                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                    .seconds = @intCast(fstat.mtim.tv_sec),
+                                    .nanos = @intCast(fstat.mtim.tv_nsec),
                                 },
                                 .changed = .{
-                                    .seconds = @intCast(fstat.atim.tv_sec),
-                                    .nanos = @intCast(fstat.atim.tv_nsec),
+                                    .seconds = @intCast(fstat.ctim.tv_sec),
+                                    .nanos = @intCast(fstat.ctim.tv_nsec),
                                 },
                             };
 
