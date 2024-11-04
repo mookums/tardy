@@ -35,7 +35,7 @@ pub fn to_nonblock(socket: std.posix.socket_t) !void {
 }
 
 pub fn disable_nagle(socket: std.posix.socket_t) !void {
-    if (comptime os.isDarwin()) {
+    if (comptime os.isDarwin() or os.isBSD()) {
         // system.TCP is weird on MacOS.
         try std.posix.setsockopt(
             socket,
