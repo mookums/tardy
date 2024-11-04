@@ -19,7 +19,7 @@ const WAKE_IDENT = 1;
 pub const AsyncKQueue = struct {
     kqueue_fd: std.posix.fd_t,
     changes: []std.posix.Kevent,
-    change_count: Atomic(usize) = Atomic(usize).init(0),
+    change_count: usize = 0,
     events: []std.posix.Kevent,
     jobs: Pool(Job),
     blocking: std.ArrayList(*Job),
@@ -57,7 +57,7 @@ pub const AsyncKQueue = struct {
             .kqueue_fd = kqueue_fd,
             .events = events,
             .changes = changes,
-            .change_count = Atomic(usize).init(0),
+            .change_count = 0,
             .jobs = jobs,
             .blocking = blocking,
         };
@@ -91,7 +91,10 @@ pub const AsyncKQueue = struct {
             timespec.seconds * 1000 + @divFloor(timespec.nanos, std.time.ns_per_ms),
         );
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
+
         event.* = .{
             .ident = borrowed.index,
             .filter = std.posix.system.EVFILT_TIMER,
@@ -155,7 +158,8 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        defer kqueue.change_count += 1;
         event.* = std.posix.Kevent{
             .ident = @intCast(fd),
             .filter = std.posix.system.EVFILT_READ,
@@ -187,7 +191,8 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        defer kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(fd),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -227,7 +232,9 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_READ,
@@ -260,7 +267,8 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        defer kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -290,7 +298,9 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_READ,
@@ -320,7 +330,10 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count.fetchAdd(1, .acq_rel)];
+        const event = &kqueue.changes[kqueue.change_count];
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
+
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -349,7 +362,8 @@ pub const AsyncKQueue = struct {
 
     pub fn submit(self: *AsyncIO) !void {
         const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const change_slice = kqueue.changes[0..kqueue.change_count.swap(0, .acq_rel)];
+        const change_slice = kqueue.changes[0..kqueue.change_count];
+        kqueue.change_count = 0;
         _ = try std.posix.kevent(kqueue.kqueue_fd, change_slice, &.{}, null);
     }
 
