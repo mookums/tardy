@@ -7,7 +7,7 @@ const Tardy = @import("tardy").Tardy(.auto);
 const Stat = @import("tardy").Stat;
 
 fn stat_task(rt: *Runtime, stat: Stat, _: void) !void {
-    try std.io.getStdOut().writer().print("size: {d}", .{stat.size});
+    try std.io.getStdOut().writer().print("size: {d}\n", .{stat.size});
     rt.stop();
 }
 

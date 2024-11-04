@@ -30,10 +30,12 @@ exe.root_module.addImport(tardy);
 - Modular Asynchronous Implementation
     - `io_uring` for Linux (>= 5.1.0).
     - `epoll` for Linux (>= 2.5.45).
+    - `kqueue` for Darwin & BSD.
     - `busy_loop` for Linux, Mac and Windows.
 - Single and Multi-threaded Support
 - Callbacks on Async I/O events (through `runtime.[net/fs]`)
 - Green Threads (through `runtime.spawn`)
+- Channels for Asynchronous Communcation across Tasks
 
 ## Ecosystem
 - [zzz](https://github.com/mookums/zzz): a framework for writing performant and reliable networked services.

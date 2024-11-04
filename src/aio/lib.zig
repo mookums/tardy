@@ -11,18 +11,22 @@ pub const AsyncIOType = union(enum) {
     ///
     /// `Linux: io_uring -> epoll -> busy_loop
     /// Windows: busy_loop
-    /// Darwin & BSD: busy_loop
+    /// Darwin & BSD: kqueue
     /// Solaris: busy_loop`
     auto,
-    /// Only available on Linux >= 5.1
+    /// Available on Linux >= 5.1
     ///
     /// Utilizes the io_uring interface for handling I/O.
     /// `https://kernel.dk/io_uring.pdf`
     io_uring,
-    /// Only available on Linux >= 2.5.45
+    /// Available on Linux >= 2.5.45
     ///
     /// Utilizes the epoll interface for handling I/O.
     epoll,
+    /// Available on Darwin & BSD systems
+    ///
+    /// Utilizes the kqueue interface for handling I/O.
+    kqueue,
     /// Available on most targets.
     /// Relies on non-blocking fd operations and busy loop polling.
     busy_loop,
@@ -50,8 +54,8 @@ pub fn auto_async_match() AsyncIOType {
             return AsyncIOType.busy_loop;
         },
         .windows => return AsyncIOType.busy_loop,
-        .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.busy_loop,
-        .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncIOType.busy_loop,
+        .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.kqueue,
+        .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncIOType.kqueue,
         .solaris, .illumos => return AsyncIOType.busy_loop,
         else => @compileError("Unsupported platform! Provide a custom AsyncIO backend."),
     }
@@ -62,6 +66,7 @@ pub fn async_to_type(comptime aio: AsyncIOType) type {
         .io_uring => @import("../aio/io_uring.zig").AsyncIoUring,
         .epoll => @import("../aio/epoll.zig").AsyncEpoll,
         .busy_loop => @import("../aio/busy_loop.zig").AsyncBusyLoop,
+        .kqueue => @import("../aio/kqueue.zig").AsyncKQueue,
         .custom => |inner| {
             assert(std.meta.hasMethod(inner, "init"));
             assert(std.meta.hasMethod(inner, "to_async"));
