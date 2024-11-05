@@ -362,9 +362,7 @@ pub const AsyncKQueue = struct {
 
     pub fn submit(self: *AsyncIO) !void {
         const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const change_slice = kqueue.changes[0..kqueue.change_count];
-        kqueue.change_count = 0;
-        _ = try std.posix.kevent(kqueue.kqueue_fd, change_slice, &.{}, null);
+        _ = kqueue;
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
@@ -458,10 +456,11 @@ pub const AsyncKQueue = struct {
             // Handle all of the kqueue I/O
             const kqueue_events = try std.posix.kevent(
                 kqueue.kqueue_fd,
-                &.{},
+                kqueue.changes[0..kqueue.change_count],
                 kqueue.events,
                 if (busy_wait or reaped > 0) &timeout_spec else null,
             );
+            kqueue.change_count = 0;
             for (kqueue.events[0..kqueue_events]) |event| {
                 const job_index = event.udata;
                 assert(kqueue.jobs.dirty.isSet(job_index));
