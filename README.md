@@ -8,9 +8,11 @@ Most of the code for this project originated in [zzz](https://github.com/mookums
 - **Scalable**: Tardy uses very little memory initially and can be tuned using various configuration options.
 
 ## Installing
-Tracking Latest Zig Stable: `0.13.0`
+Latest Zig Stable: `0.13.0`
+
+Latest Tardy Release: `0.1.0`
 ```
-zig fetch --save git+https://github.com/mookums/tardy#main
+zig fetch --save git+https://github.com/mookums/tardy#v0.1.0
 ```
 
 You can then add the dependency in your `build.zig` file:
@@ -30,7 +32,7 @@ exe.root_module.addImport(tardy);
 - Modular Asynchronous Implementation
     - `io_uring` for Linux (>= 5.1.0).
     - `epoll` for Linux (>= 2.5.45).
-    - `kqueue` for Darwin & BSD.
+    - `kqueue` for BSD & Mac.
     - `busy_loop` for Linux, Mac and Windows.
 - Single and Multi-threaded Support
 - Callbacks on Async I/O events (through `runtime.[net/fs]`)
