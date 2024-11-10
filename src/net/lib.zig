@@ -15,6 +15,19 @@ pub const Net = struct {
         try rt.aio.queue_accept(index, socket);
     }
 
+    pub fn connect(
+        self: *Net,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(i32, @TypeOf(task_ctx)),
+        socket: std.posix.socket_t,
+        host: []const u8,
+        port: u16,
+    ) !void {
+        const rt: *Runtime = @alignCast(@fieldParentPtr("net", self));
+        const index = try rt.scheduler.spawn(i32, task_ctx, task_fn, .waiting);
+        try rt.aio.queue_connect(index, socket, host, port);
+    }
+
     pub fn recv(
         self: *Net,
         task_ctx: anytype,
