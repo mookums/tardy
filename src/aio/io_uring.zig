@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 const log = std.log.scoped(.@"tardy/aio/io_uring");
 
 const Completion = @import("completion.zig").Completion;
@@ -16,9 +17,21 @@ const Pool = @import("../core/pool.zig").Pool;
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
-        flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
-        //flags |= std.os.linux.IORING_SETUP_DEFER_TASKRUN;
-        flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
+        const version = builtin.target.os.getVersionRange().linux;
+
+        // If you are building for musl, you won't have access to these flags.
+        // This means you will run with no flags for compatibility reasons.
+
+        // SINGLE_ISSUER requires 6.0
+        if (version.isAtLeast(.{ .major = 6, .minor = 0, .patch = 0 })) |is_atleast| {
+            if (is_atleast) flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
+        }
+
+        // COOP_TASKRUN requires 5.19
+        if (version.isAtLeast(.{ .major = 5, .minor = 19, .patch = 0 })) |is_atleast| {
+            if (is_atleast) flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
+        }
+
         break :blk flags;
     };
 
