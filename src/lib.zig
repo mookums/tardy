@@ -63,6 +63,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         const Self = @This();
         aios: std.ArrayListUnmanaged(*AioInnerType),
         options: TardyOptions,
+        mutex: std.Thread.Mutex = .{},
 
         pub fn init(options: TardyOptions) !Self {
             log.debug("aio backend: {s}", .{@tagName(aio_type)});
@@ -83,14 +84,18 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
         /// This will spawn a new Runtime.
         fn spawn_runtime(self: *Self, options: AsyncIOOptions) !Runtime {
-            var aio: AsyncIO = blk: {
+            const aio: AsyncIO = blk: {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+
                 var io = try self.options.allocator.create(AioInnerType);
                 io.* = try AioInnerType.init(self.options.allocator, options);
                 try self.aios.append(self.options.allocator, io);
-                break :blk io.to_async();
-            };
 
-            aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
+                var aio = io.to_async();
+                aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
+                break :blk aio;
+            };
 
             const runtime = try Runtime.init(aio, .{
                 .allocator = self.options.allocator,
