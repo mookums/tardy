@@ -239,7 +239,7 @@ pub const AsyncEpoll = struct {
             .type = .{
                 .connect = .{
                     .socket = socket,
-                    .addr = addr.any,
+                    .addr = addr,
                 },
             },
             .task = task,
@@ -556,16 +556,19 @@ pub const AsyncEpoll = struct {
                         },
                         .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const addr_len: std.posix.socklen_t = switch (inner.addr.family) {
+                            const addr_len: std.posix.socklen_t = switch (inner.addr.any.family) {
                                 std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
                                 std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
                                 std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
                                 else => @panic("Unsupported!"),
                             };
 
-                            std.posix.connect(inner.socket, &inner.addr, addr_len) catch |e| {
+                            std.posix.connect(inner.socket, &inner.addr.any, addr_len) catch |e| {
                                 switch (e) {
-                                    error.WouldBlock => unreachable,
+                                    error.WouldBlock => {
+                                        job_complete = false;
+                                        continue :epoll_loop;
+                                    },
                                     else => {
                                         log.debug("connect failed: {}", .{e});
                                         try epoll.remove_fd(inner.socket);

@@ -81,9 +81,9 @@ pub const AsyncIOOptions = struct {
     /// inherit parameters from.
     parent_async: ?*const AsyncIO = null,
     /// Maximum number of aio jobs.
-    size_aio_jobs_max: u16,
+    size_aio_jobs_max: usize,
     /// Maximum number of completions reaped.
-    size_aio_reap_max: u16,
+    size_aio_reap_max: usize,
 };
 
 pub const AsyncIO = struct {

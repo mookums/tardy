@@ -149,7 +149,7 @@ pub const AsyncBusyLoop = struct {
             .type = .{
                 .connect = .{
                     .socket = socket,
-                    .addr = addr.any,
+                    .addr = addr,
                 },
             },
             .task = task,
@@ -422,7 +422,7 @@ pub const AsyncBusyLoop = struct {
                     .connect => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const addr_len: std.posix.socklen_t = switch (inner.addr.family) {
+                        const addr_len: std.posix.socklen_t = switch (inner.addr.any.family) {
                             std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
                             std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
                             std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
@@ -430,9 +430,10 @@ pub const AsyncBusyLoop = struct {
                         };
 
                         const res: i32 = blk: {
-                            _ = std.posix.connect(inner.socket, &inner.addr, addr_len) catch |e| {
+                            _ = std.posix.connect(inner.socket, &inner.addr.any, addr_len) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => continue,
+                                    error.ConnectionPending => continue,
                                     error.ConnectionResetByPeer => switch (comptime builtin.target.os.tag) {
                                         .windows => break :blk 0,
                                         else => break :blk 0,

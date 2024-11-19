@@ -19,9 +19,9 @@ const Filesystem = @import("../fs/lib.zig").Filesystem;
 
 const RuntimeOptions = struct {
     allocator: std.mem.Allocator,
-    size_tasks_max: u16,
-    size_aio_jobs_max: u16,
-    size_aio_reap_max: u16,
+    size_tasks_max: usize,
+    size_aio_jobs_max: usize,
+    size_aio_reap_max: usize,
 };
 
 /// A runtime is what runs tasks and handles the Async I/O.
@@ -126,7 +126,7 @@ pub const Runtime = struct {
             try self.aio.submit();
 
             if (self.scheduler.tasks.empty()) {
-                log.err("no more tasks", .{});
+                log.warn("no more tasks", .{});
                 break;
             }
 
@@ -150,7 +150,7 @@ pub const Runtime = struct {
             }
 
             if (self.scheduler.runnable.count() == 0 and !force_woken) {
-                log.err("no more runnable tasks", .{});
+                log.warn("no more runnable tasks", .{});
                 break;
             }
         }

@@ -54,7 +54,7 @@ pub const AsyncIoUring = struct {
                 const uring = try allocator.create(std.os.linux.IoUring);
                 uring.* = try std.os.linux.IoUring.init_params(
                     // TODO: determine if this needs to be doubled with timeouts.
-                    std.math.ceilPowerOfTwoAssert(u16, size),
+                    std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
                     &params,
                 );
 
@@ -63,7 +63,7 @@ pub const AsyncIoUring = struct {
                 // Initalize IO Uring
                 const uring = try allocator.create(std.os.linux.IoUring);
                 uring.* = try std.os.linux.IoUring.init(
-                    std.math.ceilPowerOfTwoAssert(u16, size),
+                    std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
                     base_flags,
                 );
 
@@ -296,7 +296,7 @@ pub const AsyncIoUring = struct {
             .type = .{
                 .connect = .{
                     .socket = socket,
-                    .addr = addr.any,
+                    .addr = addr,
                 },
             },
             .task = task,
@@ -305,7 +305,7 @@ pub const AsyncIoUring = struct {
         _ = try uring.inner.connect(
             @intFromPtr(borrowed.item),
             socket,
-            &borrowed.item.type.connect.addr,
+            &borrowed.item.type.connect.addr.any,
             addr.getOsSockLen(),
         );
     }
@@ -412,7 +412,11 @@ pub const AsyncIoUring = struct {
                         try uring.queue_wake();
                         break :blk .wake;
                     },
-                    .accept, .connect => break :blk .{ .socket = cqe.res },
+                    .accept => break :blk .{ .socket = cqe.res },
+                    .connect => |inner| if (cqe.res < 0)
+                        break :blk .{ .socket = -1 }
+                    else
+                        break :blk .{ .socket = inner.socket },
                     .open => break :blk .{ .fd = cqe.res },
                     .timer, .close => break :blk .none,
                     .stat => {

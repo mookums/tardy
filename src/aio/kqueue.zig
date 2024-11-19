@@ -261,7 +261,7 @@ pub const AsyncKQueue = struct {
             .type = .{
                 .connect = .{
                     .socket = socket,
-                    .addr = addr.any,
+                    .addr = addr,
                 },
             },
             .task = task,
@@ -498,14 +498,14 @@ pub const AsyncKQueue = struct {
                         },
                         .connect => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const addr_len: std.posix.socklen_t = switch (inner.addr.family) {
+                            const addr_len: std.posix.socklen_t = switch (inner.addr.any.family) {
                                 std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
                                 std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
                                 std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
                                 else => @panic("Unsupported!"),
                             };
 
-                            std.posix.connect(inner.socket, &inner.addr, addr_len) catch |e| {
+                            std.posix.connect(inner.socket, &inner.addr.any, addr_len) catch |e| {
                                 switch (e) {
                                     error.WouldBlock => unreachable,
                                     else => {

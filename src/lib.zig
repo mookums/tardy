@@ -44,16 +44,16 @@ const TardyOptions = struct {
     /// Number of Maximum Tasks.
     ///
     /// Default: 1024
-    size_tasks_max: u16 = 1024,
+    size_tasks_max: usize = 1024,
     /// Number of Maximum Asynchronous I/O Jobs.
     ///
     /// Default: 1024
-    size_aio_jobs_max: u16 = 1024,
+    size_aio_jobs_max: usize = 1024,
     /// Maximum number of aio completions we can reap
     /// with a single call of reap().
     ///
     /// Default: 256
-    size_aio_reap_max: u16 = 256,
+    size_aio_reap_max: usize = 256,
 };
 
 pub fn Tardy(comptime _aio_type: AsyncIOType) type {

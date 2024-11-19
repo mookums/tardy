@@ -11,7 +11,7 @@ pub const Job = struct {
         write: struct { fd: std.posix.fd_t, buffer: []const u8, offset: usize },
         close: std.posix.fd_t,
         accept: std.posix.socket_t,
-        connect: struct { socket: std.posix.socket_t, addr: std.posix.sockaddr },
+        connect: struct { socket: std.posix.socket_t, addr: std.net.Address },
         send: struct { socket: std.posix.socket_t, buffer: []const u8 },
         recv: struct { socket: std.posix.socket_t, buffer: []u8 },
     },
