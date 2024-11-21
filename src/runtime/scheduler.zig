@@ -8,6 +8,8 @@ const InnerTaskFn = @import("task.zig").InnerTaskFn;
 
 const Pool = @import("../core/pool.zig").Pool;
 
+const wrap = @import("../utils.zig").wrap;
+
 pub const Scheduler = struct {
     tasks: Pool(Task),
     runnable: std.DynamicBitSetUnmanaged,
@@ -50,35 +52,7 @@ pub const Scheduler = struct {
             }
         };
 
-        const context: usize = context: {
-            switch (comptime @typeInfo(@TypeOf(task_ctx))) {
-                .Pointer => break :context @intFromPtr(task_ctx),
-                .Void => break :context undefined,
-                .Int => |int_info| {
-                    comptime assert(int_info.bits <= @bitSizeOf(usize));
-                    const uint = @Type(std.builtin.Type{
-                        .Int = .{
-                            .signedness = .unsigned,
-                            .bits = int_info.bits,
-                        },
-                    });
-
-                    break :context @intCast(@as(uint, @bitCast(task_ctx)));
-                },
-                .Struct => |struct_info| {
-                    comptime assert(@bitSizeOf(struct_info.backing_integer.?) <= @bitSizeOf(usize));
-                    const uint = @Type(std.builtin.Type{
-                        .Int = .{
-                            .signedness = .unsigned,
-                            .bits = @bitSizeOf(struct_info.backing_integer.?),
-                        },
-                    });
-
-                    break :context @intCast(@as(uint, @bitCast(task_ctx)));
-                },
-                else => unreachable,
-            }
-        };
+        const context: usize = wrap(usize, task_ctx);
 
         borrowed.item.* = .{
             .index = borrowed.index,

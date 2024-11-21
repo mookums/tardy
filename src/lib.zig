@@ -13,6 +13,9 @@ pub const RxChannel = @import("runtime/channel.zig").RxChannel;
 pub const TxChannel = @import("runtime/channel.zig").TxChannel;
 pub const Stat = @import("aio/completion.zig").Stat;
 
+pub const wrap = @import("utils.zig").wrap;
+pub const unwrap = @import("utils.zig").unwrap;
+
 /// Cross-platform abstractions.
 /// For the `std.posix` interface types.
 pub const Cross = @import("cross/lib.zig");

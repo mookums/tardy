@@ -7,35 +7,7 @@ const Result = @import("../aio/completion.zig").Result;
 
 const Stat = @import("../aio/completion.zig").Stat;
 
-inline fn unwrap(comptime T: type, chunk: usize) T {
-    return context: {
-        switch (comptime @typeInfo(T)) {
-            .Pointer => break :context @ptrFromInt(chunk),
-            .Void => break :context {},
-            .Int => |int_info| {
-                const uint = @Type(std.builtin.Type{
-                    .Int = .{
-                        .signedness = .unsigned,
-                        .bits = int_info.bits,
-                    },
-                });
-
-                break :context @bitCast(@as(uint, @truncate(chunk)));
-            },
-            .Struct => |struct_info| {
-                const uint = @Type(std.builtin.Type{
-                    .Int = .{
-                        .signedness = .unsigned,
-                        .bits = @bitSizeOf(struct_info.backing_integer.?),
-                    },
-                });
-
-                break :context @bitCast(@as(uint, @truncate(chunk)));
-            },
-            else => unreachable,
-        }
-    };
-}
+const unwrap = @import("../utils.zig").unwrap;
 
 // This is what is internally passed around.
 pub const InnerTaskFn = *const fn (*Runtime, *const Task) anyerror!void;
