@@ -204,5 +204,37 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
             try runtime.run();
         }
+
+        /// This spawns in and enters into the runtime
+        /// in a new Thread, allowing for more code to
+        /// execute even after the runtime spawns.
+        pub fn entry_in_new_thread(
+            self: *Self,
+            init_params: anytype,
+            comptime init_func: *const fn (
+                *Runtime,
+                @TypeOf(init_params),
+            ) anyerror!void,
+            deinit_params: anytype,
+            comptime deinit_func: *const fn (
+                *Runtime,
+                @TypeOf(deinit_params),
+            ) anyerror!void,
+        ) !void {
+            const handle = try std.Thread.spawn(.{}, struct {
+                fn entry_in_new_thread(
+                    tardy: *Self,
+                    ip: @TypeOf(init_params),
+                    dp: @TypeOf(deinit_params),
+                ) void {
+                    tardy.entry(ip, init_func, dp, deinit_func) catch unreachable;
+                }
+            }.entry_in_new_thread, .{
+                self,
+                init_params,
+                deinit_params,
+            });
+            handle.detach();
+        }
     };
 }
