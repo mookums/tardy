@@ -44,9 +44,7 @@ pub const Storage = struct {
     /// Get an item that is within the Storage.
     /// This asserts that the item you are looking for exists.
     pub fn get(self: *Storage, name: []const u8, comptime T: type) T {
-        const got = self.map.get(name) orelse unreachable;
-        const value: *T = @ptrCast(@alignCast(got));
-        return value.*;
+        return self.get_ptr(name, T).*;
     }
 
     /// Get a const (immutable) pointer to an item that is within the Storage.
