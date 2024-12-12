@@ -4,13 +4,13 @@ const log = std.log.scoped(.@"tardy/aio/busy_loop");
 
 const builtin = @import("builtin");
 const Atomic = std.atomic.Value;
-const Completion = @import("completion.zig").Completion;
-const Stat = @import("completion.zig").Stat;
-const Timespec = @import("timespec.zig").Timespec;
+const Completion = @import("../completion.zig").Completion;
+const Stat = @import("../completion.zig").Stat;
+const Timespec = @import("../timespec.zig").Timespec;
 
-const AsyncIO = @import("lib.zig").AsyncIO;
-const AsyncIOOptions = @import("lib.zig").AsyncIOOptions;
-const Job = @import("job.zig").Job;
+const AsyncIO = @import("../lib.zig").AsyncIO;
+const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
+const Job = @import("../job.zig").Job;
 
 pub const AsyncBusyLoop = struct {
     inner: std.ArrayListUnmanaged(Job),

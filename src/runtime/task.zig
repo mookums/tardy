@@ -9,6 +9,15 @@ const Stat = @import("../aio/completion.zig").Stat;
 
 const unwrap = @import("../utils.zig").unwrap;
 
+const StatResult = @import("../aio/completion.zig").StatResult;
+const OpenResult = @import("../aio/completion.zig").OpenResult;
+const ReadResult = @import("../aio/completion.zig").ReadResult;
+const WriteResult = @import("../aio/completion.zig").WriteResult;
+const AcceptResult = @import("../aio/completion.zig").AcceptResult;
+const ConnectResult = @import("../aio/completion.zig").ConnectResult;
+const RecvResult = @import("../aio/completion.zig").RecvResult;
+const SendResult = @import("../aio/completion.zig").SendResult;
+
 // This is what is internally passed around.
 pub const InnerTaskFn = *const fn (*Runtime, *const Task) anyerror!void;
 
@@ -24,24 +33,40 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
             const result: R = result: {
                 switch (t.result) {
                     .wake => unreachable,
-                    .none => {
+                    .none, .close => {
                         if (comptime R != void) unreachable;
                         break :result {};
                     },
                     .stat => |inner| {
-                        if (comptime R != Stat) unreachable;
+                        if (comptime R != StatResult) unreachable;
                         break :result inner;
                     },
-                    .fd => |inner| {
-                        if (comptime R != std.posix.fd_t) unreachable;
+                    .accept => |inner| {
+                        if (comptime R != AcceptResult) unreachable;
                         break :result inner;
                     },
-                    .socket => |inner| {
-                        if (comptime R != std.posix.socket_t) unreachable;
+                    .connect => |inner| {
+                        if (comptime R != ConnectResult) unreachable;
                         break :result inner;
                     },
-                    .value => |inner| {
-                        if (comptime R != i32) unreachable;
+                    .recv => |inner| {
+                        if (comptime R != RecvResult) unreachable;
+                        break :result inner;
+                    },
+                    .send => |inner| {
+                        if (comptime R != SendResult) unreachable;
+                        break :result inner;
+                    },
+                    .open => |inner| {
+                        if (comptime R != OpenResult) unreachable;
+                        break :result inner;
+                    },
+                    .read => |inner| {
+                        if (comptime R != ReadResult) unreachable;
+                        break :result inner;
+                    },
+                    .write => |inner| {
+                        if (comptime R != WriteResult) unreachable;
                         break :result inner;
                     },
                     .ptr => |inner| {

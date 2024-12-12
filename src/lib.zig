@@ -13,6 +13,16 @@ pub const RxChannel = @import("runtime/channel.zig").RxChannel;
 pub const TxChannel = @import("runtime/channel.zig").TxChannel;
 pub const Stat = @import("aio/completion.zig").Stat;
 
+// Results
+pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
+pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
+pub const RecvResult = @import("aio/completion.zig").RecvResult;
+pub const SendResult = @import("aio/completion.zig").SendResult;
+pub const OpenResult = @import("aio/completion.zig").OpenResult;
+pub const ReadResult = @import("aio/completion.zig").ReadResult;
+pub const WriteResult = @import("aio/completion.zig").WriteResult;
+pub const StatResult = @import("aio/completion.zig").StatResult;
+
 pub const wrap = @import("utils.zig").wrap;
 pub const unwrap = @import("utils.zig").unwrap;
 
@@ -25,9 +35,6 @@ const async_to_type = @import("aio/lib.zig").async_to_type;
 const AsyncIO = @import("aio/lib.zig").AsyncIO;
 pub const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
 const AsyncIOOptions = @import("aio/lib.zig").AsyncIOOptions;
-const AsyncBusyLoop = @import("aio/busy_loop.zig").AsyncBusyLoop;
-const AsyncEpoll = @import("aio/epoll.zig").AsyncEpoll;
-const AsyncIoUring = @import("aio/io_uring.zig").AsyncIoUring;
 const Completion = @import("aio/completion.zig").Completion;
 
 pub const TardyThreading = union(enum) {

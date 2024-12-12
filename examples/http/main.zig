@@ -7,6 +7,10 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
+const AcceptResult = @import("tardy").AcceptResult;
+const RecvResult = @import("tardy").RecvResult;
+const SendResult = @import("tardy").SendResult;
+
 const Provision = struct {
     index: usize,
     socket: std.posix.socket_t,
@@ -51,12 +55,12 @@ fn create_socket(addr: std.net.Address) !std.posix.socket_t {
     return socket;
 }
 
-fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, _: void) !void {
-    if (!Cross.socket.is_valid(child_socket)) {
-        log.err("failed to accept socket", .{});
+fn accept_task(rt: *Runtime, result: AcceptResult, _: void) !void {
+    const child_socket = result.unwrap() catch |e| {
+        log.err("failed to accept socket | {}", .{e});
         rt.stop();
         return;
-    }
+    };
 
     try Cross.socket.to_nonblock(child_socket);
     log.debug("accepted socket fd={d}", .{child_socket});
@@ -73,15 +77,14 @@ fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, _: void) !void {
     );
 }
 
-fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
+fn recv_task(rt: *Runtime, result: RecvResult, provision: *Provision) !void {
     log.debug("recv socket fd={d}", .{provision.socket});
-
-    if (length <= 0) {
-        log.debug("recv closed fd={d}", .{provision.socket});
+    _ = result.unwrap() catch |e| {
+        log.debug("recv closed fd={d} | {}", .{ provision.socket, e });
         log.debug("queueing close with ctx ptr: {*}", .{provision});
         try rt.net.close(provision, close_task, provision.socket);
         return;
-    }
+    };
 
     try rt.net.send(
         provision,
@@ -91,15 +94,15 @@ fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     );
 }
 
-fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
+fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
     log.debug("send socket fd={d}", .{provision.socket});
 
-    if (length <= 0) {
-        log.debug("send closed fd={d}", .{provision.socket});
+    _ = result.unwrap() catch |e| {
+        log.debug("send closed fd={d} | {}", .{ provision.socket, e });
         log.debug("queueing close with ctx ptr: {*}", .{provision});
         try rt.net.close(provision, close_task, provision.socket);
         return;
-    }
+    };
 
     try rt.net.recv(
         provision,
@@ -162,11 +165,7 @@ pub fn main() !void {
                 try rt.storage.store_alloc("server_socket", socket);
 
                 for (0..size) |_| {
-                    try rt.net.accept(
-                        {},
-                        accept_task,
-                        socket,
-                    );
+                    try rt.net.accept({}, accept_task, socket);
                 }
             }
         }.rt_start,

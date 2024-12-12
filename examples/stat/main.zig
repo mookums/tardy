@@ -5,8 +5,10 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Stat = @import("tardy").Stat;
+const StatResult = @import("tardy").StatResult;
 
-fn stat_task(rt: *Runtime, stat: Stat, _: void) !void {
+fn stat_task(rt: *Runtime, result: StatResult, _: void) !void {
+    const stat = try result.unwrap();
     try std.io.getStdOut().writer().print("size: {d}\n", .{stat.size});
     rt.stop();
 }

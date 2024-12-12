@@ -7,6 +7,10 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
+const AcceptResult = @import("tardy").AcceptResult;
+const RecvResult = @import("tardy").RecvResult;
+const SendResult = @import("tardy").SendResult;
+
 const Provision = struct {
     index: usize,
     socket: std.posix.socket_t,
@@ -19,12 +23,12 @@ fn close_connection(provision_pool: *Pool(Provision), provision: *const Provisio
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, socket: std.posix.socket_t) !void {
-    if (!Cross.socket.is_valid(child_socket)) {
-        log.err("failed to accept on socket", .{});
+fn accept_task(rt: *Runtime, result: AcceptResult, socket: std.posix.socket_t) !void {
+    const child_socket = result.unwrap() catch |e| {
+        log.err("Failed to accept on socket | {}", .{e});
         rt.stop();
         return;
-    }
+    };
 
     try Cross.socket.to_nonblock(child_socket);
 
@@ -47,12 +51,13 @@ fn accept_task(rt: *Runtime, child_socket: std.posix.socket_t, socket: std.posix
     );
 }
 
-fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
-    if (length <= 0) {
+fn recv_task(rt: *Runtime, result: RecvResult, provision: *Provision) !void {
+    _ = result.unwrap() catch |e| {
+        log.err("Failed to recv on socket | {}", .{e});
         const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
         return;
-    }
+    };
 
     try rt.net.send(
         provision,
@@ -62,12 +67,13 @@ fn recv_task(rt: *Runtime, length: i32, provision: *Provision) !void {
     );
 }
 
-fn send_task(rt: *Runtime, length: i32, provision: *Provision) !void {
-    if (length <= 0) {
+fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
+    const length = result.unwrap() catch |e| {
+        log.err("Failed to send on socket | {}", .{e});
         const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
         return;
-    }
+    };
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
     try rt.net.recv(

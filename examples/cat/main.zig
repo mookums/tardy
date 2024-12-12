@@ -6,13 +6,18 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
+const OpenResult = @import("tardy").OpenResult;
+const ReadResult = @import("tardy").ReadResult;
+const WriteResult = @import("tardy").WriteResult;
+
 const FileProvision = struct {
     fd: std.posix.fd_t = undefined,
     buffer: []u8,
     offset: usize,
 };
 
-fn open_task(rt: *Runtime, fd: std.posix.fd_t, provision: *FileProvision) !void {
+fn open_task(rt: *Runtime, result: OpenResult, provision: *FileProvision) !void {
+    const fd = try result.unwrap();
     provision.fd = fd;
 
     if (!Cross.fd.is_valid(fd)) {
@@ -30,14 +35,21 @@ fn open_task(rt: *Runtime, fd: std.posix.fd_t, provision: *FileProvision) !void 
     );
 }
 
-fn read_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
-    provision.offset += @intCast(length);
+fn read_task(rt: *Runtime, result: ReadResult, provision: *FileProvision) !void {
+    const length = result.unwrap() catch |e| {
+        switch (e) {
+            error.EndOfFile => {
+                try rt.fs.close(provision, close_task, provision.fd);
+                return;
+            },
+            else => {
+                std.debug.print("Unexpected Error: {}\n", .{e});
+                return;
+            },
+        }
+    };
 
-    // either done OR we have read EOF.
-    if (length <= 0 or provision.buffer[@intCast(length - 1)] == 0x04) {
-        try rt.fs.close(provision, close_task, provision.fd);
-        return;
-    }
+    provision.offset += @intCast(length);
 
     try rt.fs.write(
         provision,
@@ -48,11 +60,12 @@ fn read_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
     );
 }
 
-fn write_task(rt: *Runtime, length: i32, provision: *FileProvision) !void {
-    if (length <= 0) {
+fn write_task(rt: *Runtime, result: WriteResult, provision: *FileProvision) !void {
+    _ = result.unwrap() catch |e| {
+        std.debug.print("Unexpected Error: {}\n", .{e});
         try rt.fs.close(provision, close_task, provision.fd);
         return;
-    }
+    };
 
     try rt.fs.read(
         provision,
