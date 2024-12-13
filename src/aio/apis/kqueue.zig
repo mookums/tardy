@@ -180,7 +180,8 @@ pub const AsyncKQueue = struct {
         };
 
         const event = &kqueue.changes[kqueue.change_count];
-        defer kqueue.change_count += 1;
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
         event.* = std.posix.Kevent{
             .ident = @intCast(fd),
             .filter = std.posix.system.EVFILT_READ,
@@ -213,7 +214,8 @@ pub const AsyncKQueue = struct {
         };
 
         const event = &kqueue.changes[kqueue.change_count];
-        defer kqueue.change_count += 1;
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(fd),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -289,7 +291,8 @@ pub const AsyncKQueue = struct {
         };
 
         const event = &kqueue.changes[kqueue.change_count];
-        defer kqueue.change_count += 1;
+        assert(kqueue.change_count < kqueue.changes.len);
+        kqueue.change_count += 1;
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -354,7 +357,6 @@ pub const AsyncKQueue = struct {
         const event = &kqueue.changes[kqueue.change_count];
         assert(kqueue.change_count < kqueue.changes.len);
         kqueue.change_count += 1;
-
         event.* = .{
             .ident = @intCast(socket),
             .filter = std.posix.system.EVFILT_WRITE,
@@ -537,10 +539,12 @@ pub const AsyncKQueue = struct {
                         else => unreachable,
                         .wake => {
                             assert(event.filter == std.posix.system.EVFILT_USER);
+                            assert(event.ident == WAKE_IDENT);
                             job_complete = false;
                             break :blk .wake;
                         },
                         .timer => |inner| {
+                            assert(event.filter == std.posix.system.EVFILT_TIMER);
                             assert(inner == .none);
                             break :blk .none;
                         },
