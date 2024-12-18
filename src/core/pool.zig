@@ -10,9 +10,12 @@ fn Borrow(comptime T: type) type {
 
 pub fn Pool(comptime T: type) type {
     return struct {
-        const Iterator = struct {
+        pub const Iterator = struct {
             items: []T,
-            inner: std.DynamicBitSetUnmanaged.Iterator(.{}),
+            inner: std.DynamicBitSetUnmanaged.Iterator(.{
+                .kind = .set,
+                .direction = .forward,
+            }),
 
             pub fn next(self: *Iterator) ?T {
                 const index = self.inner.next() orelse return null;
@@ -70,7 +73,7 @@ pub fn Pool(comptime T: type) type {
             return self.items[index];
         }
 
-        fn get_ptr(self: *Self, index: usize) *T {
+        fn get_ptr(self: *const Self, index: usize) *T {
             return &self.items[index];
         }
 
@@ -132,7 +135,7 @@ pub fn Pool(comptime T: type) type {
         }
 
         /// Returns an iterator over the taken values in the Pool.
-        pub fn iterator(self: *Self) Iterator {
+        pub fn iterator(self: *const Self) Iterator {
             const iter = self.dirty.iterator(.{});
             const items = self.items;
             return .{ .inner = iter, .items = items };
