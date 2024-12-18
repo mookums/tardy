@@ -10,9 +10,9 @@ Most of the code for this project originated in [zzz](https://github.com/mookums
 ## Installing
 Latest Zig Stable: `0.13.0`
 
-Latest Tardy Release: `0.1.0`
+Latest Tardy Release: `0.2.0`
 ```
-zig fetch --save git+https://github.com/mookums/tardy#v0.1.0
+zig fetch --save git+https://github.com/mookums/tardy#v0.2.0
 ```
 
 You can then add the dependency in your `build.zig` file:
