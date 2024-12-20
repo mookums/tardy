@@ -472,7 +472,12 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .stat = result };
                         },
                         .read => |inner| {
-                            const res = std.os.linux.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(inner.offset));
+                            const res = std.os.linux.pread(
+                                inner.fd,
+                                inner.buffer.ptr,
+                                inner.buffer.len,
+                                @intCast(inner.offset),
+                            );
 
                             const result: ReadResult = result: {
                                 const e: LinuxError = std.posix.errno(res);
@@ -485,7 +490,11 @@ pub const AsyncEpoll = struct {
                                     // If it is unseekable...
                                     LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => {
                                         // try normal read.
-                                        const read_res = std.os.linux.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
+                                        const read_res = std.os.linux.read(
+                                            inner.fd,
+                                            inner.buffer.ptr,
+                                            inner.buffer.len,
+                                        );
                                         const read_e: LinuxError = std.posix.errno(read_res);
                                         switch (read_e) {
                                             LinuxError.SUCCESS => if (read_res == 0) {

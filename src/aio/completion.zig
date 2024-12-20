@@ -118,6 +118,7 @@ pub const OpenError = error{
 };
 
 pub const ReadError = error{
+    AccessDenied,
     EndOfFile,
     WouldBlock,
     InvalidFd,
@@ -160,12 +161,12 @@ pub const StatError = error{
 
 pub const AcceptResult = Resulted(std.posix.socket_t, AcceptError);
 pub const ConnectResult = Resulted(std.posix.socket_t, ConnectError);
-pub const RecvResult = Resulted(i32, RecvError);
-pub const SendResult = Resulted(i32, SendError);
+pub const RecvResult = Resulted(usize, RecvError);
+pub const SendResult = Resulted(usize, SendError);
 
 pub const OpenResult = Resulted(std.posix.fd_t, OpenError);
-pub const ReadResult = Resulted(i32, ReadError);
-pub const WriteResult = Resulted(i32, WriteError);
+pub const ReadResult = Resulted(usize, ReadError);
+pub const WriteResult = Resulted(usize, WriteError);
 
 pub const StatResult = Resulted(Stat, StatError);
 
