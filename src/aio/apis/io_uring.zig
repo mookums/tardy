@@ -499,7 +499,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .connect = result };
                     },
                     .recv => {
-                        if (cqe.res > 0) break :blk .{ .recv = .{ .actual = cqe.res } };
+                        if (cqe.res > 0) break :blk .{ .recv = .{ .actual = @intCast(cqe.res) } };
                         if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
                         const result: RecvResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
@@ -520,7 +520,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .recv = result };
                     },
                     .send => {
-                        if (cqe.res >= 0) break :blk .{ .send = .{ .actual = cqe.res } };
+                        if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
                         const result: SendResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
@@ -548,7 +548,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .send = result };
                     },
                     .open => {
-                        if (cqe.res >= 0) break :blk .{ .open = .{ .actual = cqe.res } };
+                        if (cqe.res >= 0) break :blk .{ .open = .{ .actual = @intCast(cqe.res) } };
                         const result: OpenResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
@@ -582,7 +582,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .open = result };
                     },
                     .read => {
-                        if (cqe.res > 0) break :blk .{ .read = .{ .actual = cqe.res } };
+                        if (cqe.res > 0) break :blk .{ .read = .{ .actual = @intCast(cqe.res) } };
                         if (cqe.res == 0) break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
                         const result: ReadResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
@@ -601,7 +601,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .read = result };
                     },
                     .write => {
-                        if (cqe.res > 0) break :blk .{ .write = .{ .actual = cqe.res } };
+                        if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
                         const result: WriteResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
