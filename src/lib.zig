@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const log = std.log.scoped(.tardy);
 
+const Atomic = std.atomic.Value;
+
 pub const Pool = @import("core/pool.zig").Pool;
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
@@ -94,14 +96,13 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
         /// This will spawn a new Runtime.
         fn spawn_runtime(self: *Self, options: AsyncIOOptions) !Runtime {
-            const aio: AsyncIO = blk: {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
+            const aio: AsyncIO = blk: {
                 var io = try self.options.allocator.create(AioInnerType);
                 io.* = try AioInnerType.init(self.options.allocator, options);
                 try self.aios.append(self.options.allocator, io);
-
                 var aio = io.to_async();
                 aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
                 break :blk aio;
@@ -152,6 +153,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                 runtime_count -| 1,
             );
             defer {
+                log.debug("waiting for the remaining threads to terminate", .{});
                 for (threads.items) |thread| {
                     thread.join();
                 }
@@ -166,7 +168,10 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             });
             defer runtime.deinit();
 
-            for (0..runtime_count - 1) |_| {
+            var spawned_count = Atomic(usize).init(0);
+            const spawning_count = runtime_count - 1;
+
+            for (0..spawning_count) |_| {
                 const handle = try std.Thread.spawn(.{}, struct {
                     fn thread_init(
                         tardy: *Self,
@@ -174,13 +179,17 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                         parent: *AsyncIO,
                         init_parameters: @TypeOf(init_params),
                         deinit_parameters: @TypeOf(deinit_params),
+                        count: *Atomic(usize),
+                        total_count: usize,
                     ) void {
                         var thread_rt = tardy.spawn_runtime(.{
                             .parent_async = parent,
                             .size_aio_jobs_max = options.size_aio_jobs_max,
                             .size_aio_reap_max = options.size_aio_reap_max,
                         }) catch return;
-                        defer thread_rt.deinit();
+
+                        _ = count.fetchAdd(1, .release);
+                        while (count.load(.acquire) < total_count) {}
 
                         @call(.auto, init_func, .{
                             &thread_rt,
@@ -194,10 +203,21 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
                         thread_rt.run() catch return;
                     }
-                }.thread_init, .{ self, self.options, &runtime.aio, init_params, deinit_params });
+                }.thread_init, .{
+                    self,
+                    self.options,
+                    &runtime.aio,
+                    init_params,
+                    deinit_params,
+                    &spawned_count,
+                    spawning_count,
+                });
 
                 threads.appendAssumeCapacity(handle);
             }
+
+            while (spawned_count.load(.acquire) < spawning_count) {}
+            log.debug("all runtimes spawned, initalizing...", .{});
 
             try @call(.auto, init_func, .{
                 &runtime,
