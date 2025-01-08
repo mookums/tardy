@@ -5,7 +5,7 @@ const log = std.log.scoped(.@"tardy/aio/kqueue");
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
 const Stat = @import("../completion.zig").Stat;
-const Timespec = @import("../timespec.zig").Timespec;
+const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;

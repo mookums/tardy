@@ -13,14 +13,19 @@ pub const Broadcast = @import("runtime/broadcast.zig").Broadcast;
 pub const Channel = @import("runtime/channel.zig").Channel;
 pub const RxChannel = @import("runtime/channel.zig").RxChannel;
 pub const TxChannel = @import("runtime/channel.zig").TxChannel;
-pub const Stat = @import("aio/completion.zig").Stat;
+
+pub const File = @import("fs/lib.zig").File;
+pub const Dir = @import("fs/lib.zig").Dir;
+pub const Path = @import("fs/lib.zig").Path;
+pub const Stat = @import("fs/lib.zig").Stat;
 
 // Results
 pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
 pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
 pub const RecvResult = @import("aio/completion.zig").RecvResult;
 pub const SendResult = @import("aio/completion.zig").SendResult;
-pub const OpenResult = @import("aio/completion.zig").OpenResult;
+pub const OpenFileResult = @import("aio/completion.zig").OpenFileResult;
+pub const OpenDirResult = @import("aio/completion.zig").OpenDirResult;
 pub const ReadResult = @import("aio/completion.zig").ReadResult;
 pub const WriteResult = @import("aio/completion.zig").WriteResult;
 pub const StatResult = @import("aio/completion.zig").StatResult;
@@ -42,13 +47,12 @@ const Completion = @import("aio/completion.zig").Completion;
 pub const TardyThreading = union(enum) {
     single,
     multi: usize,
+    all,
     /// Calculated by `@max((cpu_count / 2) - 1, 1)`
     auto,
 };
 
 const TardyOptions = struct {
-    /// The allocator that server will use.
-    allocator: std.mem.Allocator,
     /// Threading Mode that Tardy runtime will use.
     ///
     /// Default = .auto
@@ -74,24 +78,26 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
     return struct {
         const Self = @This();
         aios: std.ArrayListUnmanaged(*AioInnerType),
+        allocator: std.mem.Allocator,
         options: TardyOptions,
         mutex: std.Thread.Mutex = .{},
 
-        pub fn init(options: TardyOptions) !Self {
+        pub fn init(allocator: std.mem.Allocator, options: TardyOptions) !Self {
             log.debug("aio backend: {s}", .{@tagName(aio_type)});
 
             return .{
+                .allocator = allocator,
                 .options = options,
-                .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(options.allocator, 0),
+                .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(allocator, 0),
             };
         }
 
         pub fn deinit(self: *Self) void {
             for (self.aios.items) |aio| {
-                self.options.allocator.destroy(aio);
+                self.allocator.destroy(aio);
             }
 
-            self.aios.deinit(self.options.allocator);
+            self.aios.deinit(self.allocator);
         }
 
         /// This will spawn a new Runtime.
@@ -100,16 +106,16 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             defer self.mutex.unlock();
 
             const aio: AsyncIO = blk: {
-                var io = try self.options.allocator.create(AioInnerType);
-                io.* = try AioInnerType.init(self.options.allocator, options);
-                try self.aios.append(self.options.allocator, io);
+                var io = try self.allocator.create(AioInnerType);
+                io.* = try AioInnerType.init(self.allocator, options);
+                try self.aios.append(self.allocator, io);
                 var aio = io.to_async();
-                aio.attach(try self.options.allocator.alloc(Completion, self.options.size_aio_reap_max));
+                aio.attach(try self.allocator.alloc(Completion, self.options.size_aio_reap_max));
                 break :blk aio;
             };
 
             const runtime = try Runtime.init(aio, .{
-                .allocator = self.options.allocator,
+                .allocator = self.allocator,
                 .size_tasks_max = self.options.size_tasks_max,
                 .size_aio_jobs_max = self.options.size_aio_jobs_max,
                 .size_aio_reap_max = self.options.size_aio_reap_max,
@@ -120,7 +126,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
 
         /// This is the entry into all of the runtimes.
         ///
-        /// The provided func needs to have a signature of (*Runtime, std.mem.Allocator, anytype) !void;
+        /// The provided func needs to have a signature of (*Runtime, anytype) !void;
         ///
         /// The provided allocator is meant to just initialize any structures that will exist throughout the lifetime
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
@@ -140,6 +146,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             const runtime_count: usize = blk: {
                 switch (self.options.threading) {
                     .single => break :blk 1,
+                    .all => break :blk try std.Thread.getCpuCount(),
                     .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
                     .multi => |count| break :blk count,
                 }
@@ -149,7 +156,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             log.info("thread count: {d}", .{runtime_count});
 
             var threads = try std.ArrayListUnmanaged(std.Thread).initCapacity(
-                self.options.allocator,
+                self.allocator,
                 runtime_count -| 1,
             );
             defer {
@@ -158,7 +165,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                     thread.join();
                 }
 
-                threads.deinit(self.options.allocator);
+                threads.deinit(self.allocator);
             }
 
             var runtime = try self.spawn_runtime(.{
@@ -265,3 +272,8 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
         }
     };
 }
+
+pub const Timespec = struct {
+    seconds: u64 = 0,
+    nanos: u64 = 0,
+};

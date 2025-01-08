@@ -12,10 +12,9 @@ const InnerTaskFn = @import("task.zig").InnerTaskFn;
 
 const Storage = @import("storage.zig").Storage;
 
-const Timespec = @import("../aio/timespec.zig").Timespec;
+const Timespec = @import("../lib.zig").Timespec;
 
 const Net = @import("../net/lib.zig").Net;
-const Filesystem = @import("../fs/lib.zig").Filesystem;
 
 const RuntimeOptions = struct {
     allocator: std.mem.Allocator,
@@ -32,7 +31,6 @@ pub const Runtime = struct {
     scheduler: Scheduler,
     aio: AsyncIO,
     net: Net = .{},
-    fs: Filesystem = .{},
     running: bool = true,
 
     pub fn init(aio: AsyncIO, options: RuntimeOptions) !Runtime {

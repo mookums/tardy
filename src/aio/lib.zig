@@ -2,7 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
-const Timespec = @import("timespec.zig").Timespec;
+
+const Timespec = @import("../lib.zig").Timespec;
+const Path = @import("../fs/lib.zig").Path;
+
 const Atomic = std.atomic.Value;
 
 pub const AsyncIOType = union(enum) {
@@ -107,7 +110,22 @@ pub const AsyncIO = struct {
     _queue_open: *const fn (
         self: *AsyncIO,
         task: usize,
-        path: [:0]const u8,
+        path: Path,
+        flags: AioOpenFlags,
+    ) anyerror!void,
+
+    _queue_delete: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        path: Path,
+        is_dir: bool,
+    ) anyerror!void,
+
+    _queue_mkdir: *const fn (
+        self: *AsyncIO,
+        task: usize,
+        path: Path,
+        mode: std.posix.mode_t,
     ) anyerror!void,
 
     _queue_stat: *const fn (
@@ -121,7 +139,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-        offset: usize,
+        offset: ?usize,
     ) anyerror!void,
 
     _queue_write: *const fn (
@@ -129,7 +147,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-        offset: usize,
+        offset: ?usize,
     ) anyerror!void,
 
     _queue_close: *const fn (
@@ -198,10 +216,31 @@ pub const AsyncIO = struct {
     pub fn queue_open(
         self: *AsyncIO,
         task: usize,
-        path: [:0]const u8,
+        path: Path,
+        flags: AioOpenFlags,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_open, .{ self, task, path });
+        try @call(.auto, self._queue_open, .{ self, task, path, flags });
+    }
+
+    pub fn queue_delete(
+        self: *AsyncIO,
+        task: usize,
+        path: Path,
+        is_dir: bool,
+    ) !void {
+        assert(self.attached);
+        try @call(.auto, self._queue_delete, .{ self, task, path, is_dir });
+    }
+
+    pub fn queue_mkdir(
+        self: *AsyncIO,
+        task: usize,
+        path: Path,
+        mode: std.posix.mode_t,
+    ) !void {
+        assert(self.attached);
+        try @call(.auto, self._queue_mkdir, .{ self, task, path, mode });
     }
 
     pub fn queue_stat(
@@ -218,7 +257,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-        offset: usize,
+        offset: ?usize,
     ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_read, .{ self, task, fd, buffer, offset });
@@ -229,7 +268,7 @@ pub const AsyncIO = struct {
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-        offset: usize,
+        offset: ?usize,
     ) !void {
         assert(self.attached);
         try @call(.auto, self._queue_write, .{ self, task, fd, buffer, offset });
@@ -300,4 +339,32 @@ pub const AsyncIO = struct {
         assert(self.attached);
         try @call(.auto, self._submit, .{self});
     }
+};
+
+pub const FileMode = enum {
+    read,
+    write,
+    read_write,
+};
+
+/// These are the OpenFlags used internally.
+/// This allows us to abstract out various different FS calls
+/// that are all backed by the same underlying call.
+pub const AioOpenFlags = struct {
+    mode: FileMode = .read,
+    /// Open the file for appending.
+    /// This will force writing permissions.
+    append: bool = false,
+    /// Create the file if it doesn't exist.
+    create: bool = false,
+    /// Truncate the file to the start.
+    truncate: bool = false,
+    /// Fail if the file already exists.
+    exclusive: bool = false,
+    /// Open the file for non-blocking I/O.
+    non_block: bool = false,
+    /// Ensure data is physically written to disk immediately.
+    sync: bool = false,
+    /// Ensure that the file is a directory.
+    directory: bool = false,
 };

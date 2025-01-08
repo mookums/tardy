@@ -6,7 +6,7 @@ const builtin = @import("builtin");
 const Atomic = std.atomic.Value;
 const Completion = @import("../completion.zig").Completion;
 const Stat = @import("../completion.zig").Stat;
-const Timespec = @import("../timespec.zig").Timespec;
+const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
@@ -23,7 +23,7 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
-const OpenResult = @import("../completion.zig").OpenResult;
+const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
 const OpenError = @import("../completion.zig").OpenError;
 const ReadResult = @import("../completion.zig").ReadResult;
 const ReadError = @import("../completion.zig").ReadError;
@@ -259,7 +259,7 @@ pub const AsyncBusyLoop = struct {
                     .open => |path| {
                         const com_ptr = &self.completions[reaped];
 
-                        const result: OpenResult = blk: {
+                        const result: InnerOpenResult = blk: {
                             const open_result = std.fs.cwd().openFileZ(path.ptr, .{}) catch |e| {
                                 const open_err: OpenError = switch (e) {
                                     File.OpenError.WouldBlock => continue,

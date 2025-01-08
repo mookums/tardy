@@ -5,7 +5,7 @@ const log = std.log.scoped(.@"tardy/aio/epoll");
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
 const Stat = @import("../completion.zig").Stat;
-const Timespec = @import("../timespec.zig").Timespec;
+const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
@@ -23,7 +23,7 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
-const OpenResult = @import("../completion.zig").OpenResult;
+const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
 const OpenError = @import("../completion.zig").OpenError;
 const ReadResult = @import("../completion.zig").ReadResult;
 const ReadError = @import("../completion.zig").ReadError;
@@ -393,7 +393,7 @@ pub const AsyncEpoll = struct {
                             const res = std.os.linux.openat(std.posix.AT.FDCWD, path, .{}, 0);
                             if (res >= 0) break :blk .{ .open = .{ .actual = @intCast(res) } };
 
-                            const result: OpenResult = result: {
+                            const result: InnerOpenResult = result: {
                                 const e: LinuxError = @enumFromInt(-res);
                                 switch (e) {
                                     LinuxError.AGAIN => {

@@ -10,7 +10,12 @@ const Stat = @import("../aio/completion.zig").Stat;
 const unwrap = @import("../utils.zig").unwrap;
 
 const StatResult = @import("../aio/completion.zig").StatResult;
-const OpenResult = @import("../aio/completion.zig").OpenResult;
+
+const InnerOpenResult = @import("../aio/completion.zig").InnerOpenResult;
+const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
+const OpenDirResult = @import("../aio/completion.zig").OpenDirResult;
+
+const DeleteResult = @import("../aio/completion.zig").DeleteResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
@@ -58,7 +63,21 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
                         break :result inner;
                     },
                     .open => |inner| {
-                        if (comptime R != OpenResult) unreachable;
+                        if (comptime R != OpenFileResult and R != OpenDirResult) unreachable;
+                        switch (inner) {
+                            .actual => |actual| switch (actual) {
+                                .file => |f| if (comptime R == OpenFileResult) {
+                                    break :result .{ .actual = f };
+                                } else unreachable,
+                                .dir => |d| if (comptime R == OpenDirResult) {
+                                    break :result .{ .actual = d };
+                                } else unreachable,
+                            },
+                            .err => |e| break :result .{ .err = e },
+                        }
+                    },
+                    .delete => |inner| {
+                        if (comptime R != DeleteResult) unreachable;
                         break :result inner;
                     },
                     .read => |inner| {
@@ -79,7 +98,7 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
                 }
             };
 
-            try @call(.always_inline, task_fn, .{ rt, result, context });
+            try @call(.auto, task_fn, .{ rt, result, context });
         }
     }.wrapper;
 }

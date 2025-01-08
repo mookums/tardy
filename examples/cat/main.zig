@@ -1,46 +1,41 @@
 const std = @import("std");
-const log = std.log.scoped(.@"tardy/example/file");
+const log = std.log.scoped(.@"tardy/example/cat");
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
-const OpenResult = @import("tardy").OpenResult;
+const File = @import("tardy").File;
+
+const InnerOpenResult = @import("tardy").InnerOpenResult;
 const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
 
-const FileProvision = struct {
-    fd: std.posix.fd_t = undefined,
-    buffer: []u8,
-    offset: usize,
+pub const std_options = .{
+    .log_level = .info,
 };
 
-fn open_task(rt: *Runtime, result: OpenResult, provision: *FileProvision) !void {
-    const fd = try result.unwrap();
-    provision.fd = fd;
+const FileProvision = struct {
+    std_out: File = undefined,
+    file: File = undefined,
+    buffer: []u8,
+    written: usize = 0,
+    read: usize = 0,
+};
 
-    if (!Cross.fd.is_valid(fd)) {
-        try std.io.getStdOut().writeAll("No such file or directory");
-        rt.stop();
-        return;
-    }
+fn open_task(rt: *Runtime, result: InnerOpenResult, provision: *FileProvision) !void {
+    provision.file = try result.unwrap();
+    provision.std_out = .{ .handle = try Cross.get_std_out() };
 
-    try rt.fs.read(
-        provision,
-        read_task,
-        fd,
-        provision.buffer,
-        provision.offset,
-    );
+    try provision.file.read(rt, provision, read_task, provision.buffer);
 }
 
 fn read_task(rt: *Runtime, result: ReadResult, provision: *FileProvision) !void {
     const length = result.unwrap() catch |e| {
         switch (e) {
             error.EndOfFile => {
-                try rt.fs.close(provision, close_task, provision.fd);
-                return;
+                return try provision.file.close(rt, provision, close_task);
             },
             else => {
                 std.debug.print("Unexpected Error: {}\n", .{e});
@@ -49,31 +44,24 @@ fn read_task(rt: *Runtime, result: ReadResult, provision: *FileProvision) !void 
         }
     };
 
-    provision.offset += @intCast(length);
-
-    try rt.fs.write(
-        provision,
-        write_task,
-        try Cross.get_std_out(),
-        provision.buffer,
-        provision.offset,
-    );
+    provision.read += @intCast(length);
+    try provision.std_out.write(rt, provision, write_task, provision.buffer[0..length]);
 }
 
 fn write_task(rt: *Runtime, result: WriteResult, provision: *FileProvision) !void {
-    _ = result.unwrap() catch |e| {
+    const written = result.unwrap() catch |e| {
         std.debug.print("Unexpected Error: {}\n", .{e});
-        try rt.fs.close(provision, close_task, provision.fd);
-        return;
+        return try provision.file.close(rt, provision, close_task);
     };
 
-    try rt.fs.read(
-        provision,
-        read_task,
-        provision.fd,
-        provision.buffer,
-        provision.offset,
-    );
+    provision.written += written;
+
+    if (provision.written < provision.read) {
+        const remaining_slice = provision.buffer[provision.read - provision.written ..];
+        try provision.std_out.write(rt, provision, write_task, remaining_slice);
+    } else {
+        try provision.file.read(rt, provision, read_task, provision.buffer);
+    }
 }
 
 fn close_task(rt: *Runtime, _: void, _: *FileProvision) !void {
@@ -113,22 +101,29 @@ pub fn main() !void {
         file_name: [:0]const u8,
     };
 
-    const buffer = try allocator.alloc(u8, 512);
-    defer allocator.free(buffer);
+    var buffer: [512]u8 = undefined;
 
     var params: EntryParams = .{
         .file_name = file_name,
-        .provision = .{
-            .buffer = buffer,
-            .offset = 0,
-        },
+        .provision = .{ .buffer = &buffer },
     };
 
     try tardy.entry(
         &params,
         struct {
             fn start(rt: *Runtime, parameters: *EntryParams) !void {
-                try rt.fs.open(&parameters.provision, open_task, parameters.file_name);
+                try File.open(
+                    rt,
+                    &parameters.provision,
+                    open_task,
+                    .{
+                        .rel = .{
+                            .dir = std.posix.AT.FDCWD,
+                            .path = parameters.file_name,
+                        },
+                    },
+                    .{},
+                );
             }
         }.start,
         {},

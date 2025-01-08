@@ -17,14 +17,14 @@ pub const Scheduler = struct {
 
     pub fn init(allocator: std.mem.Allocator, size: usize) !Scheduler {
         return .{
-            .tasks = try Pool(Task).init(allocator, size, null, null),
+            .tasks = try Pool(Task).init(allocator, size, .fixed),
             .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             .released = try std.ArrayList(usize).initCapacity(allocator, @divFloor(size, 2)),
         };
     }
 
     pub fn deinit(self: *Scheduler, allocator: std.mem.Allocator) void {
-        self.tasks.deinit(null, null);
+        self.tasks.deinit();
         self.runnable.deinit(allocator);
         self.released.deinit();
     }
