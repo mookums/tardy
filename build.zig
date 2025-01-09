@@ -11,7 +11,6 @@ pub fn build(b: *std.Build) void {
     });
 
     add_example(b, "basic", target, optimize, tardy);
-    add_example(b, "integ", target, optimize, tardy);
     add_example(b, "channel", target, optimize, tardy);
     add_example(b, "echo", target, optimize, tardy);
     add_example(b, "http", target, optimize, tardy);
