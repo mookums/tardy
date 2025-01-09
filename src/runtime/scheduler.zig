@@ -17,7 +17,7 @@ pub const Scheduler = struct {
 
     pub fn init(allocator: std.mem.Allocator, size: usize) !Scheduler {
         return .{
-            .tasks = try Pool(Task).init(allocator, size, .fixed),
+            .tasks = try Pool(Task).init(allocator, size),
             .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             .released = try std.ArrayList(usize).initCapacity(allocator, @divFloor(size, 2)),
         };
@@ -44,7 +44,7 @@ pub const Scheduler = struct {
         comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
         task_state: Task.State,
     ) !usize {
-        const borrowed = blk: {
+        const index = blk: {
             if (self.released.popOrNull()) |index| {
                 break :blk self.tasks.borrow_assume_unset(index);
             } else {
@@ -54,15 +54,16 @@ pub const Scheduler = struct {
 
         const context: usize = wrap(usize, task_ctx);
 
-        borrowed.item.* = .{
-            .index = borrowed.index,
+        const item = self.tasks.get_ptr(index);
+        item.* = .{
+            .index = index,
             .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
             .context = context,
             .state = task_state,
         };
 
-        if (task_state == .runnable) self.set_runnable(borrowed.index);
-        return borrowed.index;
+        if (task_state == .runnable) self.set_runnable(index);
+        return index;
     }
 
     pub fn release(self: *Scheduler, index: usize) !void {

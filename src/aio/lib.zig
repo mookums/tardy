@@ -8,6 +8,8 @@ const Path = @import("../fs/lib.zig").Path;
 
 const Atomic = std.atomic.Value;
 
+const AcceptKind = @import("job.zig").AcceptKind;
+
 pub const AsyncIOType = union(enum) {
     /// Attempts to automatically match
     /// the best backend.
@@ -161,6 +163,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         socket: std.posix.socket_t,
+        kind: AcceptKind,
     ) anyerror!void,
 
     _queue_connect: *const fn (
@@ -287,9 +290,10 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         task: usize,
         socket: std.posix.socket_t,
+        kind: AcceptKind,
     ) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_accept, .{ self, task, socket });
+        try @call(.auto, self._queue_accept, .{ self, task, socket, kind });
     }
 
     pub fn queue_connect(

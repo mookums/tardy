@@ -29,10 +29,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
-        .threading = .{ .multi = 3 },
-    });
+    var tardy = try Tardy.init(allocator, .{ .threading = .{ .multi = 3 } });
     defer tardy.deinit();
 
     var f = Atomic(bool).init(false);

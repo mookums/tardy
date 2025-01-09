@@ -5,6 +5,8 @@ const File = @import("../fs/lib.zig").File;
 const Dir = @import("../fs/lib.zig").Dir;
 const Stat = @import("../fs/lib.zig").Stat;
 
+const TcpSocket = @import("../net/lib.zig").TcpSocket;
+
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {
         const Self = @This();
@@ -173,7 +175,10 @@ pub const DeleteError = error{
     Unexpected,
 };
 
-pub const AcceptResult = Resulted(std.posix.socket_t, AcceptError);
+const AcceptResultType = union(enum) { tcp: TcpSocket };
+pub const InnerAcceptResult = Resulted(AcceptResultType, AcceptError);
+pub const AcceptTcpResult = Resulted(TcpSocket, AcceptError);
+
 pub const ConnectResult = Resulted(std.posix.socket_t, ConnectError);
 pub const RecvResult = Resulted(usize, RecvError);
 pub const SendResult = Resulted(usize, SendError);
@@ -182,9 +187,9 @@ pub const SendResult = Resulted(usize, SendError);
 // by encoding multiple possibilities within one Result.
 const OpenResultType = union(enum) { file: File, dir: Dir };
 pub const InnerOpenResult = Resulted(OpenResultType, OpenError);
-
 pub const OpenFileResult = Resulted(File, OpenError);
 pub const OpenDirResult = Resulted(Dir, OpenError);
+
 pub const DeleteResult = Resulted(void, DeleteError);
 pub const ReadResult = Resulted(usize, ReadError);
 pub const WriteResult = Resulted(usize, WriteError);
@@ -196,7 +201,7 @@ pub const Result = union(enum) {
     wake,
     /// If we have returned a stat object.
     stat: StatResult,
-    accept: AcceptResult,
+    accept: InnerAcceptResult,
     connect: ConnectResult,
     recv: RecvResult,
     send: SendResult,

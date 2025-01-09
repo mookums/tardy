@@ -3,11 +3,6 @@ const assert = std.debug.assert;
 
 pub fn Pool(comptime T: type) type {
     return struct {
-        const Kind = enum {
-            fixed,
-            dynamic,
-        };
-
         pub const Iterator = struct {
             items: []T,
             iter: std.DynamicBitSetUnmanaged.Iterator(.{
@@ -35,15 +30,13 @@ pub fn Pool(comptime T: type) type {
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
-        kind: Kind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: std.mem.Allocator, size: usize, kind: Kind) !Self {
+        pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
                 .allocator = allocator,
                 .items = try allocator.alloc(T, size),
                 .dirty = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
-                .kind = kind,
             };
         }
 
@@ -66,32 +59,11 @@ pub fn Pool(comptime T: type) type {
             self.dirty.deinit(self.allocator);
         }
 
-        /// This will double the size of possible tasks. It will never shrink.
-        /// This will be a no-op if fixed.
-        fn grow(self: *Self) !void {
-            assert(self.kind == .dynamic);
-            const new_size = try std.math.ceilPowerOfTwo(usize, self.items.len + 1);
-            assert(new_size > self.items.len);
-
-            if (!self.allocator.resize(self.items, new_size)) {
-                const new_slice = try self.allocator.alloc(T, new_size);
-                @memcpy(new_slice[0..self.items.len], self.items);
-                self.allocator.free(self.items);
-                self.items = new_slice;
-            }
-
-            try self.dirty.resize(self.allocator, new_size, false);
-        }
-
         pub fn get(self: *const Self, index: usize) T {
             assert(index < self.items.len);
             return self.items[index];
         }
 
-        /// The pointer returned here is valid UNTIL:
-        /// 1. deinit is called.
-        /// 2. grow is called.
-        /// -> grow is only called if the Pool is dynamic on some borrows.
         pub fn get_ptr(self: *const Self, index: usize) *T {
             assert(index < self.items.len);
             return &self.items[index];
@@ -115,17 +87,10 @@ pub fn Pool(comptime T: type) type {
         /// Linearly probes for an available slot in the pool.
         /// If dynamic, this *might* grow the Pool.
         ///
-        /// Returns a tuple of the index into the pool and a pointer to the item.
+        /// Returns the index into the Pool.
         pub fn borrow(self: *Self) !usize {
             var iter = self.dirty.iterator(.{ .kind = .unset });
-            const index = iter.next() orelse switch (self.kind) {
-                .fixed => return error.Full,
-                .dynamic => {
-                    const last_index = self.items.len;
-                    try self.grow();
-                    return try self.borrow_hint(last_index);
-                },
-            };
+            const index = iter.next() orelse return error.Full;
             self.dirty.set(index);
             return index;
         }
@@ -134,7 +99,7 @@ pub fn Pool(comptime T: type) type {
         /// Uses a provided hint value as the starting index.
         /// This will never grow the Pool.
         ///
-        /// Returns a tuple of the index into the pool and a pointer to the item.
+        /// Returns the index into the Pool.
         pub fn borrow_hint(self: *Self, hint: usize) !usize {
             const length = self.items.len;
             for (0..length) |i| {
@@ -175,7 +140,7 @@ pub fn Pool(comptime T: type) type {
 const testing = std.testing;
 
 test "Pool: Initalization (integer)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024, .fixed);
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..1024) |i| {
@@ -190,7 +155,7 @@ test "Pool: Initalization (integer)" {
 }
 
 test "Pool: Initalization & Deinit (ArrayList)" {
-    var list_pool = try Pool(std.ArrayList(u8)).init(testing.allocator, 256, .fixed);
+    var list_pool = try Pool(std.ArrayList(u8)).init(testing.allocator, 256);
     defer list_pool.deinit();
 
     for (list_pool.items, 0..) |*item, i| {
@@ -208,7 +173,7 @@ test "Pool: Initalization & Deinit (ArrayList)" {
 }
 
 test "Pool: BufferPool ([][]u8)" {
-    var buffer_pool = try Pool([1024]u8).init(testing.allocator, 1024, .fixed);
+    var buffer_pool = try Pool([1024]u8).init(testing.allocator, 1024);
     defer buffer_pool.deinit();
 
     for (buffer_pool.items) |*item| {
@@ -220,8 +185,8 @@ test "Pool: BufferPool ([][]u8)" {
     }
 }
 
-test "Pool: Borrowing (Fixed)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024, .fixed);
+test "Pool: Borrowing" {
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |_| {
@@ -236,8 +201,8 @@ test "Pool: Borrowing (Fixed)" {
     }
 }
 
-test "Pool: Borrowing Hint (Fixed)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024, .fixed);
+test "Pool: Borrowing Hint" {
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |i| {
@@ -249,8 +214,8 @@ test "Pool: Borrowing Hint (Fixed)" {
     }
 }
 
-test "Pool: Borrowing Unset (Fixed)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024, .fixed);
+test "Pool: Borrowing Unset" {
+    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |i| {
@@ -262,26 +227,8 @@ test "Pool: Borrowing Unset (Fixed)" {
     }
 }
 
-test "Pool: Borrowing (Dynamic)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024, .dynamic);
-    defer byte_pool.deinit();
-    var borrowed: usize = 0;
-
-    for (0..byte_pool.items.len) |_| {
-        _ = try byte_pool.borrow();
-        borrowed += 1;
-    }
-
-    _ = try byte_pool.borrow();
-    borrowed += 1;
-
-    for (0..borrowed) |i| {
-        byte_pool.release(i);
-    }
-}
-
 test "Pool Iterator" {
-    var int_pool = try Pool(usize).init(testing.allocator, 1024, .fixed);
+    var int_pool = try Pool(usize).init(testing.allocator, 1024);
     defer int_pool.deinit();
 
     for (0..(1024 / 2)) |_| {

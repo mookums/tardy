@@ -8,7 +8,7 @@ const Cross = @import("tardy").Cross;
 
 const File = @import("tardy").File;
 
-const InnerOpenResult = @import("tardy").InnerOpenResult;
+const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
 
@@ -24,7 +24,7 @@ const FileProvision = struct {
     read: usize = 0,
 };
 
-fn open_task(rt: *Runtime, result: InnerOpenResult, provision: *FileProvision) !void {
+fn open_task(rt: *Runtime, result: OpenFileResult, provision: *FileProvision) !void {
     provision.file = try result.unwrap();
     provision.std_out = .{ .handle = try Cross.get_std_out() };
 
@@ -74,8 +74,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
+    var tardy = try Tardy.init(allocator, .{
         .threading = .single,
         .size_tasks_max = 1,
         .size_aio_jobs_max = 1,

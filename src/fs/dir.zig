@@ -124,10 +124,7 @@ pub const Dir = struct {
     pub fn walk(self: *const Dir, allocator: std.mem.Allocator) !void {
         _ = self;
         _ = allocator;
-        switch (comptime builtin.os.tag) {
-            .linux => {},
-            else => @compileError(""),
-        }
+        @panic("Not implemented yet");
     }
 
     /// Delete a File within this Dir.

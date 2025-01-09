@@ -20,8 +20,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
+    var tardy = try Tardy.init(allocator, .{
         .threading = .single,
     });
     defer tardy.deinit();

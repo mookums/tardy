@@ -19,7 +19,7 @@ pub fn Broadcast(comptime T: type) type {
         pub fn init(allocator: std.mem.Allocator, channel_count: usize) !Self {
             return .{
                 .allocator = allocator,
-                .channels = try Pool(Channel(T)).init(allocator, channel_count, null, null),
+                .channels = try Pool(Channel(T)).init(allocator, channel_count),
             };
         }
 
@@ -32,17 +32,18 @@ pub fn Broadcast(comptime T: type) type {
                 chan.deinit();
             }
 
-            self.channels.deinit(null, null);
+            self.channels.deinit();
         }
 
         pub fn subscribe(self: *Self, runtime: *Runtime, channel_size: usize) !*Channel(T) {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const borrowed = try self.channels.borrow();
-            borrowed.item.* = try Channel(T).init(self.allocator, runtime, channel_size);
-            borrowed.item.id = borrowed.index;
-            return borrowed.item;
+            const index = try self.channels.borrow();
+            const item = self.channels.get_ptr(index);
+            item.* = try Channel(T).init(self.allocator, runtime, channel_size);
+            item.id = index;
+            return item;
         }
 
         pub fn unsubscribe(self: *Self, chan: *Channel(T)) void {

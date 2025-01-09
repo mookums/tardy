@@ -18,8 +18,10 @@ const Pool = @import("../../core/pool.zig").Pool;
 
 const LinuxError = std.os.linux.E;
 
-const AcceptResult = @import("../completion.zig").AcceptResult;
+const InnerAcceptResult = @import("../completion.zig").InnerAcceptResult;
 const AcceptError = @import("../completion.zig").AcceptError;
+const AcceptKind = @import("../job.zig").AcceptKind;
+
 const ConnectResult = @import("../completion.zig").ConnectResult;
 const ConnectError = @import("../completion.zig").ConnectError;
 const RecvResult = @import("../completion.zig").RecvResult;
@@ -110,7 +112,7 @@ pub const AsyncIoUring = struct {
             }
         };
 
-        var jobs = try Pool(Job).init(allocator, size, .fixed);
+        var jobs = try Pool(Job).init(allocator, size);
 
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
@@ -348,12 +350,17 @@ pub const AsyncIoUring = struct {
         self: *AsyncIO,
         task: usize,
         socket: std.posix.socket_t,
+        kind: AcceptKind,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const index = try uring.jobs.borrow_hint(task);
 
         const item = uring.jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .{ .accept = socket }, .task = task };
+        item.* = .{
+            .index = index,
+            .type = .{ .accept = .{ .socket = socket, .kind = kind } },
+            .task = task,
+        };
 
         _ = try uring.inner.accept(index, socket, null, null, 0);
     }
@@ -494,9 +501,11 @@ pub const AsyncIoUring = struct {
                     },
                     .timer, .mkdir => break :blk .none,
                     .close => break :blk .close,
-                    .accept => {
-                        if (cqe.res >= 0) break :blk .{ .accept = .{ .actual = cqe.res } };
-                        const result: AcceptResult = result: {
+                    .accept => |inner| {
+                        if (cqe.res >= 0) switch (inner.kind) {
+                            .tcp => break :blk .{ .accept = .{ .actual = .{ .tcp = .{ .socket = cqe.res } } } },
+                        };
+                        const result: InnerAcceptResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
                                 LinuxError.AGAIN => break :result .{ .err = AcceptError.WouldBlock },

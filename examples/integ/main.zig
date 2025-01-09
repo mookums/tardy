@@ -60,6 +60,21 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    _ = args.next().?;
+    const seed_str = args.next().?;
+    const seed = try std.fmt.parseUnsigned(u64, seed_str, 10);
+
+    var prng = std.Random.DefaultPrng.init(seed);
+    const rand = prng.random();
+
+    var envmap = try std.process.getEnvMap(allocator);
+    defer envmap.deinit();
+
+    const tmp_root = envmap.get("TMPDIR") orelse "/tmp";
+
     var tardy = try Tardy.init(allocator, .{
         .threading = .single,
         .size_tasks_max = 1,

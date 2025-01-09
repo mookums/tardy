@@ -27,10 +27,7 @@ fn log_task_struct(rt: *Runtime, _: void, counter: Counter) !void {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
-        .threading = .single,
-    });
+    var tardy = try Tardy.init(allocator, .{ .threading = .single });
     defer tardy.deinit();
 
     try tardy.entry(

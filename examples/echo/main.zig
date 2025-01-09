@@ -7,64 +7,59 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
-const AcceptResult = @import("tardy").AcceptResult;
+const TcpServer = @import("tardy").TcpServer;
+const TcpSocket = @import("tardy").TcpSocket;
+
+const AcceptTcpResult = @import("tardy").AcceptTcpResult;
 const RecvResult = @import("tardy").RecvResult;
 const SendResult = @import("tardy").SendResult;
 
 const Provision = struct {
     index: usize,
-    socket: std.posix.socket_t,
+    socket: TcpSocket,
     buffer: []u8,
 };
 
 fn close_connection(provision_pool: *Pool(Provision), provision: *const Provision) void {
-    log.debug("closed connection fd={d}", .{provision.socket});
-    std.posix.close(provision.socket);
+    log.debug("closed connection", .{});
+    std.posix.close(provision.socket.socket);
     provision_pool.release(provision.index);
 }
 
-fn accept_task(rt: *Runtime, result: AcceptResult, socket: std.posix.socket_t) !void {
-    const child_socket = result.unwrap() catch |e| {
+fn accept_task(rt: *Runtime, result: AcceptTcpResult, server: *const TcpServer) !void {
+    const socket = result.unwrap() catch |e| {
         log.err("Failed to accept on socket | {}", .{e});
         rt.stop();
         return;
     };
 
-    try Cross.socket.to_nonblock(child_socket);
+    try Cross.socket.to_nonblock(socket.socket);
 
-    log.debug("{d} - accepted socket fd={d}", .{ std.time.milliTimestamp(), child_socket });
-    try rt.net.accept(socket, accept_task, socket);
+    log.debug("{d} - accepted socket", .{std.time.milliTimestamp()});
+    try server.accept(rt, server, accept_task);
 
     // get provision
     // assign based on index
     // get buffer
     const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-    const borrowed = try provision_pool.borrow();
-    borrowed.item.index = borrowed.index;
-    borrowed.item.socket = child_socket;
+    const index = try provision_pool.borrow();
 
-    try rt.net.recv(
-        borrowed.item,
-        recv_task,
-        child_socket,
-        borrowed.item.buffer,
-    );
+    const item = provision_pool.get_ptr(index);
+    item.index = index;
+    item.socket = socket;
+
+    try socket.recv(rt, item, recv_task, item.buffer);
 }
 
 fn recv_task(rt: *Runtime, result: RecvResult, provision: *Provision) !void {
-    _ = result.unwrap() catch |e| {
+    const length = result.unwrap() catch |e| {
         log.err("Failed to recv on socket | {}", .{e});
         const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
         close_connection(provision_pool, provision);
         return;
     };
 
-    try rt.net.send(
-        provision,
-        send_task,
-        provision.socket,
-        provision.buffer,
-    );
+    try provision.socket.send(rt, provision, send_task, provision.buffer[0..length]);
 }
 
 fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
@@ -76,12 +71,7 @@ fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
     };
 
     log.debug("Echoed: {s}", .{provision.buffer[0..@intCast(length)]});
-    try rt.net.recv(
-        provision,
-        recv_task,
-        provision.socket,
-        provision.buffer,
-    );
+    try provision.socket.recv(rt, provision, recv_task, provision.buffer);
 }
 
 pub fn main() !void {
@@ -90,75 +80,33 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const size = 1024;
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
-        .threading = .single,
-    });
+    var tardy = try Tardy.init(allocator, .{ .threading = .single });
     defer tardy.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
 
-    const addr = try std.net.Address.parseIp(host, port);
-
-    const socket: std.posix.socket_t = blk: {
-        const socket_flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
-        break :blk try std.posix.socket(
-            addr.any.family,
-            socket_flags,
-            std.posix.IPPROTO.TCP,
-        );
-    };
-
-    if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT_LB,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-    } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-    } else {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEADDR,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-    }
-
-    try Cross.socket.to_nonblock(socket);
-    try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
-    try std.posix.listen(socket, size);
+    const server = try TcpServer.init(host, port);
+    try server.listen(1024);
 
     try tardy.entry(
-        socket,
+        &server,
         struct {
-            fn rt_start(rt: *Runtime, t_socket: std.posix.socket_t) !void {
-                const pool = try Pool(Provision).init(rt.allocator, size, rt.allocator, struct {
-                    fn init(items: []Provision, a: std.mem.Allocator) void {
-                        for (items) |*item| {
-                            item.buffer = a.alloc(u8, size) catch unreachable;
-                        }
-                    }
-                }.init);
+            fn rt_start(rt: *Runtime, tcp_server: *const TcpServer) !void {
+                const pool = try Pool(Provision).init(rt.allocator, size);
+                for (pool.items) |*item| {
+                    item.buffer = try rt.allocator.alloc(u8, size);
+                }
 
                 try rt.storage.store_alloc("provision_pool", pool);
-
-                try rt.net.accept(t_socket, accept_task, t_socket);
+                try tcp_server.accept(rt, tcp_server, accept_task);
             }
         }.rt_start,
         {},
         struct {
             fn rt_end(rt: *Runtime, _: void) !void {
                 const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-                provision_pool.deinit(rt.allocator, struct {
+                provision_pool.deinit_with_hook(rt.allocator, struct {
                     fn pool_deinit(items: []Provision, a: std.mem.Allocator) void {
                         for (items) |item| {
                             a.free(item.buffer);

@@ -14,8 +14,6 @@ const Storage = @import("storage.zig").Storage;
 
 const Timespec = @import("../lib.zig").Timespec;
 
-const Net = @import("../net/lib.zig").Net;
-
 const RuntimeOptions = struct {
     allocator: std.mem.Allocator,
     size_tasks_max: usize,
@@ -30,7 +28,6 @@ pub const Runtime = struct {
     storage: Storage,
     scheduler: Scheduler,
     aio: AsyncIO,
-    net: Net = .{},
     running: bool = true,
 
     pub fn init(aio: AsyncIO, options: RuntimeOptions) !Runtime {

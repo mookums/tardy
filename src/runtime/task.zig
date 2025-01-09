@@ -18,7 +18,10 @@ const OpenDirResult = @import("../aio/completion.zig").OpenDirResult;
 const DeleteResult = @import("../aio/completion.zig").DeleteResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
+
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
+const AcceptTcpResult = @import("../aio/completion.zig").AcceptTcpResult;
+
 const ConnectResult = @import("../aio/completion.zig").ConnectResult;
 const RecvResult = @import("../aio/completion.zig").RecvResult;
 const SendResult = @import("../aio/completion.zig").SendResult;
@@ -47,7 +50,15 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
                         break :result inner;
                     },
                     .accept => |inner| {
-                        if (comptime R != AcceptResult) unreachable;
+                        if (comptime R != AcceptTcpResult) unreachable;
+                        switch (inner) {
+                            .actual => |actual| switch (actual) {
+                                .tcp => |tcp| if (comptime R == AcceptTcpResult) {
+                                    break :result .{ .actual = tcp };
+                                } else unreachable,
+                            },
+                            .err => |e| break :result .{ .err = e },
+                        }
                         break :result inner;
                     },
                     .connect => |inner| {

@@ -14,7 +14,7 @@ pub const Job = struct {
         read: ReadJob,
         write: WriteJob,
         close: std.posix.fd_t,
-        accept: std.posix.socket_t,
+        accept: AcceptJob,
         connect: ConnectJob,
         send: SendJob,
         recv: RecvJob,
@@ -50,6 +50,13 @@ const WriteJob = struct {
     fd: std.posix.fd_t,
     buffer: []const u8,
     offset: ?usize,
+};
+
+pub const AcceptKind = enum { tcp };
+
+const AcceptJob = struct {
+    socket: std.posix.socket_t,
+    kind: AcceptKind,
 };
 
 const ConnectJob = struct {

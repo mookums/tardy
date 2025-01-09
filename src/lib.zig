@@ -19,8 +19,11 @@ pub const Dir = @import("fs/lib.zig").Dir;
 pub const Path = @import("fs/lib.zig").Path;
 pub const Stat = @import("fs/lib.zig").Stat;
 
+pub const TcpSocket = @import("net/lib.zig").TcpSocket;
+pub const TcpServer = @import("net/lib.zig").TcpServer;
+
 // Results
-pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
+pub const AcceptTcpResult = @import("aio/completion.zig").AcceptTcpResult;
 pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
 pub const RecvResult = @import("aio/completion.zig").RecvResult;
 pub const SendResult = @import("aio/completion.zig").SendResult;
@@ -146,9 +149,9 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             const runtime_count: usize = blk: {
                 switch (self.options.threading) {
                     .single => break :blk 1,
-                    .all => break :blk try std.Thread.getCpuCount(),
-                    .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
                     .multi => |count| break :blk count,
+                    .auto => break :blk @max(try std.Thread.getCpuCount() / 2 - 1, 1),
+                    .all => break :blk try std.Thread.getCpuCount(),
                 }
             };
 
