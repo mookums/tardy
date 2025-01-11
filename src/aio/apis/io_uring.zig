@@ -43,6 +43,8 @@ const WriteError = @import("../completion.zig").WriteError;
 const StatResult = @import("../completion.zig").StatResult;
 const StatError = @import("../completion.zig").StatError;
 
+const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
+
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
@@ -151,46 +153,59 @@ pub const AsyncIoUring = struct {
         allocator.destroy(uring.inner);
     }
 
-    pub fn queue_timer(
+    pub fn queue_job(
         self: *AsyncIO,
         task: usize,
-        timespec: Timespec,
+        job: AsyncSubmission,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+        log.debug("queuing up job: {s}", .{@tagName(job)});
+        try switch (job) {
+            .timer => |inner| queue_timer(uring, task, inner),
+            .open => |inner| queue_open(uring, task, inner.path, inner.flags),
+            .delete => |inner| queue_delete(uring, task, inner.path, inner.is_dir),
+            .mkdir => |inner| queue_mkdir(uring, task, inner.path, inner.mode),
+            .stat => |inner| queue_stat(uring, task, inner.fd),
+            .read => |inner| queue_read(uring, task, inner.fd, inner.buffer, inner.offset),
+            .write => |inner| queue_write(uring, task, inner.fd, inner.buffer, inner.offset),
+            .close => |inner| queue_close(uring, task, inner),
+            .accept => |inner| queue_accept(uring, task, inner.socket, inner.kind),
+            .connect => |inner| queue_connect(uring, task, inner.socket, inner.host, inner.port),
+            .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
+            .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
+        };
+    }
 
-        const item = uring.jobs.get_ptr(index);
+    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Timespec) !void {
+        const index = try self.jobs.borrow_hint(task);
+
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .task = task,
             .type = .{ .timer = .none },
         };
 
-        const ktimespec = &uring.timespec[index];
+        const ktimespec = &self.timespec[index];
         ktimespec.* = .{
             .tv_sec = @intCast(timespec.seconds),
             .tv_nsec = @intCast(timespec.nanos),
         };
 
-        _ = try uring.inner.timeout(index, ktimespec, 0, 0);
+        _ = try self.inner.timeout(index, ktimespec, 0, 0);
     }
 
-    pub fn queue_open(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        flags: AioOpenFlags,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AioOpenFlags) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
                 .open = .{
                     .path = path,
                     .kind = if (flags.directory) .dir else .file,
+                    .perms = flags.perms,
                 },
             },
             .task = task,
@@ -207,6 +222,7 @@ pub const AsyncIoUring = struct {
 
             o.APPEND = flags.append;
             o.CREAT = flags.create;
+            o.TRUNC = flags.truncate;
             o.EXCL = flags.exclusive;
             o.NONBLOCK = flags.non_block;
             o.SYNC = flags.sync;
@@ -215,79 +231,56 @@ pub const AsyncIoUring = struct {
             break :blk o;
         };
 
+        const perms = flags.perms orelse 0;
+
         switch (path) {
-            .rel => |inner| _ = try uring.inner.openat(index, inner.dir, inner.path.ptr, o_flags, 0),
-            .abs => |inner| _ = try uring.inner.openat(index, std.posix.AT.FDCWD, inner.ptr, o_flags, 0),
+            .rel => |inner| _ = try self.inner.openat(index, inner.dir, inner.path.ptr, o_flags, perms),
+            .abs => |inner| _ = try self.inner.openat(index, std.posix.AT.FDCWD, inner.ptr, o_flags, perms),
         }
     }
 
-    pub fn queue_delete(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        is_dir: bool,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{ .index = index, .type = .{ .delete = path }, .task = task };
 
         const mode: u32 = if (is_dir) std.posix.AT.REMOVEDIR else 0;
 
         switch (path) {
-            .rel => |inner| _ = try uring.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
-            .abs => |inner| _ = try uring.inner.unlinkat(index, std.posix.AT.FDCWD, inner.ptr, mode),
+            .rel => |inner| _ = try self.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
+            .abs => |inner| _ = try self.inner.unlinkat(index, std.posix.AT.FDCWD, inner.ptr, mode),
         }
     }
 
-    pub fn queue_mkdir(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        mode: std.posix.mode_t,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: std.posix.mode_t) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
 
         switch (path) {
-            .rel => |inner| _ = try uring.inner.mkdirat(index, inner.dir, inner.path.ptr, mode),
-            .abs => |inner| _ = try uring.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, mode),
+            .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, mode),
+            .abs => |inner| _ = try self.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, mode),
         }
     }
 
-    pub fn queue_stat(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{ .index = index, .type = .{ .stat = fd }, .task = task };
 
-        const statx = &uring.statx[index];
-        _ = try uring.inner.statx(index, fd, "", std.os.linux.AT.EMPTY_PATH, 0, statx);
+        const statx = &self.statx[index];
+        _ = try self.inner.statx(index, fd, "", std.os.linux.AT.EMPTY_PATH, 0, statx);
     }
 
-    pub fn queue_read(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: ?usize,
-    ) !void {
+    fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) !void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
-
-        const item = uring.jobs.get_ptr(index);
+        const index = try self.jobs.borrow_hint(task);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
@@ -300,23 +293,15 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        _ = try uring.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
+        _ = try self.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
     }
 
-    pub fn queue_write(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: ?usize,
-    ) !void {
+    fn queue_write(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) !void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
-
-        const item = uring.jobs.get_ptr(index);
+        const index = try self.jobs.borrow_hint(task);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
@@ -329,55 +314,42 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        _ = try uring.inner.write(index, fd, buffer, real_offset);
+        _ = try self.inner.write(index, fd, buffer, real_offset);
     }
 
-    pub fn queue_close(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{ .index = index, .type = .{ .close = fd }, .task = task };
 
-        _ = try uring.inner.close(index, fd);
+        _ = try self.inner.close(index, fd);
     }
 
-    pub fn queue_accept(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        kind: AcceptKind,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: AcceptKind) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{ .accept = .{ .socket = socket, .kind = kind } },
             .task = task,
         };
 
-        _ = try uring.inner.accept(index, socket, null, null, 0);
+        _ = try self.inner.accept(index, socket, null, null, 0);
     }
 
-    pub fn queue_connect(
-        self: *AsyncIO,
+    fn queue_connect(
+        self: *AsyncIoUring,
         task: usize,
         socket: std.posix.socket_t,
         host: []const u8,
         port: u16,
     ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const addr = try std.net.Address.parseIp(host, port);
 
-        const index = try uring.jobs.borrow_hint(task);
-
-        const item = uring.jobs.get_ptr(index);
+        const index = try self.jobs.borrow_hint(task);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
@@ -389,7 +361,7 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        _ = try uring.inner.connect(
+        _ = try self.inner.connect(
             index,
             socket,
             &item.type.connect.addr.any,
@@ -397,16 +369,14 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    pub fn queue_recv(
-        self: *AsyncIO,
+    fn queue_recv(
+        self: *AsyncIoUring,
         task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
-
-        const item = uring.jobs.get_ptr(index);
+        const index = try self.jobs.borrow_hint(task);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
@@ -418,19 +388,13 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        _ = try uring.inner.recv(index, socket, .{ .buffer = buffer }, 0);
+        _ = try self.inner.recv(index, socket, .{ .buffer = buffer }, 0);
     }
 
-    pub fn queue_send(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        buffer: []const u8,
-    ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const index = try uring.jobs.borrow_hint(task);
+    fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
+        const index = try self.jobs.borrow_hint(task);
 
-        const item = uring.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
             .type = .{
@@ -442,7 +406,7 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        _ = try uring.inner.send(index, socket, buffer, 0);
+        _ = try self.inner.send(index, socket, buffer, 0);
     }
 
     inline fn queue_wake(self: *AsyncIoUring) !void {
@@ -776,18 +740,7 @@ pub const AsyncIoUring = struct {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
-            ._queue_timer = queue_timer,
-            ._queue_open = queue_open,
-            ._queue_delete = queue_delete,
-            ._queue_mkdir = queue_mkdir,
-            ._queue_stat = queue_stat,
-            ._queue_read = queue_read,
-            ._queue_write = queue_write,
-            ._queue_close = queue_close,
-            ._queue_accept = queue_accept,
-            ._queue_connect = queue_connect,
-            ._queue_recv = queue_recv,
-            ._queue_send = queue_send,
+            ._queue_job = queue_job,
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,

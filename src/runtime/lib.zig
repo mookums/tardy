@@ -66,19 +66,6 @@ pub const Runtime = struct {
         _ = try self.scheduler.spawn(R, task_ctx, task_fn, .runnable);
     }
 
-    /// Spawns a new Task. This task will be set as runnable
-    /// after the `timespec` amount of time has elasped.
-    pub fn spawn_delay(
-        self: *Runtime,
-        comptime R: type,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
-        timespec: Timespec,
-    ) !void {
-        const index = try self.scheduler.spawn(R, task_ctx, task_fn, .waiting);
-        try self.aio.queue_timer(index, timespec);
-    }
-
     /// Is the runtime asleep?
     pub inline fn asleep(self: *Runtime) bool {
         return self.aio.asleep.load(.acquire);
@@ -88,7 +75,7 @@ pub const Runtime = struct {
         self.running = false;
     }
 
-    inline fn run_task(self: *Runtime, task: *Task) !void {
+    fn run_task(self: *Runtime, task: *Task) !void {
         const cloned_task: Task = task.*;
         task.state = .dead;
         try self.scheduler.release(task.index);

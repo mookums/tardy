@@ -14,6 +14,8 @@ const StatResult = @import("../aio/completion.zig").StatResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
 
+const wrap = @import("../utils.zig").wrap;
+
 pub const File = struct {
     handle: std.posix.fd_t,
 
@@ -42,17 +44,22 @@ pub const File = struct {
         path: Path,
         flags: CreateFlags,
     ) !void {
-        const index = try rt.scheduler.spawn(OpenFileResult, task_ctx, task_fn, .waiting);
-
         const aio_flags: AioOpenFlags = .{
             .mode = flags.mode,
+            .perms = 0o644,
             .create = true,
             .truncate = flags.truncate,
             .exclusive = !flags.overwrite,
             .directory = false,
         };
 
-        try rt.aio.queue_open(index, path, aio_flags);
+        try rt.scheduler.spawn2(
+            OpenFileResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .open = .{ .path = path, .flags = aio_flags } },
+        );
     }
 
     pub fn open(
@@ -62,15 +69,22 @@ pub const File = struct {
         path: Path,
         flags: OpenFlags,
     ) !void {
-        const index = try rt.scheduler.spawn(OpenFileResult, task_ctx, task_fn, .waiting);
-
         const aio_flags: AioOpenFlags = .{
             .mode = flags.mode,
             .create = false,
             .directory = false,
         };
 
-        try rt.aio.queue_open(index, path, aio_flags);
+        try rt.scheduler.spawn2(
+            OpenFileResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .open = .{
+                .path = path,
+                .flags = aio_flags,
+            } },
+        );
     }
 
     pub fn read(
@@ -80,8 +94,17 @@ pub const File = struct {
         comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
         buffer: []u8,
     ) !void {
-        const index = try rt.scheduler.spawn(ReadResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_read(index, self.handle, buffer, null);
+        try rt.scheduler.spawn2(
+            ReadResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .read = .{
+                .fd = self.handle,
+                .buffer = buffer,
+                .offset = null,
+            } },
+        );
     }
 
     pub fn read_offset(
@@ -92,8 +115,17 @@ pub const File = struct {
         buffer: []u8,
         offset: usize,
     ) !void {
-        const index = try rt.scheduler.spawn(ReadResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_read(index, self.handle, buffer, offset);
+        try rt.scheduler.spawn2(
+            ReadResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .read = .{
+                .fd = self.handle,
+                .buffer = buffer,
+                .offset = offset,
+            } },
+        );
     }
 
     pub fn write(
@@ -103,8 +135,17 @@ pub const File = struct {
         comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
         buffer: []const u8,
     ) !void {
-        const index = try rt.scheduler.spawn(WriteResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_write(index, self.handle, buffer, null);
+        try rt.scheduler.spawn2(
+            WriteResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .write = .{
+                .fd = self.handle,
+                .buffer = buffer,
+                .offset = null,
+            } },
+        );
     }
 
     pub fn write_offset(
@@ -115,8 +156,101 @@ pub const File = struct {
         buffer: []const u8,
         offset: usize,
     ) !void {
-        const index = try rt.scheduler.spawn(WriteResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_write(index, self.handle, buffer, offset);
+        try rt.scheduler.spawn2(
+            WriteResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .write = .{
+                .fd = self.handle,
+                .buffer = buffer,
+                .offset = offset,
+            } },
+        );
+    }
+
+    /// Writes all of the buffer into the File then runs the passed in Callback.
+    /// There is an internal allocation that happens within this method using the
+    /// runtime allocator.
+    pub fn write_all(
+        self: *const File,
+        rt: *Runtime,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
+        buffer: []const u8,
+    ) !void {
+        // Certain operations require a heap-allocated Context.
+        // These provisions serve as an object for managing that and any
+        // other recursive tasks.
+        const Provision = struct {
+            const Self = @This();
+            buffer: []const u8,
+            sent: usize,
+            file: *const File,
+
+            fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
+                const length = try res.unwrap();
+                std.log.debug("written: {d}", .{length});
+                p.sent += length;
+
+                if (p.sent >= p.buffer.len) {
+                    defer runtime.allocator.destroy(p);
+                    try runtime.scheduler.spawn2(void, task_ctx, task_fn, .runnable, null);
+                } else {
+                    try p.file.write(runtime, p, write_all_task, p.buffer[p.sent..]);
+                }
+            }
+        };
+
+        const p = try rt.allocator.create(Provision);
+        p.* = Provision{
+            .buffer = buffer,
+            .sent = 0,
+            .file = self,
+        };
+
+        try self.write(rt, p, Provision.write_all_task, buffer);
+    }
+
+    pub fn write_all_offset(
+        self: *const File,
+        rt: *Runtime,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
+        buffer: []const u8,
+        offset: usize,
+    ) !void {
+        const Provision = struct {
+            const Self = @This();
+            file: *const File,
+            sent: usize,
+            buffer: []const u8,
+            offset: usize,
+
+            fn write_all_offset_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
+                const length = try res.unwrap();
+                std.log.debug("written: {d}", .{length});
+                p.sent += length;
+                p.offset += length;
+
+                if (p.sent >= p.buffer.len) {
+                    defer runtime.allocator.destroy(p);
+                    try runtime.scheduler.spawn2(void, task_ctx, task_fn, .runnable, null);
+                } else {
+                    try p.file.write_offset(runtime, p, write_all_offset_task, p.buffer[p.sent..], p.offset);
+                }
+            }
+        };
+
+        const p = try rt.allocator.create(Provision);
+        p.* = Provision{
+            .file = self,
+            .sent = 0,
+            .buffer = buffer,
+            .offset = offset,
+        };
+
+        try self.write_offset(rt, p, Provision.write_all_offset_task, buffer, offset);
     }
 
     pub fn stat(
@@ -125,8 +259,7 @@ pub const File = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
     ) !void {
-        const index = try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_stat(index, self.handle);
+        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .stat = self.handle });
     }
 
     pub fn close(
@@ -135,7 +268,6 @@ pub const File = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        const index = try rt.scheduler.spawn(void, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_close(index, self.handle);
+        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.handle });
     }
 };

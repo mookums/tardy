@@ -91,102 +91,72 @@ pub const AsyncIOOptions = struct {
     size_aio_reap_max: usize,
 };
 
+pub const AsyncSubmission = union(enum) {
+    timer: Timespec,
+    open: struct {
+        path: Path,
+        flags: AioOpenFlags,
+    },
+    delete: struct {
+        path: Path,
+        is_dir: bool,
+    },
+    mkdir: struct {
+        path: Path,
+        mode: std.posix.mode_t,
+    },
+    stat: struct {
+        task: usize,
+        fd: std.posix.fd_t,
+    },
+    read: struct {
+        self: *AsyncIO,
+        task: usize,
+        fd: std.posix.fd_t,
+        buffer: []u8,
+        offset: ?usize,
+    },
+    write: struct {
+        fd: std.posix.fd_t,
+        buffer: []const u8,
+        offset: ?usize,
+    },
+    close: std.posix.fd_t,
+    accept: struct {
+        socket: std.posix.socket_t,
+        kind: AcceptKind,
+    },
+    connect: struct {
+        socket: std.posix.socket_t,
+        host: []const u8,
+        port: u16,
+    },
+    recv: struct {
+        socket: std.posix.socket_t,
+        buffer: []u8,
+    },
+    send: struct {
+        socket: std.posix.socket_t,
+        buffer: []const u8,
+    },
+};
+
 pub const AsyncIO = struct {
     runner: *anyopaque,
     attached: bool = false,
     completions: []Completion = undefined,
     asleep: Atomic(bool) = Atomic(bool).init(false),
 
+    _queue_job: *const fn (
+        self: *AsyncIO,
+        index: usize,
+        job: AsyncSubmission,
+    ) anyerror!void,
+
     _deinit: *const fn (
         self: *AsyncIO,
         allocator: std.mem.Allocator,
     ) void,
-
-    _queue_timer: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        timespec: Timespec,
-    ) anyerror!void,
-
-    // Filesystem Operations
-    _queue_open: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        flags: AioOpenFlags,
-    ) anyerror!void,
-
-    _queue_delete: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        is_dir: bool,
-    ) anyerror!void,
-
-    _queue_mkdir: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        mode: std.posix.mode_t,
-    ) anyerror!void,
-
-    _queue_stat: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) anyerror!void,
-
-    _queue_read: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: ?usize,
-    ) anyerror!void,
-
-    _queue_write: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: ?usize,
-    ) anyerror!void,
-
-    _queue_close: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) anyerror!void,
-
-    // Network Operations
-    _queue_accept: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        kind: AcceptKind,
-    ) anyerror!void,
-
-    _queue_connect: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
-    ) anyerror!void,
-
-    _queue_recv: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        buffer: []u8,
-    ) anyerror!void,
-
-    _queue_send: *const fn (
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        buffer: []const u8,
-    ) anyerror!void,
 
     _wake: *const fn (self: *AsyncIO) anyerror!void,
     _reap: *const fn (self: *AsyncIO, wait: bool) anyerror![]Completion,
@@ -207,124 +177,9 @@ pub const AsyncIO = struct {
         @call(.auto, self._deinit, .{ self, allocator });
     }
 
-    pub fn queue_timer(
-        self: *AsyncIO,
-        task: usize,
-        timespec: Timespec,
-    ) !void {
+    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
         assert(self.attached);
-        try @call(.auto, self._queue_timer, .{ self, task, timespec });
-    }
-
-    pub fn queue_open(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        flags: AioOpenFlags,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_open, .{ self, task, path, flags });
-    }
-
-    pub fn queue_delete(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        is_dir: bool,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_delete, .{ self, task, path, is_dir });
-    }
-
-    pub fn queue_mkdir(
-        self: *AsyncIO,
-        task: usize,
-        path: Path,
-        mode: std.posix.mode_t,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_mkdir, .{ self, task, path, mode });
-    }
-
-    pub fn queue_stat(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_stat, .{ self, task, fd });
-    }
-
-    pub fn queue_read(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: ?usize,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_read, .{ self, task, fd, buffer, offset });
-    }
-
-    pub fn queue_write(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: ?usize,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_write, .{ self, task, fd, buffer, offset });
-    }
-
-    pub fn queue_close(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_close, .{ self, task, fd });
-    }
-
-    pub fn queue_accept(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        kind: AcceptKind,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_accept, .{ self, task, socket, kind });
-    }
-
-    pub fn queue_connect(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_connect, .{ self, task, socket, host, port });
-    }
-
-    pub fn queue_recv(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        buffer: []u8,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_recv, .{ self, task, socket, buffer });
-    }
-
-    pub fn queue_send(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        buffer: []const u8,
-    ) !void {
-        assert(self.attached);
-        try @call(.auto, self._queue_send, .{ self, task, socket, buffer });
+        try @call(.auto, self._queue_job, .{ self, task, job });
     }
 
     pub fn wake(self: *AsyncIO) !void {
@@ -356,6 +211,8 @@ pub const FileMode = enum {
 /// that are all backed by the same underlying call.
 pub const AioOpenFlags = struct {
     mode: FileMode = .read,
+    /// Permissions used for creating files.
+    perms: ?std.posix.mode_t = null,
     /// Open the file for appending.
     /// This will force writing permissions.
     append: bool = false,

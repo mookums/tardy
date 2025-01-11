@@ -33,6 +33,7 @@ const TimerJob = union(enum) {
 const OpenJob = struct {
     path: Path,
     kind: enum { file, dir },
+    perms: ?std.posix.mode_t,
 };
 
 const MkdirJob = struct {
