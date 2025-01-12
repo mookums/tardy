@@ -616,27 +616,28 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .open = result };
                     },
                     .delete => {
-                        if (cqe.res > 0) break :blk .{ .delete = .{ .actual = {} } };
+                        if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
 
                         const result: DeleteResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
                                 // unlink
-                                LinuxError.ACCES => break :result .{ .err = error.AccessDenied },
-                                LinuxError.BUSY => break :result .{ .err = error.Busy },
-                                LinuxError.FAULT => break :result .{ .err = error.InvalidAddress },
-                                LinuxError.IO => break :result .{ .err = error.IoError },
-                                LinuxError.ISDIR, LinuxError.PERM => break :result .{ .err = error.IsDirectory },
-                                LinuxError.LOOP => break :result .{ .err = error.Loop },
-                                LinuxError.NAMETOOLONG => break :result .{ .err = error.NameTooLong },
-                                LinuxError.NOENT => break :result .{ .err = error.NotFound },
-                                LinuxError.NOMEM => break :result .{ .err = error.OutOfMemory },
-                                LinuxError.NOTDIR => break :result .{ .err = error.IsNotDirectory },
-                                LinuxError.ROFS => break :result .{ .err = error.ReadOnlyFileSystem },
+                                LinuxError.ACCES => break :result .{ .err = DeleteError.AccessDenied },
+                                LinuxError.BUSY => break :result .{ .err = DeleteError.Busy },
+                                LinuxError.FAULT => break :result .{ .err = DeleteError.InvalidAddress },
+                                LinuxError.IO => break :result .{ .err = DeleteError.IoError },
+                                LinuxError.ISDIR, LinuxError.PERM => break :result .{ .err = DeleteError.IsDirectory },
+                                LinuxError.LOOP => break :result .{ .err = DeleteError.Loop },
+                                LinuxError.NAMETOOLONG => break :result .{ .err = DeleteError.NameTooLong },
+                                LinuxError.NOENT => break :result .{ .err = DeleteError.NotFound },
+                                LinuxError.NOMEM => break :result .{ .err = DeleteError.OutOfMemory },
+                                LinuxError.NOTDIR => break :result .{ .err = DeleteError.IsNotDirectory },
+                                LinuxError.ROFS => break :result .{ .err = DeleteError.ReadOnlyFileSystem },
+                                LinuxError.BADF => break :result .{ .err = DeleteError.InvalidFd },
                                 // rmdir
-                                LinuxError.INVAL => break :result .{ .err = error.InvalidArguments },
-                                LinuxError.NOTEMPTY => break :result .{ .err = error.NotEmpty },
-                                else => break :result .{ .err = error.Unexpected },
+                                LinuxError.INVAL => break :result .{ .err = DeleteError.InvalidArguments },
+                                LinuxError.NOTEMPTY => break :result .{ .err = DeleteError.NotEmpty },
+                                else => break :result .{ .err = DeleteError.Unexpected },
                             }
                         };
 

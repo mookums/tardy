@@ -31,7 +31,10 @@ pub const OpenFileResult = @import("aio/completion.zig").OpenFileResult;
 pub const OpenDirResult = @import("aio/completion.zig").OpenDirResult;
 pub const ReadResult = @import("aio/completion.zig").ReadResult;
 pub const WriteResult = @import("aio/completion.zig").WriteResult;
+pub const WriteAllResult = @import("fs/file.zig").WriteAllResult;
 pub const StatResult = @import("aio/completion.zig").StatResult;
+pub const DeleteResult = @import("aio/completion.zig").DeleteResult;
+pub const DeleteTreeResult = @import("fs/dir.zig").DeleteTreeResult;
 
 pub const wrap = @import("utils.zig").wrap;
 pub const unwrap = @import("utils.zig").unwrap;

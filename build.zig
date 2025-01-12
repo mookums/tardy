@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
     add_example(b, "http", target, optimize, tardy);
     add_example(b, "cat", target, optimize, tardy);
     add_example(b, "shove", target, optimize, tardy);
+    add_example(b, "rmdir", target, optimize, tardy);
     add_example(b, "stat", target, optimize, tardy);
 }
 

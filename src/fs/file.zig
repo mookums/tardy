@@ -10,11 +10,15 @@ const AioOpenFlags = @import("../aio/lib.zig").AioOpenFlags;
 
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
 
+const Resulted = @import("../aio/completion.zig").Resulted;
 const StatResult = @import("../aio/completion.zig").StatResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
+const WriteError = @import("../aio/completion.zig").WriteError;
 
 const wrap = @import("../utils.zig").wrap;
+
+pub const WriteAllResult = Resulted(void, WriteError);
 
 pub const File = struct {
     handle: std.posix.fd_t,
@@ -176,7 +180,7 @@ pub const File = struct {
         self: *const File,
         rt: *Runtime,
         task_ctx: anytype,
-        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
+        comptime task_fn: TaskFn(WriteAllResult, @TypeOf(task_ctx)),
         buffer: []const u8,
     ) !void {
         // Certain operations require a heap-allocated Context.
@@ -189,25 +193,33 @@ pub const File = struct {
             file: *const File,
 
             fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
-                const length = try res.unwrap();
-                std.log.debug("written: {d}", .{length});
-                p.sent += length;
+                var run_task = false;
+                {
+                    errdefer runtime.allocator.destroy(p);
+                    const length = res.unwrap() catch |e| {
+                        try task_fn(runtime, .{ .err = @errorCast(e) }, task_ctx);
+                        return e;
+                    };
 
-                if (p.sent >= p.buffer.len) {
-                    defer runtime.allocator.destroy(p);
-                    try runtime.scheduler.spawn2(void, task_ctx, task_fn, .runnable, null);
-                } else {
-                    try p.file.write(runtime, p, write_all_task, p.buffer[p.sent..]);
+                    std.log.debug("written: {d}", .{length});
+                    p.sent += length;
+
+                    if (p.sent >= p.buffer.len) {
+                        defer runtime.allocator.destroy(p);
+                        run_task = true;
+                    } else {
+                        // these calls shouldnt fail unless the runtime is cooked.
+                        try p.file.write(runtime, p, write_all_task, p.buffer[p.sent..]);
+                    }
                 }
+
+                try task_fn(runtime, .{ .actual = {} }, task_ctx);
             }
         };
 
         const p = try rt.allocator.create(Provision);
-        p.* = Provision{
-            .buffer = buffer,
-            .sent = 0,
-            .file = self,
-        };
+        errdefer rt.allocator.destroy(p);
+        p.* = Provision{ .buffer = buffer, .sent = 0, .file = self };
 
         try self.write(rt, p, Provision.write_all_task, buffer);
     }

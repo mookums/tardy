@@ -172,6 +172,7 @@ pub const DeleteError = error{
     ReadOnlyFileSystem,
     InvalidArguments,
     NotEmpty,
+    InvalidFd,
     Unexpected,
 };
 
