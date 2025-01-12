@@ -86,6 +86,10 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
+        // what if we just tracked an index in the runtime?
+        // and then we just used the iterator but starting from that index.
+        // that way this run wouldn't need to break the while loop all the time?
+
         while (true) {
             var force_woken = false;
             var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });

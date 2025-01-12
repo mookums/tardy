@@ -14,6 +14,8 @@ pub const Channel = @import("runtime/channel.zig").Channel;
 pub const RxChannel = @import("runtime/channel.zig").RxChannel;
 pub const TxChannel = @import("runtime/channel.zig").TxChannel;
 
+pub const Timer = @import("runtime/timer.zig").Timer;
+
 pub const File = @import("fs/lib.zig").File;
 pub const Dir = @import("fs/lib.zig").Dir;
 pub const Path = @import("fs/lib.zig").Path;

@@ -119,7 +119,9 @@ pub const AsyncIoUring = struct {
 
         var jobs = try Pool(Job).init(allocator, size);
 
-        const index = jobs.borrow_assume_unset(0);
+        // reserve the LAST job since that will allow
+        // the rest to remain aligned. :)
+        const index = jobs.borrow_assume_unset(size - 1);
         const item = jobs.get_ptr(index);
         item.* = .{ .index = index, .type = .wake, .task = undefined };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
@@ -162,7 +164,7 @@ pub const AsyncIoUring = struct {
         job: AsyncSubmission,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        log.debug("queuing up job: {s}", .{@tagName(job)});
+        log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
         try switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
             .open => |inner| queue_open(uring, task, inner.path, inner.flags),
