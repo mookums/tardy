@@ -33,6 +33,9 @@ const OpenError = @import("../completion.zig").OpenError;
 const AioOpenFlags = @import("../lib.zig").AioOpenFlags;
 
 const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
+
+const MkdirResult = @import("../completion.zig").MkdirResult;
+const MkdirError = @import("../completion.zig").MkdirError;
 const DeleteResult = @import("../completion.zig").DeleteResult;
 const DeleteError = @import("../completion.zig").DeleteError;
 const ReadResult = @import("../completion.zig").ReadResult;
@@ -165,7 +168,7 @@ pub const AsyncIoUring = struct {
             .open => |inner| queue_open(uring, task, inner.path, inner.flags),
             .delete => |inner| queue_delete(uring, task, inner.path, inner.is_dir),
             .mkdir => |inner| queue_mkdir(uring, task, inner.path, inner.mode),
-            .stat => |inner| queue_stat(uring, task, inner.fd),
+            .stat => |inner| queue_stat(uring, task, inner),
             .read => |inner| queue_read(uring, task, inner.fd, inner.buffer, inner.offset),
             .write => |inner| queue_write(uring, task, inner.fd, inner.buffer, inner.offset),
             .close => |inner| queue_close(uring, task, inner),
@@ -463,7 +466,7 @@ pub const AsyncIoUring = struct {
                         try uring.queue_wake();
                         break :blk .wake;
                     },
-                    .timer, .mkdir => break :blk .none,
+                    .timer => break :blk .none,
                     .close => break :blk .close,
                     .accept => |inner| {
                         if (cqe.res >= 0) switch (inner.kind) {
@@ -573,10 +576,33 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .send = result };
                     },
+                    .mkdir => |_| {
+                        if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
+                        const result: MkdirResult = result: {
+                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            break :result switch (e) {
+                                LinuxError.ACCES => .{ .err = MkdirError.AccessDenied },
+                                LinuxError.EXIST => .{ .err = MkdirError.AlreadyExists },
+                                LinuxError.LOOP, LinuxError.MLINK => .{ .err = MkdirError.Loop },
+                                LinuxError.NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
+                                LinuxError.NOENT => .{ .err = MkdirError.NotFound },
+                                LinuxError.NOSPC => .{ .err = MkdirError.NoSpace },
+                                LinuxError.NOTDIR => .{ .err = MkdirError.NotADirectory },
+                                LinuxError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
+                                else => .{ .err = MkdirError.Unexpected },
+                            };
+                        };
+
+                        break :blk .{ .mkdir = result };
+                    },
                     .open => |inner| {
                         if (cqe.res >= 0) switch (inner.kind) {
-                            .file => break :blk .{ .open = .{ .actual = .{ .file = .{ .handle = @intCast(cqe.res) } } } },
-                            .dir => break :blk .{ .open = .{ .actual = .{ .dir = .{ .handle = @intCast(cqe.res) } } } },
+                            .file => break :blk .{
+                                .open = .{ .actual = .{ .file = .{ .handle = @intCast(cqe.res) } } },
+                            },
+                            .dir => break :blk .{
+                                .open = .{ .actual = .{ .dir = .{ .handle = @intCast(cqe.res) } } },
+                            },
                         };
 
                         const result: InnerOpenResult = result: {
@@ -584,9 +610,9 @@ pub const AsyncIoUring = struct {
                             switch (e) {
                                 LinuxError.ACCES, LinuxError.PERM => break :result .{ .err = OpenError.AccessDenied },
                                 LinuxError.BADF => break :result .{ .err = OpenError.InvalidFd },
-                                LinuxError.BUSY => break :result .{ .err = OpenError.FileBusy },
+                                LinuxError.BUSY => break :result .{ .err = OpenError.Busy },
                                 LinuxError.DQUOT => break :result .{ .err = OpenError.DiskQuotaExceeded },
-                                LinuxError.EXIST => break :result .{ .err = OpenError.FileAlreadyExists },
+                                LinuxError.EXIST => break :result .{ .err = OpenError.AlreadyExists },
                                 LinuxError.FAULT => break :result .{ .err = OpenError.InvalidAddress },
                                 LinuxError.FBIG, LinuxError.OVERFLOW => break :result .{
                                     .err = OpenError.FileTooBig,
@@ -601,7 +627,7 @@ pub const AsyncIoUring = struct {
                                 LinuxError.NODEV, LinuxError.NXIO => break :result .{
                                     .err = OpenError.DeviceNotFound,
                                 },
-                                LinuxError.NOENT => break :result .{ .err = OpenError.FileNotFound },
+                                LinuxError.NOENT => break :result .{ .err = OpenError.NotFound },
                                 LinuxError.NOMEM => break :result .{ .err = OpenError.OutOfMemory },
                                 LinuxError.NOSPC => break :result .{ .err = OpenError.NoSpace },
                                 LinuxError.NOTDIR => break :result .{ .err = OpenError.NotADirectory },
@@ -716,7 +742,7 @@ pub const AsyncIoUring = struct {
                                 LinuxError.INVAL => break :result .{ .err = StatError.InvalidArguments },
                                 LinuxError.LOOP => break :result .{ .err = StatError.Loop },
                                 LinuxError.NAMETOOLONG => break :result .{ .err = StatError.NameTooLong },
-                                LinuxError.NOENT => break :result .{ .err = StatError.FileNotFound },
+                                LinuxError.NOENT => break :result .{ .err = StatError.NotFound },
                                 LinuxError.NOMEM => break :result .{ .err = StatError.OutOfMemory },
                                 LinuxError.NOTDIR => break :result .{ .err = StatError.NotADirectory },
                                 else => break :result .{ .err = StatError.Unexpected },

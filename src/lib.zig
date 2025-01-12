@@ -31,11 +31,14 @@ pub const OpenFileResult = @import("aio/completion.zig").OpenFileResult;
 pub const OpenDirResult = @import("aio/completion.zig").OpenDirResult;
 pub const ReadResult = @import("aio/completion.zig").ReadResult;
 pub const WriteResult = @import("aio/completion.zig").WriteResult;
-pub const WriteAllResult = @import("fs/file.zig").WriteAllResult;
+pub const WriteAllResult = @import("aio/completion.zig").WriteAllResult;
 pub const StatResult = @import("aio/completion.zig").StatResult;
+// pub const MkdirResult = @import("aio/completion.zig").MkdirResult;
+pub const CreateDirResult = @import("aio/completion.zig").CreateDirResult;
 pub const DeleteResult = @import("aio/completion.zig").DeleteResult;
-pub const DeleteTreeResult = @import("fs/dir.zig").DeleteTreeResult;
+pub const DeleteTreeResult = @import("aio/completion.zig").DeleteTreeResult;
 
+pub const ZeroCopy = @import("core/zero_copy.zig").ZeroCopy;
 pub const wrap = @import("utils.zig").wrap;
 pub const unwrap = @import("utils.zig").unwrap;
 
@@ -200,6 +203,7 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
                             .size_aio_jobs_max = options.size_aio_jobs_max,
                             .size_aio_reap_max = options.size_aio_reap_max,
                         }) catch return;
+                        defer thread_rt.deinit();
 
                         _ = count.fetchAdd(1, .release);
                         while (count.load(.acquire) < total_count) {}

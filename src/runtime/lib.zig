@@ -46,7 +46,7 @@ pub const Runtime = struct {
 
     pub fn deinit(self: *Runtime) void {
         self.storage.deinit();
-        self.scheduler.deinit(self.allocator);
+        self.scheduler.deinit();
         self.allocator.free(self.aio.completions);
         self.aio.deinit(self.allocator);
     }
@@ -108,7 +108,7 @@ pub const Runtime = struct {
             try self.aio.submit();
 
             if (self.scheduler.tasks.empty()) {
-                log.warn("no more tasks", .{});
+                log.info("no more tasks", .{});
                 break;
             }
 

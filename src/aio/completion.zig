@@ -92,9 +92,9 @@ pub const SendError = error{
 pub const OpenError = error{
     AccessDenied,
     InvalidFd,
-    FileBusy,
+    Busy,
     DiskQuotaExceeded,
-    FileAlreadyExists,
+    AlreadyExists,
     InvalidAddress,
     FileTooBig,
     Interrupted,
@@ -105,7 +105,7 @@ pub const OpenError = error{
     NameTooLong,
     SystemFdQuotaExceeded,
     DeviceNotFound,
-    FileNotFound,
+    NotFound,
     OutOfMemory,
     NoSpace,
     NotADirectory,
@@ -152,9 +152,21 @@ pub const StatError = error{
     InvalidArguments,
     Loop,
     NameTooLong,
-    FileNotFound,
+    NotFound,
     OutOfMemory,
     NotADirectory,
+    Unexpected,
+};
+
+pub const MkdirError = error{
+    AccessDenied,
+    AlreadyExists,
+    Loop,
+    NameTooLong,
+    NotFound,
+    NoSpace,
+    NotADirectory,
+    ReadOnlyFileSystem,
     Unexpected,
 };
 
@@ -191,9 +203,18 @@ pub const InnerOpenResult = Resulted(OpenResultType, OpenError);
 pub const OpenFileResult = Resulted(File, OpenError);
 pub const OpenDirResult = Resulted(Dir, OpenError);
 
+pub const MkdirResult = Resulted(void, MkdirError);
+pub const CreateDirError = MkdirError || OpenError || error{InternalFailure};
+pub const CreateDirResult = Resulted(Dir, CreateDirError);
+
 pub const DeleteResult = Resulted(void, DeleteError);
+pub const DeleteTreeError = OpenError || DeleteError || error{InternalFailure};
+pub const DeleteTreeResult = Resulted(void, DeleteTreeError);
+
 pub const ReadResult = Resulted(usize, ReadError);
 pub const WriteResult = Resulted(usize, WriteError);
+pub const WriteAllResult = Resulted(void, WriteError);
+
 pub const StatResult = Resulted(Stat, StatError);
 
 pub const Result = union(enum) {
@@ -207,6 +228,7 @@ pub const Result = union(enum) {
     recv: RecvResult,
     send: SendResult,
     open: InnerOpenResult,
+    mkdir: MkdirResult,
     delete: DeleteResult,
     read: ReadResult,
     write: WriteResult,

@@ -76,8 +76,13 @@ pub const TcpServer = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(AcceptTcpResult, @TypeOf(task_ctx)),
     ) !void {
-        const index = try rt.scheduler.spawn(AcceptTcpResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_accept(index, self.socket, .tcp);
+        try rt.scheduler.spawn2(
+            AcceptTcpResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .accept = .{ .socket = self.socket, .kind = .tcp } },
+        );
     }
 
     pub fn close(
@@ -86,8 +91,11 @@ pub const TcpServer = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        const index = try rt.scheduler.spawn(void, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_close(index, self.socket);
+        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.socket });
+    }
+
+    pub fn close_blocking(self: *const TcpServer) !void {
+        std.posix.close(self.socket);
     }
 };
 
@@ -138,8 +146,13 @@ pub const TcpSocket = struct {
             );
         }
 
-        const index = try rt.scheduler.spawn(ConnectResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_connect(index, socket, host, port);
+        try rt.scheduler.spawn2(
+            ConnectResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .connect = .{ .socket = socket, .host = host, .port = port } },
+        );
     }
 
     pub fn from_std(self: std.net.Server.Connection) TcpSocket {
@@ -161,8 +174,13 @@ pub const TcpSocket = struct {
         comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
         buffer: []u8,
     ) !void {
-        const index = try rt.scheduler.spawn(RecvResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_recv(index, self.socket, buffer);
+        try rt.scheduler.spawn2(
+            RecvResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .recv = .{ .socket = self.socket, .buffer = buffer } },
+        );
     }
 
     pub fn send(
@@ -172,8 +190,13 @@ pub const TcpSocket = struct {
         comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
         buffer: []const u8,
     ) !void {
-        const index = try rt.scheduler.spawn(SendResult, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_send(index, self.socket, buffer);
+        try rt.scheduler.spawn2(
+            SendResult,
+            task_ctx,
+            task_fn,
+            .waiting,
+            .{ .send = .{ .socket = self.socket, .buffer = buffer } },
+        );
     }
 
     pub fn close(
@@ -182,7 +205,10 @@ pub const TcpSocket = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        const index = try rt.scheduler.spawn(void, task_ctx, task_fn, .waiting);
-        try rt.aio.queue_close(index, self.socket);
+        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.socket });
+    }
+
+    pub fn close_blocking(self: *const TcpSocket) void {
+        std.posix.close(self.socket);
     }
 };

@@ -105,13 +105,8 @@ pub const AsyncSubmission = union(enum) {
         path: Path,
         mode: std.posix.mode_t,
     },
-    stat: struct {
-        task: usize,
-        fd: std.posix.fd_t,
-    },
+    stat: std.posix.fd_t,
     read: struct {
-        self: *AsyncIO,
-        task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
         offset: ?usize,

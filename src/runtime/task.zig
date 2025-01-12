@@ -15,6 +15,7 @@ const InnerOpenResult = @import("../aio/completion.zig").InnerOpenResult;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
 const OpenDirResult = @import("../aio/completion.zig").OpenDirResult;
 
+const MkdirResult = @import("../aio/completion.zig").MkdirResult;
 const DeleteResult = @import("../aio/completion.zig").DeleteResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
@@ -86,6 +87,10 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
                             },
                             .err => |e| break :result .{ .err = e },
                         }
+                    },
+                    .mkdir => |inner| {
+                        if (comptime R != MkdirResult) unreachable;
+                        break :result inner;
                     },
                     .delete => |inner| {
                         if (comptime R != DeleteResult) unreachable;

@@ -18,6 +18,8 @@ pub fn build(b: *std.Build) void {
     add_example(b, "shove", target, optimize, tardy);
     add_example(b, "rmdir", target, optimize, tardy);
     add_example(b, "stat", target, optimize, tardy);
+
+    add_example(b, "integ", target, optimize, tardy);
 }
 
 fn add_example(

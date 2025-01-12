@@ -51,7 +51,7 @@ pub fn main() !void {
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
                 const dir = Dir.from_std(std.fs.cwd());
-                try dir.delete_tree(rt, {}, end_task, name);
+                try dir.delete_tree(rt, {}, end_task, name, 32);
             }
         }.start,
         {},

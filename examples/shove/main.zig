@@ -10,7 +10,7 @@ const File = @import("tardy").File;
 
 const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
-const WriteResult = @import("tardy").WriteResult;
+const WriteAllResult = @import("tardy").WriteAllResult;
 
 pub const std_options = .{
     .log_level = .debug,
@@ -22,7 +22,9 @@ fn create_task(rt: *Runtime, result: OpenFileResult, _: void) !void {
     for (0..8) |_| try file.write_all(rt, {}, end_task, "*shoved*\n");
 }
 
-fn end_task(_: *Runtime, _: void, _: void) !void {}
+fn end_task(_: *Runtime, res: WriteAllResult, _: void) !void {
+    try res.unwrap();
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};

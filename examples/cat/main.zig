@@ -6,66 +6,47 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
+const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 
 const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
+const WriteAllResult = @import("tardy").WriteAllResult;
 
-pub const std_options = .{
-    .log_level = .info,
-};
+const ZeroCopy = @import("tardy").ZeroCopy;
 
-const FileProvision = struct {
-    std_out: File = undefined,
+pub const std_options = .{ .log_level = .err };
+
+const Context = struct {
+    std_out: File = File.std_out(),
     file: File = undefined,
     buffer: []u8,
-    written: usize = 0,
-    read: usize = 0,
 };
 
-fn open_task(rt: *Runtime, result: OpenFileResult, provision: *FileProvision) !void {
-    provision.file = try result.unwrap();
-    provision.std_out = .{ .handle = try Cross.get_std_out() };
-
-    try provision.file.read(rt, provision, read_task, provision.buffer);
+fn open_task(rt: *Runtime, result: OpenFileResult, context: *Context) !void {
+    context.file = try result.unwrap();
+    try context.file.read_all(rt, context, read_task, context.buffer, null);
 }
 
-fn read_task(rt: *Runtime, result: ReadResult, provision: *FileProvision) !void {
-    const length = result.unwrap() catch |e| {
-        switch (e) {
-            error.EndOfFile => {
-                return try provision.file.close(rt, provision, close_task);
-            },
-            else => {
-                std.debug.print("Unexpected Error: {}\n", .{e});
-                return;
-            },
-        }
-    };
+fn read_task(rt: *Runtime, result: ReadResult, context: *Context) !void {
+    const length = try result.unwrap();
 
-    provision.read += @intCast(length);
-    try provision.std_out.write(rt, provision, write_task, provision.buffer[0..length]);
-}
-
-fn write_task(rt: *Runtime, result: WriteResult, provision: *FileProvision) !void {
-    const written = result.unwrap() catch |e| {
-        std.debug.print("Unexpected Error: {}\n", .{e});
-        return try provision.file.close(rt, provision, close_task);
-    };
-
-    provision.written += written;
-
-    if (provision.written < provision.read) {
-        const remaining_slice = provision.buffer[provision.read - provision.written ..];
-        try provision.std_out.write(rt, provision, write_task, remaining_slice);
+    if (length != context.buffer.len) {
+        try context.std_out.write_all(rt, context, write_done_task, context.buffer[0..length], null);
     } else {
-        try provision.file.read(rt, provision, read_task, provision.buffer);
+        try context.std_out.write_all(rt, context, write_task, context.buffer, null);
     }
 }
 
-fn close_task(rt: *Runtime, _: void, _: *FileProvision) !void {
-    log.debug("all done!", .{});
+fn write_task(rt: *Runtime, result: WriteAllResult, context: *Context) !void {
+    try result.unwrap();
+    try context.file.read_all(rt, context, read_task, context.buffer, null);
+}
+
+fn write_done_task(rt: *Runtime, result: WriteAllResult, context: *Context) !void {
+    try result.unwrap();
+    context.file.close_blocking();
     rt.stop();
 }
 
@@ -75,6 +56,8 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     var tardy = try Tardy.init(allocator, .{
+        // The way this is written will only support
+        // single-threaded execution.
         .threading = .single,
         .size_tasks_max = 1,
         .size_aio_jobs_max = 1,
@@ -96,33 +79,22 @@ pub fn main() !void {
     };
 
     const EntryParams = struct {
-        provision: FileProvision,
         file_name: [:0]const u8,
+        context: Context,
     };
 
-    var buffer: [512]u8 = undefined;
-
+    // 32kB buffer :)
+    var buf: [1024 * 32]u8 = undefined;
     var params: EntryParams = .{
         .file_name = file_name,
-        .provision = .{ .buffer = &buffer },
+        .context = .{ .buffer = &buf },
     };
 
     try tardy.entry(
         &params,
         struct {
-            fn start(rt: *Runtime, parameters: *EntryParams) !void {
-                try File.open(
-                    rt,
-                    &parameters.provision,
-                    open_task,
-                    .{
-                        .rel = .{
-                            .dir = std.posix.AT.FDCWD,
-                            .path = parameters.file_name,
-                        },
-                    },
-                    .{},
-                );
+            fn start(rt: *Runtime, p: *EntryParams) !void {
+                try Dir.cwd().open_file(rt, &p.context, open_task, p.file_name, .{});
             }
         }.start,
         {},
