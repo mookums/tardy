@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
@@ -94,7 +95,7 @@ pub const TcpServer = struct {
         try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.socket });
     }
 
-    pub fn close_blocking(self: *const TcpServer) !void {
+    pub fn close_blocking(self: *const TcpServer) void {
         std.posix.close(self.socket);
     }
 };
@@ -183,6 +184,65 @@ pub const TcpSocket = struct {
         );
     }
 
+    pub fn recv_all(
+        self: *const TcpSocket,
+        rt: *Runtime,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
+        buffer: []u8,
+    ) !void {
+        const Provision = struct {
+            const Self = @This();
+            buffer: []u8,
+            recv: usize,
+            socket: *const TcpSocket,
+            task_ctx: @TypeOf(task_ctx),
+
+            fn recv_all_task(runtime: *Runtime, res: RecvResult, p: *Self) !void {
+                var run_task = false;
+
+                scope: {
+                    errdefer runtime.allocator.destroy(p);
+                    const length = res.unwrap() catch |e| {
+                        switch (e) {
+                            error.Closed => {
+                                run_task = true;
+                                break :scope;
+                            },
+                            else => {
+                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                                return;
+                            },
+                        }
+                    };
+                    p.recv += length;
+
+                    assert(p.recv <= p.buffer.len);
+                    if (p.recv == p.buffer.len)
+                        run_task = true
+                    else
+                        try p.socket.recv(runtime, p, recv_all_task, p.buffer[p.recv..]);
+                }
+
+                if (run_task) {
+                    defer runtime.allocator.destroy(p);
+                    try task_fn(runtime, .{ .actual = p.recv }, p.task_ctx);
+                }
+            }
+        };
+
+        const p = try rt.allocator.create(Provision);
+        errdefer rt.allocator.destroy(p);
+        p.* = Provision{
+            .buffer = buffer,
+            .recv = 0,
+            .socket = self,
+            .task_ctx = task_ctx,
+        };
+
+        try self.recv(rt, p, Provision.recv_all_task, buffer);
+    }
+
     pub fn send(
         self: *const TcpSocket,
         rt: *Runtime,
@@ -197,6 +257,55 @@ pub const TcpSocket = struct {
             .waiting,
             .{ .send = .{ .socket = self.socket, .buffer = buffer } },
         );
+    }
+
+    pub fn send_all(
+        self: *const TcpSocket,
+        rt: *Runtime,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
+        buffer: []const u8,
+    ) !void {
+        const Provision = struct {
+            const Self = @This();
+            buffer: []const u8,
+            send: usize,
+            socket: *const TcpSocket,
+            task_ctx: @TypeOf(task_ctx),
+
+            fn send_all_task(runtime: *Runtime, res: SendResult, p: *Self) !void {
+                var run_task = false;
+                {
+                    errdefer runtime.allocator.destroy(p);
+                    const length = res.unwrap() catch |e| {
+                        try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                        return e;
+                    };
+
+                    p.send += length;
+                    if (p.send >= p.buffer.len)
+                        run_task = true
+                    else
+                        try p.socket.send(runtime, p, send_all_task, p.buffer[p.send..]);
+                }
+
+                if (run_task) {
+                    defer runtime.allocator.destroy(p);
+                    try task_fn(runtime, .{ .actual = {} }, p.task_ctx);
+                }
+            }
+        };
+
+        const p = try rt.allocator.create(Provision);
+        errdefer rt.allocator.destroy(p);
+        p.* = Provision{
+            .buffer = buffer,
+            .send = 0,
+            .file = self,
+            .task_ctx = task_ctx,
+        };
+
+        try self.send(rt, p, Provision.send_all_task, buffer);
     }
 
     pub fn close(

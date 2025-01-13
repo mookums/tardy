@@ -339,7 +339,7 @@ pub const File = struct {
         self: *const File,
         rt: *Runtime,
         task_ctx: anytype,
-        comptime task_fn: TaskFn(WriteAllResult, @TypeOf(task_ctx)),
+        comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
         buffer: []const u8,
         offset: ?usize,
     ) !void {
@@ -353,11 +353,19 @@ pub const File = struct {
 
             fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
                 var run_task = false;
-                {
+                scope: {
                     errdefer runtime.allocator.destroy(p);
                     const length = res.unwrap() catch |e| {
-                        try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                        return e;
+                        switch (e) {
+                            error.NoSpace => {
+                                run_task = true;
+                                break :scope;
+                            },
+                            else => {
+                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                                return e;
+                            },
+                        }
                     };
 
                     p.wrote += length;
@@ -375,7 +383,7 @@ pub const File = struct {
 
                 if (run_task) {
                     defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = {} }, p.task_ctx);
+                    try task_fn(runtime, .{ .actual = p.wrote }, p.task_ctx);
                 }
             }
         };
@@ -402,7 +410,7 @@ pub const File = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .stat = self.handle });
+        try rt.scheduler.spawn2(StatResult, task_ctx, task_fn, .waiting, .{ .stat = self.handle });
     }
 
     pub fn close(

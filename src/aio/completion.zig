@@ -192,8 +192,9 @@ const AcceptResultType = union(enum) { tcp: TcpSocket };
 pub const InnerAcceptResult = Resulted(AcceptResultType, AcceptError);
 pub const AcceptTcpResult = Resulted(TcpSocket, AcceptError);
 
-pub const ConnectResult = Resulted(std.posix.socket_t, ConnectError);
+pub const ConnectResult = Resulted(TcpSocket, ConnectError);
 pub const RecvResult = Resulted(usize, RecvError);
+
 pub const SendResult = Resulted(usize, SendError);
 
 // This is ONLY used internally. This helps us avoid Result enum bloat
@@ -213,7 +214,6 @@ pub const DeleteTreeResult = Resulted(void, DeleteTreeError);
 
 pub const ReadResult = Resulted(usize, ReadError);
 pub const WriteResult = Resulted(usize, WriteError);
-pub const WriteAllResult = Resulted(void, WriteError);
 
 pub const StatResult = Resulted(Stat, StatError);
 

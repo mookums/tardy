@@ -80,8 +80,12 @@ pub const AsyncIoUring = struct {
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_aio_jobs_max + 1;
+
         const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+        errdefer std.posix.close(wake_event_fd);
+
         const wake_event_buffer = try allocator.alloc(u8, 8);
+        errdefer allocator.free(wake_event_buffer);
 
         const uring = blk: {
             if (options.parent_async) |parent| {
@@ -92,32 +96,40 @@ pub const AsyncIoUring = struct {
 
                 // Initialize using the WQ from the parent ring.
                 const flags: u32 = base_flags | std.os.linux.IORING_SETUP_ATTACH_WQ;
-
                 var params = std.mem.zeroInit(std.os.linux.io_uring_params, .{
                     .flags = flags,
                     .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
                 });
 
                 const uring = try allocator.create(std.os.linux.IoUring);
+                errdefer allocator.destroy(uring);
+
                 uring.* = try std.os.linux.IoUring.init_params(
                     std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
                     &params,
                 );
+                errdefer uring.deinit();
 
                 break :blk uring;
             } else {
                 // Initalize IO Uring
                 const uring = try allocator.create(std.os.linux.IoUring);
+                errdefer allocator.destroy(uring);
+
                 uring.* = try std.os.linux.IoUring.init(
                     std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
                     base_flags,
                 );
+                errdefer uring.deinit();
 
                 break :blk uring;
             }
         };
+        errdefer allocator.destroy(uring);
+        errdefer uring.deinit();
 
         var jobs = try Pool(Job).init(allocator, size);
+        errdefer jobs.deinit();
 
         // reserve the LAST job since that will allow
         // the rest to remain aligned. :)
@@ -126,27 +138,38 @@ pub const AsyncIoUring = struct {
         item.* = .{ .index = index, .type = .wake, .task = undefined };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
+        const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max);
+        errdefer allocator.free(cqes);
+
+        const statx = try allocator.alloc(std.os.linux.Statx, options.size_aio_jobs_max);
+        errdefer allocator.free(statx);
+
+        const timespec = try allocator.alloc(std.os.linux.kernel_timespec, options.size_aio_jobs_max);
+        errdefer allocator.free(timespec);
+
         return AsyncIoUring{
             .inner = uring,
             .wake_event_fd = wake_event_fd,
             .wake_event_buffer = wake_event_buffer,
             .jobs = jobs,
-            .cqes = try allocator.alloc(
-                std.os.linux.io_uring_cqe,
-                options.size_aio_reap_max,
-            ),
-            .statx = try allocator.alloc(
-                std.os.linux.Statx,
-                options.size_aio_jobs_max,
-            ),
-            .timespec = try allocator.alloc(
-                std.os.linux.kernel_timespec,
-                options.size_aio_jobs_max,
-            ),
+            .cqes = cqes,
+            .statx = statx,
+            .timespec = timespec,
         };
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
+    pub fn pre_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
+        self.inner.deinit();
+        self.jobs.deinit();
+        std.posix.close(self.wake_event_fd);
+        allocator.free(self.wake_event_buffer);
+        allocator.free(self.cqes);
+        allocator.free(self.statx);
+        allocator.free(self.timespec);
+        allocator.destroy(self.inner);
+    }
+
+    fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         uring.inner.deinit();
         uring.jobs.deinit();
@@ -158,7 +181,7 @@ pub const AsyncIoUring = struct {
         allocator.destroy(uring.inner);
     }
 
-    pub fn queue_job(
+    fn queue_job(
         self: *AsyncIO,
         task: usize,
         job: AsyncSubmission,
@@ -432,7 +455,7 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    pub fn wake(self: *AsyncIO) !void {
+    fn wake(self: *AsyncIO) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
@@ -441,12 +464,12 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    pub fn submit(self: *AsyncIO) !void {
+    fn submit(self: *AsyncIO) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         _ = try uring.inner.submit();
     }
 
-    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
+    fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
@@ -497,7 +520,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .accept = result };
                     },
                     .connect => |inner| {
-                        if (cqe.res >= 0) break :blk .{ .connect = .{ .actual = inner.socket } };
+                        if (cqe.res >= 0) break :blk .{ .connect = .{ .actual = .{ .socket = inner.socket } } };
                         const result: ConnectResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {

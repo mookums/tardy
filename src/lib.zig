@@ -116,14 +116,19 @@ pub fn Tardy(comptime _aio_type: AsyncIOType) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const aio: AsyncIO = blk: {
+            var aio: AsyncIO = blk: {
                 var io = try self.allocator.create(AioInnerType);
+                errdefer self.allocator.destroy(io);
+
                 io.* = try AioInnerType.init(self.allocator, options);
+                errdefer io.pre_deinit(self.allocator);
+
                 try self.aios.append(self.allocator, io);
                 var aio = io.to_async();
                 aio.attach(try self.allocator.alloc(Completion, self.options.size_aio_reap_max));
                 break :blk aio;
             };
+            errdefer aio.deinit(self.allocator);
 
             const runtime = try Runtime.init(aio, .{
                 .allocator = self.allocator,

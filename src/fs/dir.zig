@@ -151,7 +151,7 @@ pub const Dir = struct {
         self: *const Dir,
         rt: *Runtime,
         task_ctx: anytype,
-        comptime task_fn: TaskFn(OpenDirResult, @TypeOf(task_ctx)),
+        comptime task_fn: TaskFn(CreateDirResult, @TypeOf(task_ctx)),
         subpath: [:0]const u8,
     ) !void {
         try Dir.create(rt, task_ctx, task_fn, .{ .rel = .{ .dir = self.handle, .path = subpath } });

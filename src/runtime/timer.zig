@@ -7,11 +7,10 @@ pub const Timer = struct {
     /// after the `timespec` amount of time has elasped.
     pub fn delay(
         rt: *Runtime,
-        comptime R: type,
         task_ctx: anytype,
-        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
+        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
         timespec: Timespec,
     ) !void {
-        try rt.scheduler.spawn2(R, task_ctx, task_fn, .waiting, .{ .timer = timespec });
+        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .timer = timespec });
     }
 };
