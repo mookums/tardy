@@ -11,27 +11,27 @@ const AcceptTcpResult = @import("tardy").AcceptTcpResult;
 const RecvResult = @import("tardy").RecvResult;
 const SendResult = @import("tardy").SendResult;
 
-const IntegParams = @import("lib.zig").IntegParams;
+const SharedParams = @import("lib.zig").SharedParams;
 
 const Params = struct {
-    integ: *const IntegParams,
+    shared: *const SharedParams,
     buffer: []u8 = undefined,
     server: TcpServer = undefined,
     socket: TcpSocket = undefined,
 };
 
-pub fn start(rt: *Runtime, _: void, integ_params: *const IntegParams) !void {
+pub fn start(rt: *Runtime, _: void, shared_params: *const SharedParams) !void {
     const server = try TcpServer.init("127.0.0.1", 9988);
     // The server is ready after this, listening on the socket.
     try server.listen(256);
-    defer integ_params.server_ready.store(true, .release);
+    defer shared_params.server_ready.store(true, .release);
 
-    log.debug("created new integ dir (seed={d})", .{integ_params.seed});
+    log.debug("created new shared dir (seed={d})", .{shared_params.seed});
 
     const params = try rt.allocator.create(Params);
     errdefer rt.allocator.destroy(params);
     params.* = .{
-        .integ = integ_params,
+        .shared = shared_params,
         .server = server,
     };
 
@@ -43,7 +43,7 @@ fn post_accept(rt: *Runtime, res: AcceptTcpResult, params: *Params) !void {
     errdefer socket.close_blocking();
 
     params.socket = socket;
-    params.buffer = try rt.allocator.alloc(u8, params.integ.socket_buffer_size);
+    params.buffer = try rt.allocator.alloc(u8, params.shared.socket_buffer_size);
     errdefer rt.allocator.free(params.buffer);
 
     try socket.recv_all(rt, params, post_recv, params.buffer);

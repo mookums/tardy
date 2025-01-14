@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     add_example(b, "rmdir", target, optimize, tardy);
     add_example(b, "stat", target, optimize, tardy);
 
-    add_example(b, "integ", target, optimize, tardy);
+    add_test(b, "e2e", target, optimize, tardy);
 }
 
 fn add_example(
@@ -35,6 +35,41 @@ fn add_example(
         .target = target,
         .optimize = optimize,
         .strip = false,
+    });
+
+    if (target.result.os.tag == .windows) {
+        example.linkLibC();
+    }
+
+    example.root_module.addImport("tardy", tardy_module);
+    const install_artifact = b.addInstallArtifact(example, .{});
+    b.getInstallStep().dependOn(&install_artifact.step);
+
+    const build_step = b.step(b.fmt("{s}", .{name}), b.fmt("Build tardy example ({s})", .{name}));
+    build_step.dependOn(&install_artifact.step);
+
+    const run_artifact = b.addRunArtifact(example);
+    run_artifact.step.dependOn(&install_artifact.step);
+
+    const run_step = b.step(b.fmt("run_{s}", .{name}), b.fmt("Run tardy example ({s})", .{name}));
+    run_step.dependOn(&install_artifact.step);
+    run_step.dependOn(&run_artifact.step);
+}
+
+fn add_test(
+    b: *std.Build,
+    name: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Mode,
+    tardy_module: *std.Build.Module,
+) void {
+    const example = b.addExecutable(.{
+        .name = b.fmt("{s}", .{name}),
+        .root_source_file = b.path(b.fmt("test/{s}/main.zig", .{name})),
+        .target = target,
+        .optimize = optimize,
+        .strip = false,
+        .sanitize_thread = true,
     });
 
     if (target.result.os.tag == .windows) {

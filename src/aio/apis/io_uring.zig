@@ -72,14 +72,19 @@ pub const AsyncIoUring = struct {
     inner: *std.os.linux.IoUring,
     wake_event_fd: std.posix.fd_t,
     wake_event_buffer: []u8,
+
+    // These are what are currently limiting this. We ONLY have so many pool slots.
+    // This along with the Completions
     cqes: []std.os.linux.io_uring_cqe,
     statx: []std.os.linux.Statx,
     timespec: []std.os.linux.kernel_timespec,
+
     jobs: Pool(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_aio_jobs_max + 1;
+        log.debug("size: {d}", .{size});
 
         const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
         errdefer std.posix.close(wake_event_fd);
@@ -473,6 +478,7 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
+
         const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
 
         for (uring.cqes[0..count], 0..) |cqe, i| {

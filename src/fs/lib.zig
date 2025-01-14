@@ -11,6 +11,17 @@ pub const Path = union(enum) {
     },
     /// Absolute Path
     abs: [:0]const u8,
+
+    pub fn dupe(self: *const Path, allocator: std.mem.Allocator) !Path {
+        switch (self.*) {
+            .rel => |inner| {
+                const path_dupe = try allocator.dupeZ(u8, inner.path);
+                errdefer allocator.free(path_dupe);
+                return .{ .rel = .{ .dir = inner.dir, .path = path_dupe } };
+            },
+            .abs => |path| return .{ .abs = try allocator.dupeZ(u8, path) },
+        }
+    }
 };
 
 const Timespec = @import("../lib.zig").Timespec;

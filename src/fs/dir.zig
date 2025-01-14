@@ -124,7 +124,7 @@ pub const Dir = struct {
 
     /// Create a File relative to this Dir.
     pub fn create_file(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
@@ -136,7 +136,7 @@ pub const Dir = struct {
 
     /// Open a File relative to this Dir.
     pub fn open_file(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
@@ -148,7 +148,7 @@ pub const Dir = struct {
 
     /// Create a Dir relative to this Dir.
     pub fn create_dir(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(CreateDirResult, @TypeOf(task_ctx)),
@@ -159,7 +159,7 @@ pub const Dir = struct {
 
     /// Open a Dir relative to this Dir.
     pub fn open_dir(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(OpenDirResult, @TypeOf(task_ctx)),
@@ -170,7 +170,7 @@ pub const Dir = struct {
 
     /// Get Stat information of this Dir.
     pub fn stat(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
@@ -193,7 +193,7 @@ pub const Dir = struct {
 
     /// Delete a File within this Dir.
     pub fn delete_file(
-        self: *const Dir,
+        self: Dir,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(DeleteResult, @TypeOf(task_ctx)),

@@ -12,7 +12,6 @@ const File = @import("tardy").File;
 const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
-const WriteAllResult = @import("tardy").WriteAllResult;
 
 const ZeroCopy = @import("tardy").ZeroCopy;
 
@@ -39,13 +38,13 @@ fn read_task(rt: *Runtime, result: ReadResult, context: *Context) !void {
     }
 }
 
-fn write_task(rt: *Runtime, result: WriteAllResult, context: *Context) !void {
-    try result.unwrap();
+fn write_task(rt: *Runtime, result: WriteResult, context: *Context) !void {
+    _ = try result.unwrap();
     try context.file.read_all(rt, context, read_task, context.buffer, null);
 }
 
-fn write_done_task(rt: *Runtime, result: WriteAllResult, context: *Context) !void {
-    try result.unwrap();
+fn write_done_task(rt: *Runtime, result: WriteResult, context: *Context) !void {
+    _ = try result.unwrap();
     context.file.close_blocking();
     rt.stop();
 }

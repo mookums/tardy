@@ -6,18 +6,18 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.io_uring);
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Dir = @import("tardy").Dir;
 const TcpServer = @import("tardy").TcpServer;
 
-const IntegParams = @import("lib.zig").IntegParams;
+const SharedParams = @import("lib.zig").SharedParams;
 
 const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .err,
+    .log_level = .debug,
 };
 
 pub fn main() !void {
@@ -38,12 +38,12 @@ pub fn main() !void {
 
         var iter = std.mem.splitScalar(u8, bytes, '\n');
         const pre_new = iter.next() orelse {
-            return log.err("seed not passed in: ./integ [seed]", .{});
+            return log.err("seed not passed in: ./e2e [seed]", .{});
         };
         const length = pre_new.len;
 
         if (length <= 1) {
-            return log.err("seed not passed in: ./integ [seed]", .{});
+            return log.err("seed not passed in: ./e2e [seed]", .{});
         }
 
         if (length >= maybe_seed_buffer.len) {
@@ -63,42 +63,35 @@ pub fn main() !void {
     var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();
 
-    var server_ready = Atomic(bool).init(false);
-
-    const integ_values: IntegParams = blk: {
-        var p: IntegParams = undefined;
+    const shared: SharedParams = blk: {
+        var p: SharedParams = undefined;
         p.seed_string = seed_string;
         p.seed = seed;
 
         p.max_task_count = rand.intRangeAtMost(usize, 1, 1024 * 4);
         p.max_aio_jobs = rand.intRangeAtMost(usize, 1, p.max_task_count);
         p.max_aio_reap = rand.intRangeAtMost(usize, 1, p.max_aio_jobs);
-
-        p.file_buffer_size = rand.intRangeAtMost(usize, 1, 1024 * 32);
-        p.socket_buffer_size = rand.intRangeAtMost(usize, 1, 1024 * 32);
-
-        p.server_ready = &server_ready;
         break :blk p;
     };
-    //integ_values.log_to_stderr();
+    std.debug.print("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 2 },
-        .size_tasks_max = integ_values.max_task_count,
-        .size_aio_jobs_max = integ_values.max_aio_jobs,
-        .size_aio_reap_max = integ_values.max_aio_reap,
+        .threading = .{ .multi = 1 },
+        .size_tasks_max = shared.max_task_count,
+        .size_aio_jobs_max = shared.max_aio_jobs,
+        .size_aio_reap_max = shared.max_aio_reap,
     });
     defer tardy.deinit();
 
     const EntryParams = struct {
-        integ: *const IntegParams,
+        shared: *const SharedParams,
         runtime_id: *Atomic(usize),
     };
 
     var runtime_id = Atomic(usize).init(0);
 
     const params = EntryParams{
-        .integ = &integ_values,
+        .shared = &shared,
         .runtime_id = &runtime_id,
     };
 
@@ -106,11 +99,11 @@ pub fn main() !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *const EntryParams) !void {
-                try rt.storage.store_ptr("params", @constCast(p.integ));
+                try rt.storage.store_ptr("params", @constCast(p.shared));
 
                 switch (p.runtime_id.fetchAdd(1, .acquire)) {
-                    0 => try Dir.cwd().create_dir(rt, p.integ, First.start, p.integ.seed_string),
-                    1 => try rt.scheduler.spawn2(void, p.integ, Second.start, .runnable, null),
+                    0 => try Dir.cwd().create_dir(rt, p.shared, First.start, p.shared.seed_string),
+                    //1 => try rt.scheduler.spawn2(void, p.shared, Second.start, .runnable, null),
                     else => unreachable,
                 }
             }
