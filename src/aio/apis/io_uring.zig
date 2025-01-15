@@ -48,6 +48,14 @@ const StatError = @import("../completion.zig").StatError;
 
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
+const JobBundle = struct {
+    job: Job,
+    statx: std.os.linux.Statx = undefined,
+    timespec: std.os.linux.kernel_timespec = undefined,
+};
+
+const URING_SUBMISSION_SIZE: u16 = 4096;
+
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
@@ -73,20 +81,19 @@ pub const AsyncIoUring = struct {
     wake_event_fd: std.posix.fd_t,
     wake_event_buffer: []u8,
 
-    // These are what are currently limiting this. We ONLY have so many pool slots.
-    // This along with the Completions
+    // Currently, the batch size is predetermined.
+    // You basically define how large you want your batches to be.
     cqes: []std.os.linux.io_uring_cqe,
-    statx: []std.os.linux.Statx,
-    timespec: []std.os.linux.kernel_timespec,
 
-    jobs: Pool(Job),
+    jobs: Pool(JobBundle, .grow),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_aio_jobs_max + 1;
-        log.debug("size: {d}", .{size});
 
-        const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+        const wake_event_fd: std.posix.fd_t = @intCast(
+            std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
+        );
         errdefer std.posix.close(wake_event_fd);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
@@ -110,7 +117,7 @@ pub const AsyncIoUring = struct {
                 errdefer allocator.destroy(uring);
 
                 uring.* = try std.os.linux.IoUring.init_params(
-                    std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
+                    URING_SUBMISSION_SIZE,
                     &params,
                 );
                 errdefer uring.deinit();
@@ -122,7 +129,7 @@ pub const AsyncIoUring = struct {
                 errdefer allocator.destroy(uring);
 
                 uring.* = try std.os.linux.IoUring.init(
-                    std.math.ceilPowerOfTwoAssert(u16, @truncate(size)),
+                    URING_SUBMISSION_SIZE,
                     base_flags,
                 );
                 errdefer uring.deinit();
@@ -133,24 +140,16 @@ pub const AsyncIoUring = struct {
         errdefer allocator.destroy(uring);
         errdefer uring.deinit();
 
-        var jobs = try Pool(Job).init(allocator, size);
+        var jobs = try Pool(JobBundle, .grow).init(allocator, size);
         errdefer jobs.deinit();
 
-        // reserve the LAST job since that will allow
-        // the rest to remain aligned. :)
-        const index = jobs.borrow_assume_unset(size - 1);
+        const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .wake, .task = undefined };
+        item.* = .{ .job = .{ .index = index, .type = .wake, .task = undefined } };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
         const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max);
         errdefer allocator.free(cqes);
-
-        const statx = try allocator.alloc(std.os.linux.Statx, options.size_aio_jobs_max);
-        errdefer allocator.free(statx);
-
-        const timespec = try allocator.alloc(std.os.linux.kernel_timespec, options.size_aio_jobs_max);
-        errdefer allocator.free(timespec);
 
         return AsyncIoUring{
             .inner = uring,
@@ -158,8 +157,6 @@ pub const AsyncIoUring = struct {
             .wake_event_buffer = wake_event_buffer,
             .jobs = jobs,
             .cqes = cqes,
-            .statx = statx,
-            .timespec = timespec,
         };
     }
 
@@ -169,8 +166,6 @@ pub const AsyncIoUring = struct {
         std.posix.close(self.wake_event_fd);
         allocator.free(self.wake_event_buffer);
         allocator.free(self.cqes);
-        allocator.free(self.statx);
-        allocator.free(self.timespec);
         allocator.destroy(self.inner);
     }
 
@@ -181,8 +176,6 @@ pub const AsyncIoUring = struct {
         std.posix.close(uring.wake_event_fd);
         allocator.free(uring.wake_event_buffer);
         allocator.free(uring.cqes);
-        allocator.free(uring.statx);
-        allocator.free(uring.timespec);
         allocator.destroy(uring.inner);
     }
 
@@ -192,7 +185,14 @@ pub const AsyncIoUring = struct {
         job: AsyncSubmission,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+        const sq_count = uring.inner.sq_ready();
         log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
+
+        if (sq_count == URING_SUBMISSION_SIZE) {
+            log.debug("at max sqe entries ({d}), forcing submit...", .{URING_SUBMISSION_SIZE});
+            try self.submit();
+        }
+
         try switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
             .open => |inner| queue_open(uring, task, inner.path, inner.flags),
@@ -213,26 +213,25 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .task = task,
             .type = .{ .timer = .none },
         };
 
-        const ktimespec = &self.timespec[index];
-        ktimespec.* = .{
+        item.timespec = std.os.linux.kernel_timespec{
             .tv_sec = @intCast(timespec.seconds),
             .tv_nsec = @intCast(timespec.nanos),
         };
 
-        _ = try self.inner.timeout(index, ktimespec, 0, 0);
+        _ = try self.inner.timeout(index, &item.timespec, 0, 0);
     }
 
     fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AioOpenFlags) !void {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .open = .{
@@ -276,7 +275,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .{ .delete = path }, .task = task };
+        item.job = .{ .index = index, .type = .{ .delete = path }, .task = task };
 
         const mode: u32 = if (is_dir) std.posix.AT.REMOVEDIR else 0;
 
@@ -290,7 +289,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
+        item.job = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
 
         switch (path) {
             .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, mode),
@@ -302,9 +301,9 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .{ .stat = fd }, .task = task };
+        item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
 
-        const statx = &self.statx[index];
+        const statx = &item.statx;
         _ = try self.inner.statx(index, fd, "", std.os.linux.AT.EMPTY_PATH, 0, statx);
     }
 
@@ -314,7 +313,7 @@ pub const AsyncIoUring = struct {
 
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .read = .{
@@ -335,7 +334,7 @@ pub const AsyncIoUring = struct {
 
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .write = .{
@@ -354,7 +353,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{ .index = index, .type = .{ .close = fd }, .task = task };
+        item.job = .{ .index = index, .type = .{ .close = fd }, .task = task };
 
         _ = try self.inner.close(index, fd);
     }
@@ -363,7 +362,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{ .accept = .{ .socket = socket, .kind = kind } },
             .task = task,
@@ -383,7 +382,7 @@ pub const AsyncIoUring = struct {
 
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .connect = .{
@@ -397,7 +396,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.connect(
             index,
             socket,
-            &item.type.connect.addr.any,
+            &item.job.type.connect.addr.any,
             addr.getOsSockLen(),
         );
     }
@@ -410,7 +409,7 @@ pub const AsyncIoUring = struct {
     ) !void {
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .recv = .{
@@ -428,7 +427,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .{
                 .send = .{
@@ -446,7 +445,7 @@ pub const AsyncIoUring = struct {
         const index = try self.jobs.borrow();
 
         const item = self.jobs.get_ptr(index);
-        item.* = .{
+        item.job = .{
             .index = index,
             .type = .wake,
             .task = undefined,
@@ -482,7 +481,8 @@ pub const AsyncIoUring = struct {
         const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
 
         for (uring.cqes[0..count], 0..) |cqe, i| {
-            const job: *Job = uring.jobs.get_ptr(cqe.user_data);
+            const job_with_data: *JobBundle = uring.jobs.get_ptr(cqe.user_data);
+            const job: *Job = &job_with_data.job;
             defer uring.jobs.release(job.index);
 
             const result: Result = blk: {
@@ -744,7 +744,7 @@ pub const AsyncIoUring = struct {
                     },
                     .stat => {
                         if (cqe.res >= 0) {
-                            const statx = &uring.statx[job.index];
+                            const statx = &job_with_data.statx;
                             const stat: Stat = .{
                                 .size = @intCast(statx.size),
                                 .mode = @intCast(statx.mode),

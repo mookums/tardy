@@ -1,8 +1,17 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-pub fn Pool(comptime T: type) type {
+const PoolKind = enum {
+    /// This keeps the Pool at a static size, never growing.
+    static,
+    /// This allows the Pool to grow but never shrink.
+    grow,
+};
+
+pub fn Pool(comptime T: type, comptime kind: PoolKind) type {
     return struct {
+        pub const Kind = PoolKind;
+
         pub const Iterator = struct {
             items: []T,
             iter: std.DynamicBitSetUnmanaged.Iterator(.{
@@ -84,20 +93,48 @@ pub fn Pool(comptime T: type) type {
             return self.items.len - self.dirty.count();
         }
 
+        fn grow(self: *Self) !void {
+            if (comptime kind == .static) @compileError("This shouldn't ever be accessible with a static Pool.");
+
+            const old_slice = self.items;
+            const new_size = try std.math.ceilPowerOfTwo(usize, self.items.len + 1);
+
+            if (self.allocator.resize(self.items, new_size)) {
+                self.items = self.items.ptr[0..new_size];
+            } else {
+                const new_slice = try self.allocator.alloc(T, new_size);
+                errdefer self.allocator.free(new_slice);
+                @memcpy(new_slice[0..self.items.len], self.items);
+                self.items = new_slice;
+                self.allocator.free(old_slice);
+            }
+            try self.dirty.resize(self.allocator, new_size, false);
+
+            assert(self.items.len == new_size);
+            assert(self.dirty.bit_length == new_size);
+        }
+
         /// Linearly probes for an available slot in the pool.
         /// If dynamic, this *might* grow the Pool.
         ///
         /// Returns the index into the Pool.
         pub fn borrow(self: *Self) !usize {
             var iter = self.dirty.iterator(.{ .kind = .unset });
-            const index = iter.next() orelse return error.Full;
+            const index = iter.next() orelse switch (comptime kind) {
+                .static => return error.Full,
+                .grow => {
+                    const last_index = self.items.len;
+                    try self.grow();
+                    return self.borrow_assume_unset(last_index);
+                },
+            };
+
             self.dirty.set(index);
             return index;
         }
 
         /// Linearly probes for an available slot in the pool.
         /// Uses a provided hint value as the starting index.
-        /// This will never grow the Pool.
         ///
         /// Returns the index into the Pool.
         pub fn borrow_hint(self: *Self, hint: usize) !usize {
@@ -110,7 +147,14 @@ pub fn Pool(comptime T: type) type {
                 }
             }
 
-            return error.Full;
+            switch (comptime kind) {
+                .static => return error.Full,
+                .grow => {
+                    const last_index = self.items.len;
+                    try self.grow();
+                    return self.borrow_assume_unset(last_index);
+                },
+            }
         }
 
         /// Attempts to borrow at the given index.
@@ -140,7 +184,7 @@ pub fn Pool(comptime T: type) type {
 const testing = std.testing;
 
 test "Pool: Initalization (integer)" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
+    var byte_pool = try Pool(u8, .static).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..1024) |i| {
@@ -154,8 +198,27 @@ test "Pool: Initalization (integer)" {
     }
 }
 
+test "Pool: Dynamic Growth (integer)" {
+    var byte_pool = try Pool(u8, .grow).init(testing.allocator, 1);
+    defer byte_pool.deinit();
+
+    const count = 1024;
+
+    for (0..count) |i| {
+        const index = try byte_pool.borrow_hint(i);
+        const byte_ptr = byte_pool.get_ptr(index);
+        byte_ptr.* = 2;
+    }
+
+    try testing.expect(byte_pool.items.len >= count);
+
+    for (byte_pool.items[0..count]) |item| {
+        try testing.expectEqual(item, 2);
+    }
+}
+
 test "Pool: Initalization & Deinit (ArrayList)" {
-    var list_pool = try Pool(std.ArrayList(u8)).init(testing.allocator, 256);
+    var list_pool = try Pool(std.ArrayList(u8), .static).init(testing.allocator, 256);
     defer list_pool.deinit();
 
     for (list_pool.items, 0..) |*item, i| {
@@ -173,7 +236,7 @@ test "Pool: Initalization & Deinit (ArrayList)" {
 }
 
 test "Pool: BufferPool ([][]u8)" {
-    var buffer_pool = try Pool([1024]u8).init(testing.allocator, 1024);
+    var buffer_pool = try Pool([1024]u8, .static).init(testing.allocator, 1024);
     defer buffer_pool.deinit();
 
     for (buffer_pool.items) |*item| {
@@ -186,7 +249,7 @@ test "Pool: BufferPool ([][]u8)" {
 }
 
 test "Pool: Borrowing" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
+    var byte_pool = try Pool(u8, .static).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |_| {
@@ -202,7 +265,7 @@ test "Pool: Borrowing" {
 }
 
 test "Pool: Borrowing Hint" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
+    var byte_pool = try Pool(u8, .static).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |i| {
@@ -215,7 +278,7 @@ test "Pool: Borrowing Hint" {
 }
 
 test "Pool: Borrowing Unset" {
-    var byte_pool = try Pool(u8).init(testing.allocator, 1024);
+    var byte_pool = try Pool(u8, .static).init(testing.allocator, 1024);
     defer byte_pool.deinit();
 
     for (0..byte_pool.items.len) |i| {
@@ -228,7 +291,7 @@ test "Pool: Borrowing Unset" {
 }
 
 test "Pool Iterator" {
-    var int_pool = try Pool(usize).init(testing.allocator, 1024);
+    var int_pool = try Pool(usize, .static).init(testing.allocator, 1024);
     defer int_pool.deinit();
 
     for (0..(1024 / 2)) |_| {

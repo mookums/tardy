@@ -24,7 +24,8 @@ pub const Scheduler = struct {
     const OverflowNode = OverflowLinkedList.Node;
 
     allocator: std.mem.Allocator,
-    tasks: Pool(Task),
+    // for now.
+    tasks: Pool(Task, .static),
     runnable: std.DynamicBitSetUnmanaged,
     released: std.ArrayListUnmanaged(usize),
     overflow: OverflowLinkedList,
@@ -32,7 +33,7 @@ pub const Scheduler = struct {
     pub fn init(allocator: std.mem.Allocator, size: usize) !Scheduler {
         return .{
             .allocator = allocator,
-            .tasks = try Pool(Task).init(allocator, size),
+            .tasks = try Pool(Task, .static).init(allocator, size),
             .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             .released = try std.ArrayListUnmanaged(usize).initCapacity(allocator, size),
             .overflow = OverflowLinkedList{},
