@@ -9,7 +9,7 @@ const Path = @import("../fs/lib.zig").Path;
 const Atomic = std.atomic.Value;
 
 const PoolKind = @import("../core/pool.zig").PoolKind;
-const AcceptKind = @import("job.zig").AcceptKind;
+const Socket = @import("../net/lib.zig").Socket;
 
 pub const AsyncIOType = union(enum) {
     /// Attempts to automatically match
@@ -121,12 +121,12 @@ pub const AsyncSubmission = union(enum) {
     close: std.posix.fd_t,
     accept: struct {
         socket: std.posix.socket_t,
-        kind: AcceptKind,
+        kind: Socket.Kind,
     },
     connect: struct {
         socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
+        addr: std.net.Address,
+        kind: Socket.Kind,
     },
     recv: struct {
         socket: std.posix.socket_t,

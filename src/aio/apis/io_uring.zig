@@ -16,9 +16,11 @@ const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 
+const Socket = @import("../../net/lib.zig").Socket;
+
 const LinuxError = std.os.linux.E;
 
-const InnerAcceptResult = @import("../completion.zig").InnerAcceptResult;
+const AcceptResult = @import("../completion.zig").AcceptResult;
 const AcceptError = @import("../completion.zig").AcceptError;
 const AcceptKind = @import("../job.zig").AcceptKind;
 
@@ -192,7 +194,7 @@ pub const AsyncIoUring = struct {
             .write => |inner| queue_write(uring, task, inner.fd, inner.buffer, inner.offset),
             .close => |inner| queue_close(uring, task, inner),
             .accept => |inner| queue_accept(uring, task, inner.socket, inner.kind),
-            .connect => |inner| queue_connect(uring, task, inner.socket, inner.host, inner.port),
+            .connect => |inner| queue_connect(uring, task, inner.socket, inner.addr, inner.kind),
             .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
         }) catch |e| if (e == error.SubmissionQueueFull) {
@@ -350,28 +352,37 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.close(index, fd);
     }
 
-    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: AcceptKind) !void {
+    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
         const index = try self.jobs.borrow_hint(task);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
-            .type = .{ .accept = .{ .socket = socket, .kind = kind } },
+            .type = .{ .accept = .{
+                .socket = socket,
+                .kind = kind,
+                .addr = undefined,
+                .addr_len = @sizeOf(std.net.Address),
+            } },
             .task = task,
         };
 
-        _ = try self.inner.accept(index, socket, null, null, 0);
+        _ = try self.inner.accept(
+            index,
+            socket,
+            &item.job.type.accept.addr.any,
+            @ptrCast(&item.job.type.accept.addr_len),
+            0,
+        );
     }
 
     fn queue_connect(
         self: *AsyncIoUring,
         task: usize,
         socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
+        addr: std.net.Address,
+        kind: Socket.Kind,
     ) !void {
-        const addr = try std.net.Address.parseIp(host, port);
-
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -380,6 +391,7 @@ pub const AsyncIoUring = struct {
                 .connect = .{
                     .socket = socket,
                     .addr = addr,
+                    .kind = kind,
                 },
             },
             .task = task,
@@ -493,9 +505,12 @@ pub const AsyncIoUring = struct {
                     .close => break :blk .close,
                     .accept => |inner| {
                         if (cqe.res >= 0) switch (inner.kind) {
-                            .tcp => break :blk .{ .accept = .{ .actual = .{ .tcp = .{ .socket = cqe.res } } } },
+                            .tcp, .unix => break :blk .{
+                                .accept = .{ .actual = .{ .handle = cqe.res, .addr = inner.addr, .kind = inner.kind } },
+                            },
+                            .udp => unreachable,
                         };
-                        const result: InnerAcceptResult = result: {
+                        const result: AcceptResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {
                                 LinuxError.AGAIN => break :result .{ .err = AcceptError.WouldBlock },
@@ -518,7 +533,7 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .accept = result };
                     },
                     .connect => |inner| {
-                        if (cqe.res >= 0) break :blk .{ .connect = .{ .actual = .{ .socket = inner.socket } } };
+                        if (cqe.res >= 0) break :blk .{ .connect = .{ .actual = .{ .handle = inner.socket, .addr = inner.addr, .kind = inner.kind } } };
                         const result: ConnectResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);
                             switch (e) {

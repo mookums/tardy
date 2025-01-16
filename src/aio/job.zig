@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Timespec = @import("../lib.zig").Timespec;
 const Path = @import("../fs/lib.zig").Path;
+const Socket = @import("../net/lib.zig").Socket;
 
 pub const Job = struct {
     type: union(enum) {
@@ -53,16 +54,17 @@ const WriteJob = struct {
     offset: ?usize,
 };
 
-pub const AcceptKind = enum { tcp };
-
 const AcceptJob = struct {
     socket: std.posix.socket_t,
-    kind: AcceptKind,
+    addr: std.net.Address,
+    addr_len: usize = @sizeOf(std.net.Address),
+    kind: Socket.Kind,
 };
 
 const ConnectJob = struct {
     socket: std.posix.socket_t,
     addr: std.net.Address,
+    kind: Socket.Kind,
 };
 
 const SendJob = struct {

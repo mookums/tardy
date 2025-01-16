@@ -20,11 +20,10 @@ pub const Dir = @import("fs/lib.zig").Dir;
 pub const Path = @import("fs/lib.zig").Path;
 pub const Stat = @import("fs/lib.zig").Stat;
 
-pub const TcpSocket = @import("net/lib.zig").TcpSocket;
-pub const TcpServer = @import("net/lib.zig").TcpServer;
+pub const Socket = @import("net/lib.zig").Socket;
 
 // Results
-pub const AcceptTcpResult = @import("aio/completion.zig").AcceptTcpResult;
+pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
 pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
 pub const RecvResult = @import("aio/completion.zig").RecvResult;
 pub const SendResult = @import("aio/completion.zig").SendResult;

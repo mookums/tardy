@@ -5,7 +5,7 @@ const File = @import("../fs/lib.zig").File;
 const Dir = @import("../fs/lib.zig").Dir;
 const Stat = @import("../fs/lib.zig").Stat;
 
-const TcpSocket = @import("../net/lib.zig").TcpSocket;
+const Socket = @import("../net/lib.zig").Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {
@@ -188,11 +188,9 @@ pub const DeleteError = error{
     Unexpected,
 };
 
-const AcceptResultType = union(enum) { tcp: TcpSocket };
-pub const InnerAcceptResult = Resulted(AcceptResultType, AcceptError);
-pub const AcceptTcpResult = Resulted(TcpSocket, AcceptError);
+pub const AcceptResult = Resulted(Socket, AcceptError);
 
-pub const ConnectResult = Resulted(TcpSocket, ConnectError);
+pub const ConnectResult = Resulted(Socket, ConnectError);
 pub const RecvResult = Resulted(usize, RecvError);
 
 pub const SendResult = Resulted(usize, SendError);
@@ -223,7 +221,7 @@ pub const Result = union(enum) {
     wake,
     /// If we have returned a stat object.
     stat: StatResult,
-    accept: InnerAcceptResult,
+    accept: AcceptResult,
     connect: ConnectResult,
     recv: RecvResult,
     send: SendResult,

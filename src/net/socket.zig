@@ -5,44 +5,56 @@ const assert = std.debug.assert;
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
 
-const AcceptTcpResult = @import("../aio/completion.zig").AcceptTcpResult;
+const AcceptResult = @import("../aio/completion.zig").AcceptResult;
 const ConnectResult = @import("../aio/completion.zig").ConnectResult;
 const RecvResult = @import("../aio/completion.zig").RecvResult;
 const SendResult = @import("../aio/completion.zig").SendResult;
 
-pub const TcpServer = struct {
-    const Provision = struct {
-        socket: std.posix.socket_t,
-        address: std.net.Address,
+pub const Socket = struct {
+    pub const Kind = enum {
+        tcp,
+        udp,
+        unix,
+
+        pub fn listenable(self: Kind) bool {
+            return switch (self) {
+                .tcp, .unix => true,
+                else => false,
+            };
+        }
     };
 
-    provision: Provision,
+    handle: std.posix.socket_t,
+    addr: std.net.Address,
+    kind: Kind,
 
-    pub fn from_std(server: std.net.Server) TcpServer {
-        return .{ .socket = server.stream.handle };
-    }
-
-    pub fn to_std(self: TcpServer) std.net.Server {
-        return std.net.Server{
-            .stream = .{ .handle = self.socket },
-            // This isn't really used in the impl so just ensure you don't use it.
-            .listen_address = std.mem.zeroes(std.net.Address),
+    pub fn init(kind: Kind, host: []const u8, port: ?u16) !Socket {
+        const addr = switch (kind) {
+            .tcp, .udp => blk: {
+                assert(port != null);
+                break :blk if (comptime builtin.os.tag == .linux)
+                    try std.net.Address.resolveIp(host, port.?)
+                else
+                    try std.net.Address.parseIp(host, port.?);
+            },
+            .unix => try std.net.Address.initUnix(host),
         };
-    }
 
-    pub fn init(host: []const u8, port: u16) !TcpServer {
-        const addr = blk: {
-            if (comptime builtin.os.tag == .linux) {
-                break :blk try std.net.Address.resolveIp(host, port);
-            } else {
-                break :blk try std.net.Address.parseIp(host, port);
-            }
+        const sock_type: u32 = switch (kind) {
+            .tcp, .unix => std.posix.SOCK.STREAM,
+            .udp => std.posix.SOCK.DGRAM,
+        };
+
+        const protocol: u32 = switch (kind) {
+            .tcp => std.posix.IPPROTO.TCP,
+            .udp => std.posix.IPPROTO.UDP,
+            .unix => 0,
         };
 
         const socket = try std.posix.socket(
             addr.any.family,
-            std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK,
-            std.posix.IPPROTO.TCP,
+            sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK,
+            protocol,
         );
 
         if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
@@ -68,113 +80,75 @@ pub const TcpServer = struct {
             );
         }
 
-        try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
-        return .{ .socket = socket };
+        return .{ .handle = socket, .addr = addr, .kind = kind };
     }
 
-    pub fn listen(self: *const TcpServer, backlog: usize) !void {
-        try std.posix.listen(self.socket, @truncate(backlog));
+    /// Bind the current Socket
+    pub fn bind(self: *const Socket) !void {
+        try std.posix.bind(self.handle, &self.addr.any, self.addr.getOsSockLen());
     }
 
-    pub fn accept(
-        self: *const TcpServer,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(AcceptTcpResult, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(
-            AcceptTcpResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .accept = .{ .socket = self.socket, .kind = .tcp } },
-        );
+    /// Listen on the Current Socket.
+    pub fn listen(self: *const Socket, backlog: usize) !void {
+        assert(self.kind.listenable());
+        try std.posix.listen(self.handle, @truncate(backlog));
     }
 
     pub fn close(
-        self: *const TcpServer,
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.socket });
+        try rt.scheduler.spawn(
+            void,
+            task_ctx,
+            task_fn,
+            .wait_for_io,
+            .{ .close = self.handle },
+        );
     }
 
-    pub fn close_blocking(self: *const TcpServer) void {
-        std.posix.close(self.socket);
+    pub fn close_blocking(self: *const Socket) void {
+        // todo: delete the unix socket if the
+        // server is being closed
+        std.posix.close(self.handle);
     }
-};
 
-pub const TcpSocket = struct {
-    socket: std.posix.socket_t,
+    pub fn accept(
+        self: *const Socket,
+        rt: *Runtime,
+        task_ctx: anytype,
+        comptime task_fn: TaskFn(AcceptResult, @TypeOf(task_ctx)),
+    ) !void {
+        assert(self.kind.listenable());
+
+        try rt.scheduler.spawn(
+            AcceptResult,
+            task_ctx,
+            task_fn,
+            .wait_for_io,
+            .{ .accept = .{ .socket = self.handle, .kind = self.kind } },
+        );
+    }
 
     pub fn connect(
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(ConnectResult, @TypeOf(task_ctx)),
-        host: []const u8,
-        port: u16,
     ) !void {
-        const addr = blk: {
-            if (comptime builtin.os.tag == .linux) {
-                break :blk try std.net.Address.resolveIp(host, port);
-            } else {
-                break :blk try std.net.Address.parseIp(host, port);
-            }
-        };
-
-        const socket = try std.posix.socket(
-            addr.any.family,
-            std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK,
-            std.posix.IPPROTO.TCP,
-        );
-
-        if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEPORT_LB,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
-        } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEPORT,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
-        } else {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEADDR,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
-        }
-
         try rt.scheduler.spawn(
             ConnectResult,
             task_ctx,
             task_fn,
             .wait_for_io,
-            .{ .connect = .{ .socket = socket, .host = host, .port = port } },
+            .{ .connect = .{ .socket = self.handle, .addr = self.addr, .kind = self.kind } },
         );
     }
 
-    pub fn from_std(self: std.net.Server.Connection) TcpSocket {
-        return .{ .socket = self.stream.handle };
-    }
-
-    pub fn to_std(self: TcpSocket) std.net.Server.Connection {
-        return std.net.Server.Connection{
-            .stream = .{ .handle = self.socket },
-            // This isn't really used in the impl so just ensure you don't use it.
-            .address = std.mem.zeroes(std.net.Address),
-        };
-    }
-
     pub fn recv(
-        self: *const TcpSocket,
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
@@ -185,12 +159,12 @@ pub const TcpSocket = struct {
             task_ctx,
             task_fn,
             .wait_for_io,
-            .{ .recv = .{ .socket = self.socket, .buffer = buffer } },
+            .{ .recv = .{ .socket = self.handle, .buffer = buffer } },
         );
     }
 
     pub fn recv_all(
-        self: *const TcpSocket,
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
@@ -200,7 +174,7 @@ pub const TcpSocket = struct {
             const Self = @This();
             buffer: []u8,
             recv: usize,
-            socket: *const TcpSocket,
+            socket: *const Socket,
             task_ctx: @TypeOf(task_ctx),
 
             fn recv_all_task(runtime: *Runtime, res: RecvResult, p: *Self) !void {
@@ -249,7 +223,7 @@ pub const TcpSocket = struct {
     }
 
     pub fn send(
-        self: *const TcpSocket,
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
@@ -260,12 +234,12 @@ pub const TcpSocket = struct {
             task_ctx,
             task_fn,
             .wait_for_io,
-            .{ .send = .{ .socket = self.socket, .buffer = buffer } },
+            .{ .send = .{ .socket = self.handle, .buffer = buffer } },
         );
     }
 
     pub fn send_all(
-        self: *const TcpSocket,
+        self: *const Socket,
         rt: *Runtime,
         task_ctx: anytype,
         comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
@@ -275,7 +249,7 @@ pub const TcpSocket = struct {
             const Self = @This();
             buffer: []const u8,
             send: usize,
-            socket: *const TcpSocket,
+            socket: *const Socket,
             task_ctx: @TypeOf(task_ctx),
 
             fn send_all_task(runtime: *Runtime, res: SendResult, p: *Self) !void {
@@ -306,23 +280,10 @@ pub const TcpSocket = struct {
         p.* = Provision{
             .buffer = buffer,
             .send = 0,
-            .file = self,
+            .socket = self,
             .task_ctx = task_ctx,
         };
 
         try self.send(rt, p, Provision.send_all_task, buffer);
-    }
-
-    pub fn close(
-        self: *const TcpSocket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.socket });
-    }
-
-    pub fn close_blocking(self: *const TcpSocket) void {
-        std.posix.close(self.socket);
     }
 };

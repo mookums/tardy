@@ -55,11 +55,9 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     var tardy = try Tardy.init(allocator, .{
-        // The way this is written will only support
-        // single-threaded execution.
         .threading = .single,
-        .size_tasks_max = 1,
-        .size_aio_jobs_max = 1,
+        .pooling = .static,
+        .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
     defer tardy.deinit();
