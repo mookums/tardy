@@ -11,6 +11,6 @@ pub const Timer = struct {
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
         timespec: Timespec,
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .timer = timespec });
+        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .timer = timespec });
     }
 };

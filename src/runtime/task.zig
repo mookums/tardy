@@ -124,8 +124,11 @@ pub const Task = struct {
             gen: *const fn (*anyopaque) ?*anyopaque,
             ctx: *anyopaque,
         },
-        waiting,
+        /// Waiting for an Async I/O Event.
+        wait_for_io,
+        /// Immediately Runnable.
         runnable,
+        /// Dead.
         dead,
     };
     // 1 byte

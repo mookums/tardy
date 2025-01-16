@@ -88,11 +88,11 @@ pub const Dir = struct {
         provision.* = .{ .path = path, .task_ctx = task_ctx };
         errdefer rt.allocator.destroy(provision);
 
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             MkdirResult,
             provision,
             Provision.create_task,
-            .waiting,
+            .wait_for_io,
             .{ .mkdir = .{ .path = path, .mode = 0o755 } },
         );
     }
@@ -110,11 +110,11 @@ pub const Dir = struct {
             .directory = true,
         };
 
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             OpenDirResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .open = .{
                 .path = path,
                 .flags = aio_flags,
@@ -175,7 +175,7 @@ pub const Dir = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(StatResult, task_ctx, task_fn, .waiting, .{ .stat = self.handle });
+        try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.handle });
     }
 
     /// TODO: This needs to basically walk through the directory. This will end up
@@ -199,11 +199,11 @@ pub const Dir = struct {
         comptime task_fn: TaskFn(DeleteResult, @TypeOf(task_ctx)),
         sub_path: [:0]const u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             DeleteResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{
                 .delete = .{
                     .path = .{ .rel = .{ .dir = self.handle, .path = sub_path } },
@@ -221,11 +221,11 @@ pub const Dir = struct {
         comptime task_fn: TaskFn(DeleteResult, @TypeOf(task_ctx)),
         sub_path: [:0]const u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             DeleteResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{
                 .delete = .{
                     .path = .{ .rel = .{ .dir = self.handle, .path = sub_path } },
@@ -436,7 +436,7 @@ pub const Dir = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.handle });
+        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.handle });
     }
 
     pub fn close_blocking(self: *const Dir) void {

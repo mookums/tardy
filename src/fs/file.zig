@@ -75,11 +75,11 @@ pub const File = struct {
             .directory = false,
         };
 
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             OpenFileResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .open = .{ .path = path, .flags = aio_flags } },
         );
     }
@@ -97,11 +97,11 @@ pub const File = struct {
             .directory = false,
         };
 
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             OpenFileResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .open = .{
                 .path = path,
                 .flags = aio_flags,
@@ -116,11 +116,11 @@ pub const File = struct {
         comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
         buffer: []u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             ReadResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .read = .{
                 .fd = self.handle,
                 .buffer = buffer,
@@ -137,11 +137,11 @@ pub const File = struct {
         buffer: []u8,
         offset: usize,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             ReadResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .read = .{
                 .fd = self.handle,
                 .buffer = buffer,
@@ -301,11 +301,11 @@ pub const File = struct {
         comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
         buffer: []const u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             WriteResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .write = .{
                 .fd = self.handle,
                 .buffer = buffer,
@@ -322,11 +322,11 @@ pub const File = struct {
         buffer: []const u8,
         offset: usize,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             WriteResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .write = .{
                 .fd = self.handle,
                 .buffer = buffer,
@@ -410,7 +410,7 @@ pub const File = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(StatResult, task_ctx, task_fn, .waiting, .{ .stat = self.handle });
+        try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.handle });
     }
 
     pub fn close(
@@ -419,7 +419,7 @@ pub const File = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.handle });
+        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.handle });
     }
 
     pub fn close_blocking(self: *const File) void {

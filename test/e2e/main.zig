@@ -17,7 +17,7 @@ const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .debug,
+    .log_level = .err,
 };
 
 pub fn main() !void {
@@ -30,6 +30,7 @@ pub fn main() !void {
 
     _ = args.next().?;
 
+    // max u64 is 21 characters long :p
     var maybe_seed_buffer: [21]u8 = undefined;
     const seed_string = args.next() orelse blk: {
         const stdin = std.io.getStdIn();
@@ -68,18 +69,17 @@ pub fn main() !void {
         p.seed_string = seed_string;
         p.seed = seed;
 
-        p.max_task_count = rand.intRangeAtMost(usize, 1, 1024 * 4);
-        p.max_aio_jobs = rand.intRangeAtMost(usize, 1, p.max_task_count);
-        p.max_aio_reap = rand.intRangeAtMost(usize, 1, p.max_aio_jobs);
+        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 1024 * 4);
+        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
         break :blk p;
     };
-    std.debug.print("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
+    log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
         .threading = .{ .multi = 1 },
-        .size_tasks_max = shared.max_task_count,
-        .size_aio_jobs_max = shared.max_aio_jobs,
-        .size_aio_reap_max = shared.max_aio_reap,
+        .pooling = .grow,
+        .size_tasks_initial = shared.size_tasks_initial,
+        .size_aio_reap_max = shared.size_aio_reap_max,
     });
     defer tardy.deinit();
 
@@ -103,7 +103,7 @@ pub fn main() !void {
 
                 switch (p.runtime_id.fetchAdd(1, .acquire)) {
                     0 => try Dir.cwd().create_dir(rt, p.shared, First.start, p.shared.seed_string),
-                    //1 => try rt.scheduler.spawn2(void, p.shared, Second.start, .runnable, null),
+                    //1 => try rt.scheduler.spawn(void, p.shared, Second.start, .runnable, null),
                     else => unreachable,
                 }
             }

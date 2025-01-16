@@ -11,7 +11,12 @@ const RecvResult = @import("../aio/completion.zig").RecvResult;
 const SendResult = @import("../aio/completion.zig").SendResult;
 
 pub const TcpServer = struct {
-    socket: std.posix.socket_t,
+    const Provision = struct {
+        socket: std.posix.socket_t,
+        address: std.net.Address,
+    };
+
+    provision: Provision,
 
     pub fn from_std(server: std.net.Server) TcpServer {
         return .{ .socket = server.stream.handle };
@@ -77,11 +82,11 @@ pub const TcpServer = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(AcceptTcpResult, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             AcceptTcpResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .accept = .{ .socket = self.socket, .kind = .tcp } },
         );
     }
@@ -92,7 +97,7 @@ pub const TcpServer = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.socket });
+        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.socket });
     }
 
     pub fn close_blocking(self: *const TcpServer) void {
@@ -147,11 +152,11 @@ pub const TcpSocket = struct {
             );
         }
 
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             ConnectResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .connect = .{ .socket = socket, .host = host, .port = port } },
         );
     }
@@ -175,11 +180,11 @@ pub const TcpSocket = struct {
         comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
         buffer: []u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             RecvResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .recv = .{ .socket = self.socket, .buffer = buffer } },
         );
     }
@@ -250,11 +255,11 @@ pub const TcpSocket = struct {
         comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
         buffer: []const u8,
     ) !void {
-        try rt.scheduler.spawn2(
+        try rt.scheduler.spawn(
             SendResult,
             task_ctx,
             task_fn,
-            .waiting,
+            .wait_for_io,
             .{ .send = .{ .socket = self.socket, .buffer = buffer } },
         );
     }
@@ -314,7 +319,7 @@ pub const TcpSocket = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
     ) !void {
-        try rt.scheduler.spawn2(void, task_ctx, task_fn, .waiting, .{ .close = self.socket });
+        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.socket });
     }
 
     pub fn close_blocking(self: *const TcpSocket) void {

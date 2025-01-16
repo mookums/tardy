@@ -85,11 +85,11 @@ pub const AsyncIoUring = struct {
     // You basically define how large you want your batches to be.
     cqes: []std.os.linux.io_uring_cqe,
 
-    jobs: Pool(JobBundle, .grow),
+    jobs: Pool(JobBundle),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
-        const size = options.size_aio_jobs_max + 1;
+        const size = options.size_tasks_initial + 1;
 
         const wake_event_fd: std.posix.fd_t = @intCast(
             std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
@@ -140,7 +140,7 @@ pub const AsyncIoUring = struct {
         errdefer allocator.destroy(uring);
         errdefer uring.deinit();
 
-        var jobs = try Pool(JobBundle, .grow).init(allocator, size);
+        var jobs = try Pool(JobBundle).init(allocator, size, options.pooling);
         errdefer jobs.deinit();
 
         const index = jobs.borrow_assume_unset(0);
@@ -160,7 +160,7 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    pub fn pre_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
+    pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
         self.inner.deinit();
         self.jobs.deinit();
         std.posix.close(self.wake_event_fd);
@@ -171,12 +171,7 @@ pub const AsyncIoUring = struct {
 
     fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        uring.inner.deinit();
-        uring.jobs.deinit();
-        std.posix.close(uring.wake_event_fd);
-        allocator.free(uring.wake_event_buffer);
-        allocator.free(uring.cqes);
-        allocator.destroy(uring.inner);
+        uring.inner_deinit(allocator);
     }
 
     fn queue_job(
@@ -185,15 +180,9 @@ pub const AsyncIoUring = struct {
         job: AsyncSubmission,
     ) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        const sq_count = uring.inner.sq_ready();
         log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
 
-        if (sq_count == URING_SUBMISSION_SIZE) {
-            log.debug("at max sqe entries ({d}), forcing submit...", .{URING_SUBMISSION_SIZE});
-            try self.submit();
-        }
-
-        try switch (job) {
+        (switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
             .open => |inner| queue_open(uring, task, inner.path, inner.flags),
             .delete => |inner| queue_delete(uring, task, inner.path, inner.is_dir),
@@ -206,7 +195,10 @@ pub const AsyncIoUring = struct {
             .connect => |inner| queue_connect(uring, task, inner.socket, inner.host, inner.port),
             .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
-        };
+        }) catch |e| if (e == error.SubmissionQueueFull) {
+            try self.submit();
+            try queue_job(self, task, job);
+        } else return e;
     }
 
     fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Timespec) !void {

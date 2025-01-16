@@ -37,8 +37,6 @@ const Params = struct {
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start(rt: *Runtime, res: CreateDirResult, shared_params: *const SharedParams) !void {
-    //errdefer unreachable;
-
     const new_dir = res.unwrap() catch |e| {
         log.err("failed due to {}", .{e});
         unreachable;
@@ -49,7 +47,7 @@ pub fn start(rt: *Runtime, res: CreateDirResult, shared_params: *const SharedPar
     var prng = std.Random.DefaultPrng.init(shared_params.seed);
     const rand = prng.random();
 
-    const chain_count = shared_params.max_aio_jobs * rand.intRangeLessThan(usize, 1, 3);
+    const chain_count = shared_params.size_tasks_initial * rand.intRangeLessThan(usize, 1, 3);
     for (0..chain_count) |i| {
         file_chain_counter += 1;
 

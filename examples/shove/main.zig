@@ -10,7 +10,7 @@ const File = @import("tardy").File;
 
 const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
-const WriteAllResult = @import("tardy").WriteAllResult;
+const WriteResult = @import("tardy").WriteResult;
 
 pub const std_options = .{
     .log_level = .debug,
@@ -19,11 +19,11 @@ pub const std_options = .{
 fn create_task(rt: *Runtime, result: OpenFileResult, _: void) !void {
     const file = try result.unwrap();
     try rt.storage.store_alloc("file_fd", file.handle);
-    for (0..8) |_| try file.write_all(rt, {}, end_task, "*shoved*\n");
+    for (0..8) |_| try file.write_all(rt, {}, end_task, "*shoved*\n", null);
 }
 
-fn end_task(_: *Runtime, res: WriteAllResult, _: void) !void {
-    try res.unwrap();
+fn end_task(_: *Runtime, res: WriteResult, _: void) !void {
+    _ = try res.unwrap();
 }
 
 pub fn main() !void {
@@ -33,9 +33,9 @@ pub fn main() !void {
 
     var tardy = try Tardy.init(allocator, .{
         .threading = .single,
-        .size_tasks_max = 1,
-        .size_aio_jobs_max = 1,
-        .size_aio_reap_max = 1,
+        .pooling = .grow,
+        .size_tasks_initial = 1,
+        .size_aio_reap_max = 256,
     });
     defer tardy.deinit();
 
@@ -44,10 +44,7 @@ pub fn main() !void {
     defer args.deinit();
 
     const file_name: [:0]const u8 = blk: {
-        while (args.next()) |arg| : (i += 1) {
-            if (i == 1) break :blk arg;
-        }
-
+        while (args.next()) |arg| : (i += 1) if (i == 1) break :blk arg;
         try std.io.getStdOut().writeAll("file name not passed in: ./shove [file name]");
         return;
     };

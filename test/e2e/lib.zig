@@ -9,7 +9,6 @@ pub const SharedParams = struct {
     seed: u64,
 
     // Tardy Initalization
-    max_task_count: usize,
-    max_aio_jobs: usize,
-    max_aio_reap: usize,
+    size_tasks_initial: usize,
+    size_aio_reap_max: usize,
 };

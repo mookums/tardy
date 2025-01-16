@@ -8,6 +8,7 @@ const Path = @import("../fs/lib.zig").Path;
 
 const Atomic = std.atomic.Value;
 
+const PoolKind = @import("../core/pool.zig").PoolKind;
 const AcceptKind = @import("job.zig").AcceptKind;
 
 pub const AsyncIOType = union(enum) {
@@ -48,7 +49,7 @@ pub fn auto_async_match() AsyncIOType {
                 .major = 5,
                 .minor = 1,
                 .patch = 0,
-            }) orelse @compileError("Unable to determine kernel version. Specify an AsyncIO Backend.")) {
+            }) orelse @compileError("Unable to determine kernel version. Specify an Async I/O Backend.")) {
                 return AsyncIOType.io_uring;
             }
 
@@ -62,7 +63,7 @@ pub fn auto_async_match() AsyncIOType {
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.kqueue,
         .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncIOType.kqueue,
         .solaris, .illumos => return AsyncIOType.busy_loop,
-        else => @compileError("Unsupported platform! Provide a custom AsyncIO backend."),
+        else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }
 }
 
@@ -85,8 +86,9 @@ pub const AsyncIOOptions = struct {
     /// The parent AsyncIO that this should
     /// inherit parameters from.
     parent_async: ?*const AsyncIO = null,
-    /// Maximum number of aio jobs.
-    size_aio_jobs_max: usize,
+    // Pooling
+    pooling: PoolKind,
+    size_tasks_initial: usize,
     /// Maximum number of completions reaped.
     size_aio_reap_max: usize,
 };

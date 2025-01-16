@@ -5,6 +5,8 @@ const log = std.log.scoped(.@"tardy/runtime");
 const AsyncIO = @import("../aio/lib.zig").AsyncIO;
 const Scheduler = @import("./scheduler.zig").Scheduler;
 
+const PoolKind = @import("../core/pool.zig").PoolKind;
+
 const Task = @import("task.zig").Task;
 const TaskFn = @import("task.zig").TaskFn;
 const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
@@ -15,9 +17,8 @@ const Storage = @import("storage.zig").Storage;
 const Timespec = @import("../lib.zig").Timespec;
 
 const RuntimeOptions = struct {
-    allocator: std.mem.Allocator,
-    size_tasks_max: usize,
-    size_aio_jobs_max: usize,
+    pooling: PoolKind,
+    size_tasks_initial: usize,
     size_aio_reap_max: usize,
 };
 
@@ -30,14 +31,16 @@ pub const Runtime = struct {
     aio: AsyncIO,
     running: bool = true,
 
-    pub fn init(aio: AsyncIO, options: RuntimeOptions) !Runtime {
-        assert(options.size_aio_reap_max <= options.size_aio_jobs_max);
-
-        const scheduler: Scheduler = try Scheduler.init(options.allocator, options.size_tasks_max);
-        const storage = Storage.init(options.allocator);
+    pub fn init(allocator: std.mem.Allocator, aio: AsyncIO, options: RuntimeOptions) !Runtime {
+        const scheduler = try Scheduler.init(
+            allocator,
+            options.size_tasks_initial,
+            options.pooling,
+        );
+        const storage = Storage.init(allocator);
 
         return .{
-            .allocator = options.allocator,
+            .allocator = allocator,
             .storage = storage,
             .scheduler = scheduler,
             .aio = aio,
@@ -63,7 +66,7 @@ pub const Runtime = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
     ) !void {
-        _ = try self.scheduler.spawn(R, task_ctx, task_fn, .runnable);
+        try self.scheduler.spawn(R, task_ctx, task_fn, .runnable, null);
     }
 
     /// Is the runtime asleep?
@@ -99,7 +102,7 @@ pub const Runtime = struct {
                     .channel => |inner| {
                         if (inner.check(inner.ctx)) {
                             task.result = .{ .ptr = inner.gen(inner.ctx) };
-                            self.scheduler.set_runnable(task.index);
+                            try self.scheduler.set_runnable(task.index);
                             try self.run_task(task);
                         }
                     },
@@ -130,9 +133,9 @@ pub const Runtime = struct {
 
                 const index = completion.task;
                 const task = &self.scheduler.tasks.items[index];
-                assert(task.state == .waiting);
+                assert(task.state == .wait_for_io);
                 task.result = completion.result;
-                self.scheduler.set_runnable(index);
+                try self.scheduler.set_runnable(index);
             }
 
             if (self.scheduler.runnable.count() == 0 and !force_woken) {

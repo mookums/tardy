@@ -7,7 +7,9 @@ const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
 const InnerTaskFn = @import("task.zig").InnerTaskFn;
 
 const Runtime = @import("lib.zig").Runtime;
+
 const Pool = @import("../core/pool.zig").Pool;
+const PoolKind = @import("../core/pool.zig").PoolKind;
 
 const wrap = @import("../utils.zig").wrap;
 const unwrap = @import("../utils.zig").unwrap;
@@ -20,23 +22,18 @@ const TaskWithJob = struct {
 };
 
 pub const Scheduler = struct {
-    const OverflowLinkedList = std.DoublyLinkedList(TaskWithJob);
-    const OverflowNode = OverflowLinkedList.Node;
-
     allocator: std.mem.Allocator,
     // for now.
-    tasks: Pool(Task, .static),
+    tasks: Pool(Task),
     runnable: std.DynamicBitSetUnmanaged,
     released: std.ArrayListUnmanaged(usize),
-    overflow: OverflowLinkedList,
 
-    pub fn init(allocator: std.mem.Allocator, size: usize) !Scheduler {
+    pub fn init(allocator: std.mem.Allocator, size: usize, pooling: PoolKind) !Scheduler {
         return .{
             .allocator = allocator,
-            .tasks = try Pool(Task, .static).init(allocator, size),
+            .tasks = try Pool(Task).init(allocator, size, pooling),
             .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
             .released = try std.ArrayListUnmanaged(usize).initCapacity(allocator, size),
-            .overflow = OverflowLinkedList{},
         };
     }
 
@@ -44,10 +41,15 @@ pub const Scheduler = struct {
         self.tasks.deinit();
         self.runnable.deinit(self.allocator);
         self.released.deinit(self.allocator);
-        while (self.overflow.pop()) |node| self.allocator.destroy(node);
     }
 
-    pub fn set_runnable(self: *Scheduler, index: usize) void {
+    pub fn set_runnable(self: *Scheduler, index: usize) !void {
+        // Resizes the runnable if the underlying task has changed size
+        if (self.tasks.kind == .grow and self.runnable.bit_length != self.tasks.items.len) {
+            const new_size = self.tasks.items.len;
+            try self.runnable.resize(self.allocator, new_size, false);
+        }
+
         assert(!self.runnable.isSet(index));
         const task: *Task = &self.tasks.items[index];
         task.state = .runnable;
@@ -61,7 +63,8 @@ pub const Scheduler = struct {
         task_ctx: anytype,
         comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
         task_state: Task.State,
-    ) !usize {
+        job: ?AsyncSubmission,
+    ) !void {
         const index = blk: {
             if (self.released.popOrNull()) |index| {
                 break :blk self.tasks.borrow_assume_unset(index);
@@ -71,46 +74,11 @@ pub const Scheduler = struct {
         };
 
         const context: usize = wrap(usize, task_ctx);
-
-        const item = self.tasks.get_ptr(index);
-        item.* = .{
+        const item: Task = .{
             .index = index,
             .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
             .context = context,
             .state = task_state,
-        };
-
-        if (task_state == .runnable) self.set_runnable(index);
-        return index;
-    }
-
-    pub fn spawn2(
-        self: *Scheduler,
-        comptime R: type,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
-        task_state: Task.State,
-        job: ?AsyncSubmission,
-    ) !void {
-        const context: usize = wrap(usize, task_ctx);
-        const item: Task = .{
-            .index = 0,
-            .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
-            .context = context,
-            .state = task_state,
-        };
-
-        const index = blk: {
-            if (self.released.popOrNull()) |index| {
-                break :blk self.tasks.borrow_assume_unset(index);
-            } else {
-                break :blk self.tasks.borrow() catch {
-                    const node = try self.allocator.create(OverflowNode);
-                    node.data = .{ .task = item, .job = job };
-                    self.overflow.append(node);
-                    return;
-                };
-            }
         };
 
         const item_ptr = self.tasks.get_ptr(index);
@@ -118,8 +86,8 @@ pub const Scheduler = struct {
         item_ptr.index = index;
 
         switch (task_state) {
-            .runnable => self.set_runnable(index),
-            .waiting => if (job) |j| {
+            .runnable => try self.set_runnable(index),
+            .wait_for_io => if (job) |j| {
                 const rt: *Runtime = @fieldParentPtr("scheduler", self);
                 try rt.aio.queue_job(index, j);
             },
@@ -131,26 +99,7 @@ pub const Scheduler = struct {
         assert(self.runnable.isSet(index));
         self.runnable.unset(index);
 
-        if (self.overflow.popFirst()) |node| {
-            defer self.allocator.destroy(node);
-
-            const task_with = node.data;
-            const task_ptr = self.tasks.get_ptr(index);
-            assert(task_ptr.state == .dead);
-
-            task_ptr.* = task_with.task;
-            task_ptr.index = index;
-            switch (task_with.task.state) {
-                .runnable => self.set_runnable(index),
-                .waiting => if (task_with.job) |j| {
-                    const rt: *Runtime = @fieldParentPtr("scheduler", self);
-                    try rt.aio.queue_job(index, j);
-                },
-                else => {},
-            }
-        } else {
-            self.tasks.release(index);
-            try self.released.append(self.allocator, index);
-        }
+        self.tasks.release(index);
+        try self.released.append(self.allocator, index);
     }
 };
