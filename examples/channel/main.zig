@@ -7,12 +7,14 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Channel = @import("tardy").Channel;
 
+const Timer = @import("tardy").Timer;
+
 const Atomic = std.atomic.Value;
 
 fn write_channel_task(rt: *Runtime, _: void, bc: *Broadcast(usize)) !void {
     const num: usize = @intCast(std.time.timestamp());
     try bc.send(num);
-    try rt.spawn_delay(void, bc, write_channel_task, .{ .seconds = 1 });
+    try Timer.delay(rt, bc, write_channel_task, .{ .seconds = 1 });
 }
 
 fn read_channel_task(_: *Runtime, read: ?*const usize, chan: *Channel(usize)) !void {
@@ -29,7 +31,10 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(allocator, .{ .threading = .{ .multi = 3 } });
+    var tardy = try Tardy.init(allocator, .{
+        .threading = .{ .multi = 3 },
+        .pooling = .static,
+    });
     defer tardy.deinit();
 
     var f = Atomic(bool).init(false);

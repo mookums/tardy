@@ -5,8 +5,6 @@ const log = std.log.scoped(.tardy);
 
 const Atomic = std.atomic.Value;
 
-pub const Pool = @import("core/pool.zig").Pool;
-pub const PoolKind = @import("core/pool.zig").PoolKind;
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
 pub const TaskFn = @import("runtime/task.zig").TaskFn;
@@ -37,6 +35,9 @@ pub const DeleteResult = @import("aio/completion.zig").DeleteResult;
 pub const DeleteTreeResult = @import("aio/completion.zig").DeleteTreeResult;
 
 pub const ZeroCopy = @import("core/zero_copy.zig").ZeroCopy;
+pub const Pool = @import("core/pool.zig").Pool;
+pub const PoolKind = @import("core/pool.zig").PoolKind;
+
 pub const wrap = @import("utils.zig").wrap;
 pub const unwrap = @import("utils.zig").unwrap;
 
@@ -92,7 +93,11 @@ const TardyOptions = struct {
 };
 
 pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
-    const aio_type: AsyncIOType = comptime if (selected_aio_type == .auto) auto_async_match() else selected_aio_type;
+    const aio_type: AsyncIOType = comptime if (selected_aio_type == .auto)
+        auto_async_match()
+    else
+        selected_aio_type;
+
     const AioInnerType = comptime async_to_type(aio_type);
     return struct {
         const Self = @This();

@@ -9,7 +9,6 @@ const Runtime = @import("tardy").Runtime;
 const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 const Timer = @import("tardy").Timer;
-const TcpSocket = @import("tardy").TcpSocket;
 
 const OpenFileResult = @import("tardy").OpenFileResult;
 const OpenDirResult = @import("tardy").OpenDirResult;
@@ -48,9 +47,8 @@ pub fn start(rt: *Runtime, res: CreateDirResult, shared_params: *const SharedPar
     const rand = prng.random();
 
     const chain_count = shared_params.size_tasks_initial * rand.intRangeLessThan(usize, 1, 3);
+    file_chain_counter = chain_count;
     for (0..chain_count) |i| {
-        file_chain_counter += 1;
-
         var prng2 = std.Random.DefaultPrng.init(shared_params.seed);
         const rand2 = prng2.random();
 
@@ -96,13 +94,8 @@ fn post_chain(rt: *Runtime, _: void, params: *Params) !void {
     // only one version of `post_chain` runs at a time.
     file_chain_counter -= 1;
     if (file_chain_counter == 0) {
-        try Dir.cwd().delete_tree(
-            rt,
-            params,
-            finish,
-            params.shared.seed_string,
-            1,
-        );
+        log.debug("deleting the e2e tree...", .{});
+        try Dir.cwd().delete_tree(rt, params, finish, params.shared.seed_string, 1);
     } else {
         // if not the last, clean it here.
         params.file_chain.deinit();

@@ -5,14 +5,21 @@ const log = std.log.scoped(.@"tardy/aio/busy_loop");
 const builtin = @import("builtin");
 const Atomic = std.atomic.Value;
 const Completion = @import("../completion.zig").Completion;
-const Stat = @import("../completion.zig").Stat;
+const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 
-const File = std.fs.File;
+const StdFile = std.fs.File;
+const StdDir = std.fs.Dir;
+
+const Socket = @import("../../net/socket.zig").Socket;
+const Path = @import("../../fs/lib.zig").Path;
+const AioOpenFlags = @import("../lib.zig").AioOpenFlags;
+
+const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const AcceptResult = @import("../completion.zig").AcceptResult;
 const AcceptError = @import("../completion.zig").AcceptError;
@@ -25,81 +32,102 @@ const SendError = @import("../completion.zig").SendError;
 
 const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
 const OpenError = @import("../completion.zig").OpenError;
+const MkdirResult = @import("../completion.zig").MkdirResult;
+const MkdirError = @import("../completion.zig").MkdirError;
 const ReadResult = @import("../completion.zig").ReadResult;
 const ReadError = @import("../completion.zig").ReadError;
 const WriteResult = @import("../completion.zig").WriteResult;
 const WriteError = @import("../completion.zig").WriteError;
+const DeleteResult = @import("../completion.zig").DeleteResult;
+const DeleteError = @import("../completion.zig").DeleteError;
 
 const StatResult = @import("../completion.zig").StatResult;
 const StatError = @import("../completion.zig").StatError;
 
 pub const AsyncBusyLoop = struct {
-    inner: std.ArrayListUnmanaged(Job),
+    inner: std.ArrayList(Job),
     wake_signal: Atomic(bool),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncBusyLoop {
-        const list = try std.ArrayListUnmanaged(Job).initCapacity(allocator, options.size_aio_jobs_max);
+        const list = try std.ArrayList(Job).initCapacity(allocator, options.size_tasks_initial);
         return AsyncBusyLoop{
             .inner = list,
             .wake_signal = Atomic(bool).init(false),
         };
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.deinit(allocator);
+    pub fn inner_deinit(self: *AsyncBusyLoop, _: std.mem.Allocator) void {
+        self.inner.deinit();
     }
 
-    pub fn queue_timer(
-        self: *AsyncIO,
-        task: usize,
-        timespec: Timespec,
-    ) !void {
+    fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
+        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
+        loop.inner_deinit(allocator);
+    }
+
+    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
         const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
 
+        try switch (job) {
+            .timer => |inner| queue_timer(loop, task, inner),
+            .open => |inner| queue_open(loop, task, inner.path, inner.flags),
+            .delete => |inner| queue_delete(loop, task, inner.path, inner.is_dir),
+            .mkdir => |inner| queue_mkdir(loop, task, inner.path, inner.mode),
+            .stat => |inner| queue_stat(loop, task, inner),
+            .read => |inner| queue_read(loop, task, inner.fd, inner.buffer, inner.offset),
+            .write => |inner| queue_write(loop, task, inner.fd, inner.buffer, inner.offset),
+            .close => |inner| queue_close(loop, task, inner),
+            .accept => |inner| queue_accept(loop, task, inner.socket, inner.kind),
+            .connect => |inner| queue_connect(loop, task, inner.socket, inner.addr, inner.kind),
+            .recv => |inner| queue_recv(loop, task, inner.socket, inner.buffer),
+            .send => |inner| queue_send(loop, task, inner.socket, inner.buffer),
+        };
+    }
+
+    pub fn queue_timer(self: *AsyncBusyLoop, task: usize, timespec: Timespec) !void {
         var time = std.time.nanoTimestamp();
         time += timespec.seconds * std.time.ns_per_s;
         time += timespec.nanos;
 
-        loop.inner.appendAssumeCapacity(.{
-            .type = .{ .timer = .{ .ns = time } },
+        try self.inner.append(.{ .type = .{ .timer = .{ .ns = time } }, .task = task });
+    }
+
+    pub fn queue_open(self: *AsyncBusyLoop, task: usize, path: Path, flags: AioOpenFlags) !void {
+        try self.inner.append(.{
+            .type = .{
+                .open = .{
+                    .path = path,
+                    .flags = flags,
+                    .kind = if (flags.directory) .dir else .file,
+                },
+            },
             .task = task,
         });
     }
 
-    pub fn queue_open(
-        self: *AsyncIO,
-        task: usize,
-        path: [:0]const u8,
-    ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
-            .type = .{ .open = path },
+    pub fn queue_delete(self: *AsyncBusyLoop, task: usize, path: Path, is_dir: bool) !void {
+        try self.inner.append(.{ .type = .{ .delete = .{ .path = path, .is_dir = is_dir } }, .task = task });
+    }
+
+    pub fn queue_mkdir(self: *AsyncBusyLoop, task: usize, path: Path, mode: std.posix.mode_t) !void {
+        try self.inner.append(.{
+            .type = .{ .mkdir = .{ .path = path, .mode = mode } },
             .task = task,
         });
     }
 
-    pub fn queue_stat(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
-            .type = .{ .stat = fd },
-            .task = task,
-        });
+    pub fn queue_stat(self: *AsyncBusyLoop, task: usize, fd: std.posix.fd_t) !void {
+        try self.inner.append(.{ .type = .{ .stat = fd }, .task = task });
     }
 
     pub fn queue_read(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         fd: std.posix.fd_t,
         buffer: []u8,
-        offset: usize,
+        offset: ?usize,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
+        try self.inner.append(.{
             .type = .{
                 .read = .{
                     .fd = fd,
@@ -112,14 +140,13 @@ pub const AsyncBusyLoop = struct {
     }
 
     pub fn queue_write(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         fd: std.posix.fd_t,
         buffer: []const u8,
-        offset: usize,
+        offset: ?usize,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
+        try self.inner.append(.{
             .type = .{
                 .write = .{
                     .fd = fd,
@@ -131,46 +158,43 @@ pub const AsyncBusyLoop = struct {
         });
     }
 
-    pub fn queue_close(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
+    pub fn queue_close(self: *AsyncBusyLoop, task: usize, fd: std.posix.fd_t) !void {
+        try self.inner.append(.{
             .type = .{ .close = fd },
             .task = task,
         });
     }
 
     pub fn queue_accept(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         socket: std.posix.socket_t,
+        kind: Socket.Kind,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
-            .type = .{ .accept = socket },
+        try self.inner.append(.{
+            .type = .{ .accept = .{
+                .socket = socket,
+                .addr = undefined,
+                .addr_len = @sizeOf(std.net.Address),
+                .kind = kind,
+            } },
             .task = task,
         });
     }
 
     pub fn queue_connect(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
+        addr: std.net.Address,
+        kind: Socket.Kind,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-
-        const addr = try std.net.Address.parseIp(host, port);
-
-        loop.inner.appendAssumeCapacity(.{
+        try self.inner.append(.{
             .type = .{
                 .connect = .{
                     .socket = socket,
                     .addr = addr,
+                    .kind = kind,
                 },
             },
             .task = task,
@@ -178,13 +202,12 @@ pub const AsyncBusyLoop = struct {
     }
 
     pub fn queue_recv(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
+        try self.inner.append(.{
             .type = .{
                 .recv = .{
                     .socket = socket,
@@ -196,13 +219,12 @@ pub const AsyncBusyLoop = struct {
     }
 
     pub fn queue_send(
-        self: *AsyncIO,
+        self: *AsyncBusyLoop,
         task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        loop.inner.appendAssumeCapacity(.{
+        try self.inner.append(.{
             .type = .{
                 .send = .{
                     .socket = socket,
@@ -218,9 +240,313 @@ pub const AsyncBusyLoop = struct {
         loop.wake_signal.store(true, .release);
     }
 
-    pub fn submit(self: *AsyncIO) !void {
-        const loop: *AsyncBusyLoop = @ptrCast(@alignCast(self.runner));
-        _ = loop;
+    pub fn submit(_: *AsyncIO) !void {}
+
+    fn open_file(path: Path, flags: AioOpenFlags) ?InnerOpenResult {
+        const std_flags: StdFile.OpenFlags = .{
+            .mode = switch (flags.mode) {
+                .read => .read_only,
+                .write => .write_only,
+                .read_write => .read_write,
+            },
+        };
+
+        switch (path) {
+            .rel => |inner| {
+                const dir: StdDir = .{ .fd = inner.dir };
+                const opened = dir.openFileZ(inner.path, std_flags) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdFile.OpenError.WouldBlock => return null,
+                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                        StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                        StdFile.OpenError.PipeBusy => OpenError.Busy,
+                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .file = .{ .handle = opened.handle } } };
+            },
+            .abs => |inner| {
+                const opened = std.fs.cwd().openFileZ(inner, std_flags) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdFile.OpenError.WouldBlock => return null,
+                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                        StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .file = .{ .handle = opened.handle } } };
+            },
+        }
+    }
+
+    fn create_file(path: Path, flags: AioOpenFlags) ?InnerOpenResult {
+        const std_flags: StdFile.CreateFlags = .{
+            .read = (flags.mode == .read or flags.mode == .read_write),
+            .truncate = flags.truncate,
+            .exclusive = flags.exclusive,
+        };
+
+        switch (path) {
+            .rel => |inner| {
+                const dir: StdDir = .{ .fd = inner.dir };
+                const opened = dir.createFileZ(inner.path, std_flags) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdFile.OpenError.WouldBlock => return null,
+                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                        StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                        StdFile.OpenError.PipeBusy => OpenError.Busy,
+                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .file = .{ .handle = opened.handle } } };
+            },
+            .abs => |inner| {
+                const opened = std.fs.cwd().createFileZ(inner, std_flags) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdFile.OpenError.WouldBlock => return null,
+                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                        StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .file = .{ .handle = opened.handle } } };
+            },
+        }
+    }
+
+    fn open_dir(path: Path) ?InnerOpenResult {
+        switch (path) {
+            .rel => |inner| {
+                const dir: StdDir = .{ .fd = inner.dir };
+                const opened = dir.openDirZ(inner.path, .{ .iterate = true }) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .dir = .{ .handle = opened.fd } } };
+            },
+            .abs => |inner| {
+                const opened = std.fs.cwd().openDirZ(inner, .{ .iterate = true }) catch |e| {
+                    const err: OpenError = switch (e) {
+                        StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
+                        else => OpenError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = .{ .dir = .{ .handle = opened.fd } } };
+            },
+        }
+    }
+
+    fn read_file(fd: std.posix.fd_t, buffer: []u8, offset: ?usize) ReadResult {
+        switch (comptime builtin.os.tag) {
+            .windows => {
+                const read = std.os.windows.ReadFile(fd, buffer, offset) catch |e| {
+                    const err: ReadError = switch (e) {
+                        else => ReadError.Unexpected,
+                        //std.os.windows.ReadFileError.BrokenPipe => .{},
+                    };
+
+                    return .{ .err = err };
+                };
+
+                if (read == 0) return .{ .err = ReadError.EndOfFile };
+                return .{ .actual = read };
+            },
+            else => if (offset) |o| {
+                const read = std.posix.pread(fd, buffer, o) catch |e| {
+                    const err: ReadError = switch (e) {
+                        else => ReadError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                if (read == 0) return .{ .err = ReadError.EndOfFile };
+                return .{ .actual = read };
+            } else {
+                const read = std.posix.read(fd, buffer) catch |e| {
+                    const err: ReadError = switch (e) {
+                        else => ReadError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                if (read == 0) return .{ .err = ReadError.EndOfFile };
+                return .{ .actual = read };
+            },
+        }
+    }
+
+    fn write_file(fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) WriteResult {
+        switch (comptime builtin.os.tag) {
+            .windows => {
+                const write = std.os.windows.WriteFile(fd, buffer, offset) catch |e| {
+                    switch (e) {
+                        else => WriteError.Unexpected,
+                        //std.os.windows.WriteFileError.BrokenPipe => .{},
+                    }
+                };
+
+                return .{ .actual = write };
+            },
+            else => if (offset) |o| {
+                const write = std.posix.pwrite(fd, buffer, o) catch |e| {
+                    const err: WriteError = switch (e) {
+                        else => WriteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = write };
+            } else {
+                const write = std.posix.write(fd, buffer) catch |e| {
+                    const err = switch (e) {
+                        else => WriteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = write };
+            },
+        }
+    }
+
+    fn delete_file(path: Path) DeleteResult {
+        switch (path) {
+            .rel => |inner| {
+                const dir: StdDir = .{ .fd = inner.dir };
+                dir.deleteFileZ(inner.path) catch |e| {
+                    const err: DeleteError = switch (e) {
+                        StdDir.DeleteFileError.AccessDenied => DeleteError.AccessDenied,
+                        else => DeleteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = {} };
+            },
+            .abs => |inner| {
+                std.fs.cwd().deleteFileZ(inner) catch |e| {
+                    const err: DeleteError = switch (e) {
+                        StdDir.DeleteFileError.AccessDenied => DeleteError.AccessDenied,
+                        else => DeleteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = {} };
+            },
+        }
+    }
+
+    fn delete_dir(path: Path) DeleteResult {
+        switch (path) {
+            .rel => |inner| {
+                const dir: StdDir = .{ .fd = inner.dir };
+                dir.deleteDirZ(inner.path) catch |e| {
+                    const err: DeleteError = switch (e) {
+                        StdDir.DeleteDirError.AccessDenied => DeleteError.AccessDenied,
+                        else => DeleteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = {} };
+            },
+            .abs => |inner| {
+                std.fs.cwd().deleteDirZ(inner) catch |e| {
+                    const err: DeleteError = switch (e) {
+                        StdDir.DeleteDirError.AccessDenied => DeleteError.AccessDenied,
+                        else => DeleteError.Unexpected,
+                    };
+
+                    return .{ .err = err };
+                };
+
+                return .{ .actual = {} };
+            },
+        }
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
@@ -239,7 +565,7 @@ pub const AsyncBusyLoop = struct {
             }
 
             while (i < loop.inner.items.len and reaped < self.completions.len) : (i += 1) {
-                const job = loop.inner.items[i];
+                const job = &loop.inner.items[i];
 
                 switch (job.type) {
                     // handled above with a wake_signal.
@@ -256,40 +582,70 @@ pub const AsyncBusyLoop = struct {
                         i -|= 1;
                         reaped += 1;
                     },
-                    .open => |path| {
+                    .open => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const result: InnerOpenResult = blk: {
-                            const open_result = std.fs.cwd().openFileZ(path.ptr, .{}) catch |e| {
-                                const open_err: OpenError = switch (e) {
-                                    File.OpenError.WouldBlock => continue,
-                                    File.OpenError.AccessDenied => OpenError.AccessDenied,
-                                    File.OpenError.BadPathName => OpenError.InvalidArguments,
-                                    File.OpenError.DeviceBusy => OpenError.FileBusy,
-                                    File.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                                    File.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                                    File.OpenError.FileNotFound => OpenError.FileNotFound,
-                                    File.OpenError.PipeBusy => OpenError.FileBusy,
-                                    File.OpenError.FileTooBig => OpenError.FileTooBig,
-                                    File.OpenError.SharingViolation => OpenError.FileLocked,
-                                    File.OpenError.IsDir => OpenError.IsDirectory,
-                                    File.OpenError.NameTooLong => OpenError.NameTooLong,
-                                    File.OpenError.NoDevice => OpenError.DeviceNotFound,
-                                    File.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                                    File.OpenError.NotDir => OpenError.NotADirectory,
-                                    File.OpenError.PathAlreadyExists => OpenError.FileAlreadyExists,
-                                    File.OpenError.SymLinkLoop => OpenError.Loop,
-                                    File.OpenError.SystemResources => OpenError.OutOfMemory,
-                                    else => OpenError.Unexpected,
-                                };
-                                log.debug("open failed: {}", .{e});
-                                break :blk .{ .err = open_err };
-                            };
-
-                            break :blk .{ .actual = open_result.handle };
+                        const result: InnerOpenResult = if (inner.flags.create) switch (inner.kind) {
+                            .file => create_file(inner.path, inner.flags) orelse continue,
+                            // Handled in mkdir.
+                            .dir => unreachable,
+                        } else switch (inner.kind) {
+                            .file => open_file(inner.path, inner.flags) orelse continue,
+                            .dir => open_dir(inner.path) orelse continue,
                         };
 
                         com_ptr.result = .{ .open = result };
+                        com_ptr.task = job.task;
+                        _ = loop.inner.swapRemove(i);
+                        i -|= 1;
+                        reaped += 1;
+                    },
+                    .delete => |inner| {
+                        const com_ptr = &self.completions[reaped];
+
+                        const result: DeleteResult = if (inner.is_dir)
+                            delete_dir(inner.path)
+                        else
+                            delete_file(inner.path);
+
+                        com_ptr.result = .{ .delete = result };
+                        com_ptr.task = job.task;
+                        _ = loop.inner.swapRemove(i);
+                        i -|= 1;
+                        reaped += 1;
+                    },
+                    .mkdir => |inner| {
+                        const com_ptr = &self.completions[reaped];
+
+                        const result: MkdirResult = blk: {
+                            switch (inner.path) {
+                                .rel => |path| {
+                                    const dir: StdDir = .{ .fd = path.dir };
+                                    dir.makeDirZ(path.path) catch |e| {
+                                        const err: MkdirError = switch (e) {
+                                            else => MkdirError.Unexpected,
+                                        };
+
+                                        break :blk .{ .err = err };
+                                    };
+
+                                    break :blk .{ .actual = {} };
+                                },
+                                .abs => |path| {
+                                    std.fs.makeDirAbsoluteZ(path) catch |e| {
+                                        const err: MkdirError = switch (e) {
+                                            else => MkdirError.Unexpected,
+                                        };
+
+                                        break :blk .{ .err = err };
+                                    };
+
+                                    break :blk .{ .actual = {} };
+                                },
+                            }
+                        };
+
+                        com_ptr.result = .{ .mkdir = result };
                         com_ptr.task = job.task;
                         _ = loop.inner.swapRemove(i);
                         i -|= 1;
@@ -299,15 +655,13 @@ pub const AsyncBusyLoop = struct {
                         const com_ptr = &self.completions[reaped];
 
                         const result: StatResult = blk: {
-                            const file: File = .{ .handle = fd };
+                            const file: StdFile = .{ .handle = fd };
                             const stat_result = file.stat() catch |e| {
                                 const stat_err: StatError = switch (e) {
-                                    File.StatError.AccessDenied => StatError.AccessDenied,
-                                    File.StatError.SystemResources => StatError.OutOfMemory,
-                                    File.StatError.Unexpected => StatError.Unexpected,
+                                    StdFile.StatError.AccessDenied => StatError.AccessDenied,
+                                    StdFile.StatError.SystemResources => StatError.OutOfMemory,
+                                    StdFile.StatError.Unexpected => StatError.Unexpected,
                                 };
-
-                                log.debug("stat failed: {}", .{e});
                                 break :blk .{ .err = stat_err };
                             };
 
@@ -340,44 +694,7 @@ pub const AsyncBusyLoop = struct {
                     .read => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const result: ReadResult = blk: {
-                            const read_result = std.posix.pread(inner.fd, inner.buffer, inner.offset) catch |e| {
-                                const read_err: ReadError = err: {
-                                    switch (e) {
-                                        std.posix.PReadError.WouldBlock => continue,
-                                        std.posix.PReadError.Unseekable => {
-                                            const other_read_result = std.posix.read(inner.fd, inner.buffer) catch |e2| {
-                                                switch (e2) {
-                                                    std.posix.ReadError.WouldBlock => continue,
-                                                    std.posix.ReadError.AccessDenied => break :err ReadError.AccessDenied,
-                                                    std.posix.ReadError.IsDir => break :err ReadError.IsDirectory,
-                                                    std.posix.ReadError.NotOpenForReading => break :err ReadError.InvalidFd,
-                                                    std.posix.ReadError.InputOutput => break :err ReadError.IoError,
-                                                    else => {
-                                                        log.err("read unexpected error: {}", .{e2});
-                                                        break :err ReadError.Unexpected;
-                                                    },
-                                                }
-                                            };
-
-                                            break :blk .{ .actual = other_read_result };
-                                        },
-                                        std.posix.PReadError.AccessDenied => break :err ReadError.AccessDenied,
-                                        std.posix.PReadError.IsDir => break :err ReadError.IsDirectory,
-                                        std.posix.PReadError.NotOpenForReading => break :err ReadError.InvalidFd,
-                                        std.posix.PReadError.InputOutput => break :err ReadError.IoError,
-                                        else => {
-                                            log.err("pread unexpected error: {}", .{e});
-                                            break :err ReadError.Unexpected;
-                                        },
-                                    }
-                                };
-
-                                break :blk .{ .err = read_err };
-                            };
-
-                            break :blk .{ .actual = read_result };
-                        };
+                        const result: ReadResult = read_file(inner.fd, inner.buffer, inner.offset);
 
                         com_ptr.result = .{ .read = result };
                         com_ptr.task = job.task;
@@ -388,52 +705,7 @@ pub const AsyncBusyLoop = struct {
                     .write => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const result: WriteResult = blk: {
-                            const write_result = std.posix.pwrite(inner.fd, inner.buffer, inner.offset) catch |e| {
-                                const write_err: WriteError = err: {
-                                    switch (e) {
-                                        std.posix.PWriteError.WouldBlock => continue,
-                                        std.posix.PWriteError.Unseekable => {
-                                            const other_write_result = std.posix.write(inner.fd, inner.buffer) catch |e2| {
-                                                switch (e2) {
-                                                    std.posix.WriteError.WouldBlock => continue,
-                                                    std.posix.WriteError.AccessDenied => break :err WriteError.AccessDenied,
-                                                    std.posix.WriteError.DiskQuota => break :err WriteError.DiskQuotaExceeded,
-                                                    std.posix.WriteError.FileTooBig => break :err WriteError.FileTooBig,
-                                                    std.posix.WriteError.NoSpaceLeft => break :err WriteError.NoSpace,
-                                                    std.posix.WriteError.BrokenPipe => break :err WriteError.BrokenPipe,
-                                                    std.posix.WriteError.InvalidArgument => break :err WriteError.InvalidArguments,
-                                                    std.posix.WriteError.InputOutput => break :err WriteError.IoError,
-                                                    std.posix.WriteError.NotOpenForWriting => break :err WriteError.InvalidFd,
-                                                    else => {
-                                                        log.err("write unexpected error: {}", .{e2});
-                                                        break :err WriteError.Unexpected;
-                                                    },
-                                                }
-                                            };
-
-                                            break :blk .{ .actual = other_write_result };
-                                        },
-                                        std.posix.PWriteError.AccessDenied => break :err WriteError.AccessDenied,
-                                        std.posix.PWriteError.DiskQuota => break :err WriteError.DiskQuotaExceeded,
-                                        std.posix.PWriteError.FileTooBig => break :err WriteError.FileTooBig,
-                                        std.posix.PWriteError.NoSpaceLeft => break :err WriteError.NoSpace,
-                                        std.posix.PWriteError.BrokenPipe => break :err WriteError.BrokenPipe,
-                                        std.posix.PWriteError.InvalidArgument => break :err WriteError.InvalidArguments,
-                                        std.posix.PWriteError.InputOutput => break :err WriteError.IoError,
-                                        std.posix.PWriteError.NotOpenForWriting => break :err WriteError.InvalidFd,
-                                        else => {
-                                            log.err("pwrite unexpected error: {}", .{e});
-                                            break :err WriteError.Unexpected;
-                                        },
-                                    }
-                                };
-
-                                break :blk .{ .err = write_err };
-                            };
-
-                            break :blk .{ .actual = write_result };
-                        };
+                        const result: WriteResult = write_file(inner.fd, inner.buffer, inner.offset);
 
                         com_ptr.result = .{ .write = result };
                         com_ptr.task = job.task;
@@ -450,33 +722,39 @@ pub const AsyncBusyLoop = struct {
                         i -|= 1;
                         reaped += 1;
                     },
-                    .accept => |socket| {
+                    .accept => |*inner| {
                         const com_ptr = &self.completions[reaped];
 
                         const result: AcceptResult = blk: {
-                            const accept_result = std.posix.accept(socket, null, null, 0) catch |e| {
+                            const accept_result = std.posix.accept(
+                                inner.socket,
+                                &inner.addr.any,
+                                @ptrCast(&inner.addr_len),
+                                0,
+                            ) catch |e| {
                                 const accept_err: AcceptError = err: {
-                                    switch (e) {
+                                    break :err switch (e) {
                                         std.posix.AcceptError.WouldBlock => continue,
-                                        std.posix.AcceptError.FileDescriptorNotASocket => break :err AcceptError.NotASocket,
-                                        std.posix.AcceptError.ConnectionResetByPeer => break :err AcceptError.ConnectionAborted,
-                                        std.posix.AcceptError.ConnectionAborted => break :err AcceptError.ConnectionAborted,
-                                        std.posix.AcceptError.SystemFdQuotaExceeded => break :err AcceptError.SystemFdQuotaExceeded,
-                                        std.posix.AcceptError.ProcessFdQuotaExceeded => break :err AcceptError.ProcessFdQuotaExceeded,
-                                        std.posix.AcceptError.SystemResources => break :err AcceptError.OutOfMemory,
-                                        std.posix.AcceptError.SocketNotListening => break :err AcceptError.NotListening,
-                                        std.posix.AcceptError.OperationNotSupported => break :err AcceptError.OperationNotSupported,
-                                        else => {
-                                            log.err("accept unexpected error: {}", .{e});
-                                            break :err AcceptError.Unexpected;
-                                        },
-                                    }
+                                        std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
+                                        std.posix.AcceptError.ConnectionResetByPeer => AcceptError.ConnectionAborted,
+                                        std.posix.AcceptError.ConnectionAborted => AcceptError.ConnectionAborted,
+                                        std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
+                                        std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                                        std.posix.AcceptError.SystemResources => AcceptError.OutOfMemory,
+                                        std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
+                                        std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                                        else => AcceptError.Unexpected,
+                                    };
                                 };
 
                                 break :blk .{ .err = accept_err };
                             };
 
-                            break :blk .{ .actual = accept_result };
+                            break :blk .{ .actual = .{
+                                .handle = accept_result,
+                                .addr = inner.addr,
+                                .kind = inner.kind,
+                            } };
                         };
 
                         com_ptr.result = .{ .accept = result };
@@ -488,39 +766,33 @@ pub const AsyncBusyLoop = struct {
                     .connect => |inner| {
                         const com_ptr = &self.completions[reaped];
 
-                        const addr_len: std.posix.socklen_t = switch (inner.addr.any.family) {
-                            std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
-                            std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
-                            std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
-                            else => @panic("Unsupported!"),
-                        };
-
                         const result: ConnectResult = blk: {
-                            std.posix.connect(inner.socket, &inner.addr.any, addr_len) catch |e| {
+                            std.posix.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address)) catch |e| {
                                 const connect_err: ConnectError = err: {
-                                    switch (e) {
+                                    break :err switch (e) {
                                         std.posix.ConnectError.WouldBlock => continue,
-                                        std.posix.ConnectError.PermissionDenied => break :err ConnectError.AccessDenied,
-                                        std.posix.ConnectError.ConnectionResetByPeer => break :err ConnectError.ConnectionRefused,
-                                        std.posix.ConnectError.ConnectionPending => break :err ConnectError.AlreadyConnected,
-                                        std.posix.ConnectError.AddressInUse => break :err ConnectError.AddressInUse,
-                                        std.posix.ConnectError.AddressNotAvailable => break :err ConnectError.AddressNotAvailable,
-                                        std.posix.ConnectError.AddressFamilyNotSupported => break :err ConnectError.AddressFamilyNotSupported,
-                                        std.posix.ConnectError.NetworkUnreachable => break :err ConnectError.NetworkUnreachable,
-                                        std.posix.ConnectError.ConnectionTimedOut => break :err ConnectError.TimedOut,
-                                        std.posix.ConnectError.FileNotFound => break :err ConnectError.NotASocket,
-                                        std.posix.ConnectError.ConnectionRefused => break :err ConnectError.ConnectionRefused,
-                                        else => {
-                                            log.err("connect unexpected error: {}", .{e});
-                                            break :err ConnectError.Unexpected;
-                                        },
-                                    }
+                                        std.posix.ConnectError.PermissionDenied => ConnectError.AccessDenied,
+                                        std.posix.ConnectError.ConnectionResetByPeer => ConnectError.ConnectionRefused,
+                                        std.posix.ConnectError.ConnectionPending => ConnectError.AlreadyConnected,
+                                        std.posix.ConnectError.AddressInUse => ConnectError.AddressInUse,
+                                        std.posix.ConnectError.AddressNotAvailable => ConnectError.AddressNotAvailable,
+                                        std.posix.ConnectError.AddressFamilyNotSupported => ConnectError.AddressFamilyNotSupported,
+                                        std.posix.ConnectError.NetworkUnreachable => ConnectError.NetworkUnreachable,
+                                        std.posix.ConnectError.ConnectionTimedOut => ConnectError.TimedOut,
+                                        std.posix.ConnectError.FileNotFound => ConnectError.NotASocket,
+                                        std.posix.ConnectError.ConnectionRefused => ConnectError.ConnectionRefused,
+                                        else => ConnectError.Unexpected,
+                                    };
                                 };
 
                                 break :blk .{ .err = connect_err };
                             };
 
-                            break :blk .{ .actual = inner.socket };
+                            break :blk .{ .actual = .{
+                                .handle = inner.socket,
+                                .addr = inner.addr,
+                                .kind = inner.kind,
+                            } };
                         };
 
                         com_ptr.result = .{ .connect = result };
@@ -535,17 +807,14 @@ pub const AsyncBusyLoop = struct {
                         const result: RecvResult = blk: {
                             const recv_result = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const recv_err: RecvError = err: {
-                                    switch (e) {
+                                    break :err switch (e) {
                                         std.posix.RecvFromError.WouldBlock => continue,
-                                        std.posix.RecvFromError.SystemResources => break :err RecvError.OutOfMemory,
-                                        std.posix.RecvFromError.SocketNotConnected => break :err RecvError.NotConnected,
-                                        std.posix.RecvFromError.ConnectionResetByPeer => break :err RecvError.Closed,
-                                        std.posix.RecvFromError.ConnectionRefused => break :err RecvError.ConnectionRefused,
-                                        else => {
-                                            log.err("recv unexpected error: {}", .{e});
-                                            break :err RecvError.Unexpected;
-                                        },
-                                    }
+                                        std.posix.RecvFromError.SystemResources => RecvError.OutOfMemory,
+                                        std.posix.RecvFromError.SocketNotConnected => RecvError.NotConnected,
+                                        std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
+                                        std.posix.RecvFromError.ConnectionRefused => RecvError.ConnectionRefused,
+                                        else => break :err RecvError.Unexpected,
+                                    };
                                 };
                                 break :blk .{ .err = recv_err };
                             };
@@ -564,19 +833,16 @@ pub const AsyncBusyLoop = struct {
                         const result: SendResult = blk: {
                             const send_result = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 const send_err: SendError = err: {
-                                    switch (e) {
+                                    break :err switch (e) {
                                         std.posix.SendError.WouldBlock => continue,
-                                        std.posix.SendError.SystemResources => break :err SendError.OutOfMemory,
-                                        std.posix.SendError.AccessDenied => break :err SendError.AccessDenied,
-                                        std.posix.SendError.ConnectionResetByPeer => break :err SendError.ConnectionReset,
-                                        std.posix.SendError.BrokenPipe => break :err SendError.BrokenPipe,
-                                        std.posix.SendError.FileDescriptorNotASocket => break :err SendError.InvalidFd,
-                                        std.posix.SendError.FastOpenAlreadyInProgress => break :err SendError.AlreadyConnected,
-                                        else => {
-                                            log.err("send unexpected error: {}", .{e});
-                                            break :err SendError.Unexpected;
-                                        },
-                                    }
+                                        std.posix.SendError.SystemResources => SendError.OutOfMemory,
+                                        std.posix.SendError.AccessDenied => SendError.AccessDenied,
+                                        std.posix.SendError.ConnectionResetByPeer => SendError.ConnectionReset,
+                                        std.posix.SendError.BrokenPipe => SendError.BrokenPipe,
+                                        std.posix.SendError.FileDescriptorNotASocket => SendError.InvalidFd,
+                                        std.posix.SendError.FastOpenAlreadyInProgress => SendError.AlreadyConnected,
+                                        else => SendError.Unexpected,
+                                    };
                                 };
                                 break :blk .{ .err = send_err };
                             };
@@ -602,17 +868,8 @@ pub const AsyncBusyLoop = struct {
     pub fn to_async(self: *AsyncBusyLoop) AsyncIO {
         return AsyncIO{
             .runner = self,
+            ._queue_job = queue_job,
             ._deinit = deinit,
-            ._queue_timer = queue_timer,
-            ._queue_open = queue_open,
-            ._queue_stat = queue_stat,
-            ._queue_read = queue_read,
-            ._queue_write = queue_write,
-            ._queue_close = queue_close,
-            ._queue_accept = queue_accept,
-            ._queue_connect = queue_connect,
-            ._queue_recv = queue_recv,
-            ._queue_send = queue_send,
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,

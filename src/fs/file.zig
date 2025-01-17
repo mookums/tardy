@@ -28,6 +28,7 @@ pub const File = struct {
 
     pub const CreateFlags = struct {
         mode: FileMode = .write,
+        perms: std.posix.mode_t = 0o644,
         truncate: bool = true,
         overwrite: bool = true,
     };
@@ -68,7 +69,7 @@ pub const File = struct {
     ) !void {
         const aio_flags: AioOpenFlags = .{
             .mode = flags.mode,
-            .perms = 0o644,
+            .perms = flags.perms,
             .create = true,
             .truncate = flags.truncate,
             .exclusive = !flags.overwrite,
@@ -163,7 +164,7 @@ pub const File = struct {
             buffer: []u8,
             read: usize,
             offset: ?usize = null,
-            file: *const File,
+            file: File,
             task_ctx: @TypeOf(task_ctx),
 
             fn read_all_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
@@ -213,7 +214,7 @@ pub const File = struct {
         p.* = Provision{
             .buffer = buffer,
             .read = 0,
-            .file = self,
+            .file = self.*,
             .offset = offset,
             .task_ctx = task_ctx,
         };
@@ -239,7 +240,7 @@ pub const File = struct {
             buffer: []u8,
             list: *ZeroCopy(u8),
             offset: ?usize = null,
-            file: *const File,
+            file: File,
             task_ctx: @TypeOf(task_ctx),
 
             fn read_all_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
@@ -283,7 +284,7 @@ pub const File = struct {
         p.* = Provision{
             .buffer = try list.get_write_area(READ_CHUNK_SIZE),
             .list = list,
-            .file = self,
+            .file = self.*,
             .offset = offset,
             .task_ctx = task_ctx,
         };
@@ -348,7 +349,7 @@ pub const File = struct {
             buffer: []const u8,
             wrote: usize,
             offset: ?usize = null,
-            file: *const File,
+            file: File,
             task_ctx: @TypeOf(task_ctx),
 
             fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
@@ -393,7 +394,7 @@ pub const File = struct {
         p.* = Provision{
             .buffer = buffer,
             .wrote = 0,
-            .file = self,
+            .file = self.*,
             .offset = offset,
             .task_ctx = task_ctx,
         };

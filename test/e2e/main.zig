@@ -9,7 +9,6 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
 const Dir = @import("tardy").Dir;
-const TcpServer = @import("tardy").TcpServer;
 
 const SharedParams = @import("lib.zig").SharedParams;
 
@@ -17,7 +16,7 @@ const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .err,
+    .log_level = .warn,
 };
 
 pub fn main() !void {

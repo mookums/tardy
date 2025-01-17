@@ -3,6 +3,7 @@ const std = @import("std");
 const Timespec = @import("../lib.zig").Timespec;
 const Path = @import("../fs/lib.zig").Path;
 const Socket = @import("../net/lib.zig").Socket;
+const AioOpenFlags = @import("lib.zig").AioOpenFlags;
 
 pub const Job = struct {
     type: union(enum) {
@@ -10,7 +11,7 @@ pub const Job = struct {
         timer: TimerJob,
         open: OpenJob,
         mkdir: MkdirJob,
-        delete: Path,
+        delete: DeleteJob,
         stat: std.posix.fd_t,
         read: ReadJob,
         write: WriteJob,
@@ -21,8 +22,8 @@ pub const Job = struct {
         recv: RecvJob,
     },
 
-    index: usize,
-    task: usize,
+    index: usize = 0,
+    task: usize = 0,
 };
 
 const TimerJob = union(enum) {
@@ -34,12 +35,17 @@ const TimerJob = union(enum) {
 const OpenJob = struct {
     path: Path,
     kind: enum { file, dir },
-    perms: ?std.posix.mode_t,
+    flags: AioOpenFlags,
 };
 
 const MkdirJob = struct {
     path: Path,
     mode: std.posix.mode_t,
+};
+
+const DeleteJob = struct {
+    path: Path,
+    is_dir: bool,
 };
 
 const ReadJob = struct {

@@ -63,7 +63,7 @@ pub const Dir = struct {
                 {
                     errdefer runtime.allocator.destroy(p);
 
-                    _ = res.unwrap() catch |e| {
+                    res.unwrap() catch |e| {
                         try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
                         return e;
                     };

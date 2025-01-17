@@ -61,7 +61,7 @@ fn recv_task(rt: *Runtime, result: RecvResult, provision: *Provision) !void {
         return;
     };
 
-    try provision.socket.send(rt, provision, send_task, provision.buffer[0..length]);
+    try provision.socket.send_all(rt, provision, send_task, provision.buffer[0..length]);
 }
 
 fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
@@ -82,13 +82,16 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const size = 1024;
 
-    var tardy = try Tardy.init(allocator, .{ .threading = .single });
+    var tardy = try Tardy.init(allocator, .{
+        .threading = .single,
+        .pooling = .static,
+    });
     defer tardy.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server = try Socket.init(.tcp, host, port);
+    const server = try Socket.init(.{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
     try server.listen(1024);
 

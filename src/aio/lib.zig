@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.@"tardy/aio");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 const Completion = @import("completion.zig").Completion;
@@ -176,6 +177,7 @@ pub const AsyncIO = struct {
 
     pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
         assert(self.attached);
+        log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
         try @call(.auto, self._queue_job, .{ self, task, job });
     }
 
@@ -220,7 +222,7 @@ pub const AioOpenFlags = struct {
     /// Fail if the file already exists.
     exclusive: bool = false,
     /// Open the file for non-blocking I/O.
-    non_block: bool = false,
+    non_block: bool = true,
     /// Ensure data is physically written to disk immediately.
     sync: bool = false,
     /// Ensure that the file is a directory.

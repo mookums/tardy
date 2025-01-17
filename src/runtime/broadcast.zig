@@ -19,7 +19,7 @@ pub fn Broadcast(comptime T: type) type {
         pub fn init(allocator: std.mem.Allocator, channel_count: usize) !Self {
             return .{
                 .allocator = allocator,
-                .channels = try Pool(Channel(T)).init(allocator, channel_count),
+                .channels = try Pool(Channel(T)).init(allocator, channel_count, .static),
             };
         }
 

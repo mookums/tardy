@@ -24,20 +24,30 @@ pub const Socket = struct {
         }
     };
 
+    const HostPort = struct {
+        host: []const u8,
+        port: u16,
+    };
+
+    pub const InitKind = union(Kind) {
+        tcp: HostPort,
+        udp: HostPort,
+        unix: []const u8,
+    };
+
     handle: std.posix.socket_t,
     addr: std.net.Address,
     kind: Kind,
 
-    pub fn init(kind: Kind, host: []const u8, port: ?u16) !Socket {
+    pub fn init(kind: InitKind) !Socket {
         const addr = switch (kind) {
-            .tcp, .udp => blk: {
-                assert(port != null);
+            .tcp, .udp => |inner| blk: {
                 break :blk if (comptime builtin.os.tag == .linux)
-                    try std.net.Address.resolveIp(host, port.?)
+                    try std.net.Address.resolveIp(inner.host, inner.port)
                 else
-                    try std.net.Address.parseIp(host, port.?);
+                    try std.net.Address.parseIp(inner.host, inner.port);
             },
-            .unix => try std.net.Address.initUnix(host),
+            .unix => |path| try std.net.Address.initUnix(path),
         };
 
         const sock_type: u32 = switch (kind) {
@@ -122,6 +132,7 @@ pub const Socket = struct {
         comptime task_fn: TaskFn(AcceptResult, @TypeOf(task_ctx)),
     ) !void {
         assert(self.kind.listenable());
+        // TODO: force nonblocking on all sockets accepted
 
         try rt.scheduler.spawn(
             AcceptResult,
@@ -173,8 +184,8 @@ pub const Socket = struct {
         const Provision = struct {
             const Self = @This();
             buffer: []u8,
-            recv: usize,
-            socket: *const Socket,
+            count: usize,
+            socket: Socket,
             task_ctx: @TypeOf(task_ctx),
 
             fn recv_all_task(runtime: *Runtime, res: RecvResult, p: *Self) !void {
@@ -194,18 +205,18 @@ pub const Socket = struct {
                             },
                         }
                     };
-                    p.recv += length;
+                    p.count += length;
 
-                    assert(p.recv <= p.buffer.len);
-                    if (p.recv == p.buffer.len)
+                    assert(p.count <= p.buffer.len);
+                    if (p.count == p.buffer.len)
                         run_task = true
                     else
-                        try p.socket.recv(runtime, p, recv_all_task, p.buffer[p.recv..]);
+                        try p.socket.recv(runtime, p, recv_all_task, p.buffer[p.count..]);
                 }
 
                 if (run_task) {
                     defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.recv }, p.task_ctx);
+                    try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
                 }
             }
         };
@@ -214,8 +225,8 @@ pub const Socket = struct {
         errdefer rt.allocator.destroy(p);
         p.* = Provision{
             .buffer = buffer,
-            .recv = 0,
-            .socket = self,
+            .count = 0,
+            .socket = self.*,
             .task_ctx = task_ctx,
         };
 
@@ -248,8 +259,8 @@ pub const Socket = struct {
         const Provision = struct {
             const Self = @This();
             buffer: []const u8,
-            send: usize,
-            socket: *const Socket,
+            count: usize,
+            socket: Socket,
             task_ctx: @TypeOf(task_ctx),
 
             fn send_all_task(runtime: *Runtime, res: SendResult, p: *Self) !void {
@@ -261,16 +272,16 @@ pub const Socket = struct {
                         return e;
                     };
 
-                    p.send += length;
-                    if (p.send >= p.buffer.len)
+                    p.count += length;
+                    if (p.count >= p.buffer.len)
                         run_task = true
                     else
-                        try p.socket.send(runtime, p, send_all_task, p.buffer[p.send..]);
+                        try p.socket.send(runtime, p, send_all_task, p.buffer[p.count..]);
                 }
 
                 if (run_task) {
                     defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = {} }, p.task_ctx);
+                    try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
                 }
             }
         };
@@ -279,8 +290,8 @@ pub const Socket = struct {
         errdefer rt.allocator.destroy(p);
         p.* = Provision{
             .buffer = buffer,
-            .send = 0,
-            .socket = self,
+            .count = 0,
+            .socket = self.*,
             .task_ctx = task_ctx,
         };
 
