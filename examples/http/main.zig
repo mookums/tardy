@@ -14,7 +14,10 @@ const AcceptResult = @import("tardy").AcceptResult;
 const RecvResult = @import("tardy").RecvResult;
 const SendResult = @import("tardy").SendResult;
 
-fn echo_frame(rt: *Runtime, server: *const Socket) !void {
+const STACK_SIZE: usize = 1024 * 16;
+const HTTP_RESPONSE = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 27\r\nContent-Type: text/plain\r\n\r\nThis is an HTTP benchmark\r\n";
+
+fn main_frame(rt: *Runtime, server: *const Socket) !void {
     const socket = try server.accept().resolve(rt);
     defer socket.close_blocking();
 
@@ -24,21 +27,23 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
     );
 
     // spawn off a new frame.
-    try rt.spawn_frame(.{ rt, server }, echo_frame, 1024 * 16);
+    try rt.spawn_frame(.{ rt, server }, main_frame, STACK_SIZE);
 
     var buffer: [1024]u8 = undefined;
+    var recv_length: usize = 0;
     while (true) {
-        const recv_length = socket.recv(&buffer).resolve(rt) catch |e| {
+        recv_length += socket.recv(&buffer).resolve(rt) catch |e| {
             log.err("Failed to recv on socket | {}", .{e});
             return;
         };
 
-        const send_length = socket.send_all(buffer[0..recv_length]).resolve(rt) catch |e| {
-            log.err("Failed to send on socket | {}", .{e});
-            return;
-        };
-
-        log.debug("Echoed: {s}", .{buffer[0..send_length]});
+        if (std.mem.indexOf(u8, buffer[0..recv_length], "\r\n\r\n")) |_| {
+            _ = socket.send_all(HTTP_RESPONSE[0..]).resolve(rt) catch |e| {
+                log.err("Failed to send on socket | {}", .{e});
+                return;
+            };
+            recv_length = 0;
+        }
     }
 }
 
@@ -48,10 +53,10 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .single,
-        .pooling = .static,
+        .threading = .auto,
+        .pooling = .grow,
         .size_tasks_initial = 256,
-        .size_aio_reap_max = 256,
+        .size_aio_reap_max = 1024,
     });
     defer tardy.deinit();
 
@@ -66,7 +71,7 @@ pub fn main() !void {
         &server,
         struct {
             fn start(rt: *Runtime, tcp_server: *const Socket) !void {
-                try rt.spawn_frame(.{ rt, tcp_server }, echo_frame, 1024 * 16);
+                try rt.spawn_frame(.{ rt, tcp_server }, main_frame, STACK_SIZE);
             }
         }.start,
         {},
