@@ -5,22 +5,18 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 const Path = @import("lib.zig").Path;
+const Stat = @import("lib.zig").Stat;
 
 const FileMode = @import("../aio/lib.zig").FileMode;
 const AioOpenFlags = @import("../aio/lib.zig").AioOpenFlags;
 
-const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
-
 const Resulted = @import("../aio/completion.zig").Resulted;
+const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
 const StatResult = @import("../aio/completion.zig").StatResult;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
-
-const WriteAllResult = @import("../aio/completion.zig").WriteAllResult;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
-const WriteError = @import("../aio/completion.zig").WriteError;
 
 const Cross = @import("../cross/lib.zig");
-const ZeroCopy = @import("../core/zero_copy.zig").ZeroCopy;
 const wrap = @import("../utils.zig").wrap;
 
 pub const File = struct {
@@ -60,13 +56,46 @@ pub const File = struct {
         return .{ .handle = Cross.get_std_err() };
     }
 
-    pub fn create(
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
+    const CreateAction = struct {
         path: Path,
-        flags: CreateFlags,
-    ) !void {
+        flags: AioOpenFlags,
+
+        pub fn resolve(self: *const CreateAction, rt: *Runtime) !File {
+            try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = self.flags } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            const result: OpenFileResult = switch (task.result) {
+                .open => |inner| switch (inner) {
+                    .actual => |actual| .{ .actual = actual.file },
+                    .err => |err| .{ .err = err },
+                },
+                else => unreachable,
+            };
+
+            return try result.unwrap();
+        }
+
+        pub fn callback(
+            self: *const OpenAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                OpenFileResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .open = .{
+                    .path = self.path,
+                    .flags = self.flags,
+                } },
+            );
+        }
+    };
+
+    pub fn create(path: Path, flags: CreateFlags) CreateAction {
         const aio_flags: AioOpenFlags = .{
             .mode = flags.mode,
             .perms = flags.perms,
@@ -76,351 +105,356 @@ pub const File = struct {
             .directory = false,
         };
 
-        try rt.scheduler.spawn(
-            OpenFileResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .open = .{ .path = path, .flags = aio_flags } },
-        );
+        return .{ .path = path, .flags = aio_flags };
     }
 
-    pub fn open(
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
+    const OpenAction = struct {
         path: Path,
         flags: OpenFlags,
-    ) !void {
-        const aio_flags: AioOpenFlags = .{
-            .mode = flags.mode,
-            .create = false,
-            .directory = false,
-        };
 
-        try rt.scheduler.spawn(
-            OpenFileResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .open = .{
-                .path = path,
-                .flags = aio_flags,
-            } },
-        );
+        pub fn resolve(self: *const OpenAction, rt: *Runtime) !File {
+            const aio_flags: AioOpenFlags = .{
+                .mode = self.flags.mode,
+                .create = false,
+                .directory = false,
+            };
+            try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = aio_flags } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            const result: OpenFileResult = switch (task.result) {
+                .open => |inner| switch (inner) {
+                    .actual => |actual| .{ .actual = actual.file },
+                    .err => |err| .{ .err = err },
+                },
+                else => unreachable,
+            };
+
+            return try result.unwrap();
+        }
+
+        pub fn callback(
+            self: *const OpenAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(OpenFileResult, @TypeOf(task_ctx)),
+        ) !void {
+            const aio_flags: AioOpenFlags = .{
+                .mode = self.flags.mode,
+                .create = false,
+                .directory = false,
+            };
+
+            try rt.scheduler.spawn(
+                OpenFileResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .open = .{
+                    .path = self.path,
+                    .flags = aio_flags,
+                } },
+            );
+        }
+    };
+
+    pub fn open(path: Path, flags: OpenFlags) OpenAction {
+        return .{ .path = path, .flags = flags };
     }
 
-    pub fn read(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
-        buffer: []u8,
-    ) !void {
-        try rt.scheduler.spawn(
-            ReadResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .read = .{
-                .fd = self.handle,
-                .buffer = buffer,
-                .offset = null,
-            } },
-        );
-    }
-
-    pub fn read_offset(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
-        buffer: []u8,
-        offset: usize,
-    ) !void {
-        try rt.scheduler.spawn(
-            ReadResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .read = .{
-                .fd = self.handle,
-                .buffer = buffer,
-                .offset = offset,
-            } },
-        );
-    }
-
-    pub fn read_all(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
+    const ReadAction = struct {
+        file: *const File,
         buffer: []u8,
         offset: ?usize,
-    ) !void {
-        const Provision = struct {
-            const Self = @This();
-            buffer: []u8,
-            read: usize,
-            offset: ?usize = null,
-            file: File,
-            task_ctx: @TypeOf(task_ctx),
 
-            fn read_all_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
-                var run_task = false;
+        pub fn resolve(self: *const ReadAction, rt: *Runtime) !usize {
+            try rt.scheduler.frame_await(.{ .read = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset } });
 
-                scope: {
-                    errdefer runtime.allocator.destroy(p);
-                    const length = res.unwrap() catch |e| {
-                        switch (e) {
-                            error.EndOfFile => {
-                                run_task = true;
-                                break :scope;
-                            },
-                            else => {
-                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                                return;
-                            },
-                        }
-                    };
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.read.unwrap();
+        }
 
-                    p.read += length;
-                    if (p.offset) |*off| off.* = off.* + length;
+        pub fn callback(
+            self: *const ReadAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                ReadResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .read = .{
+                    .fd = self.file.handle,
+                    .buffer = self.buffer,
+                    .offset = self.offset,
+                } },
+            );
+        }
+    };
 
-                    // if we have read more than the buffer len,
-                    // something is very wrong.
-                    assert(p.read <= p.buffer.len);
-                    if (p.read == p.buffer.len) {
-                        run_task = true;
-                    } else {
-                        if (p.offset) |off| {
-                            try p.file.read_offset(runtime, p, read_all_task, p.buffer[p.read..], off);
+    pub fn read(self: *const File, buffer: []u8, offset: ?usize) ReadAction {
+        return .{ .file = self, .buffer = buffer, .offset = offset };
+    }
+
+    const ReadAllAction = struct {
+        file: *const File,
+        buffer: []u8,
+        offset: ?usize,
+
+        pub fn resolve(self: *const ReadAllAction, rt: *Runtime) !usize {
+            var length: usize = 0;
+
+            while (length < self.buffer.len) {
+                const real_offset: ?usize = if (self.offset) |offset| offset + length else null;
+
+                const result = self.file.read(self.buffer[length..], real_offset).resolve(rt) catch |e| switch (e) {
+                    error.EndOfFile => return length,
+                    else => return e,
+                };
+
+                length += result;
+            }
+
+            return length;
+        }
+
+        pub fn callback(
+            self: *const ReadAllAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
+        ) !void {
+            const Provision = struct {
+                const Self = @This();
+                buffer: []u8,
+                read: usize,
+                offset: ?usize = null,
+                file: File,
+                task_ctx: @TypeOf(task_ctx),
+
+                fn read_all_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
+                    var run_task = false;
+
+                    scope: {
+                        errdefer runtime.allocator.destroy(p);
+                        const length = res.unwrap() catch |e| {
+                            switch (e) {
+                                error.EndOfFile => {
+                                    run_task = true;
+                                    break :scope;
+                                },
+                                else => {
+                                    try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                                    return;
+                                },
+                            }
+                        };
+
+                        p.read += length;
+                        if (p.offset) |*off| off.* = off.* + length;
+
+                        // if we have read more than the buffer len,
+                        // something is very wrong.
+                        assert(p.read <= p.buffer.len);
+                        if (p.read == p.buffer.len) {
+                            run_task = true;
                         } else {
-                            try p.file.read(runtime, p, read_all_task, p.buffer[p.read..]);
+                            try p.file.read(p.buffer[p.read..], p.offset).callback(runtime, p, read_all_task);
                         }
                     }
-                }
 
-                if (run_task) {
-                    defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.read }, p.task_ctx);
-                }
-            }
-        };
-
-        const p = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(p);
-        p.* = Provision{
-            .buffer = buffer,
-            .read = 0,
-            .file = self.*,
-            .offset = offset,
-            .task_ctx = task_ctx,
-        };
-
-        if (offset) |off|
-            try self.read_offset(rt, p, Provision.read_all_task, buffer, off)
-        else
-            try self.read(rt, p, Provision.read_all_task, buffer);
-    }
-
-    pub fn read_all_alloc(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(ReadResult, @TypeOf(task_ctx)),
-        list: *ZeroCopy(u8),
-        offset: ?usize,
-    ) !void {
-        const READ_CHUNK_SIZE: usize = 4096 * 2;
-
-        const Provision = struct {
-            const Self = @This();
-            buffer: []u8,
-            list: *ZeroCopy(u8),
-            offset: ?usize = null,
-            file: File,
-            task_ctx: @TypeOf(task_ctx),
-
-            fn read_all_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
-                var run_task = false;
-                scope: {
-                    errdefer runtime.allocator.destroy(p);
-                    const length = res.unwrap() catch |e| {
-                        switch (e) {
-                            error.EndOfFile => {
-                                run_task = true;
-                                break :scope;
-                            },
-                            else => {
-                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                                return;
-                            },
-                        }
-                    };
-
-                    p.list.mark_written(length);
-                    if (p.offset) |*off| off.* = off.* + length;
-                    p.buffer = try p.list.get_write_area(READ_CHUNK_SIZE);
-
-                    // only ends on the EOF.
-                    if (p.offset) |off| {
-                        try p.file.read_offset(runtime, p, read_all_task, p.buffer, off);
-                    } else {
-                        try p.file.read(runtime, p, read_all_task, p.buffer);
+                    if (run_task) {
+                        defer runtime.allocator.destroy(p);
+                        try task_fn(runtime, .{ .actual = p.read }, p.task_ctx);
                     }
                 }
+            };
 
-                if (run_task) {
-                    defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.list.len }, p.task_ctx);
-                }
-            }
-        };
+            const p = try rt.allocator.create(Provision);
+            errdefer rt.allocator.destroy(p);
+            p.* = Provision{
+                .buffer = self.buffer,
+                .read = 0,
+                .file = self.file.*,
+                .offset = self.offset,
+                .task_ctx = task_ctx,
+            };
 
-        const p = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(p);
-        p.* = Provision{
-            .buffer = try list.get_write_area(READ_CHUNK_SIZE),
-            .list = list,
-            .file = self.*,
-            .offset = offset,
-            .task_ctx = task_ctx,
-        };
+            try self.file.read(self.buffer, self.offset).callback(rt, p, Provision.read_all_task);
+        }
+    };
 
-        if (offset) |off|
-            try self.read_offset(rt, p, Provision.read_all_task, p.buffer, off)
-        else
-            try self.read(rt, p, Provision.read_all_task, p.buffer);
+    pub fn read_all(self: *const File, buffer: []u8, offset: ?usize) ReadAllAction {
+        return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
-    pub fn write(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
-        buffer: []const u8,
-    ) !void {
-        try rt.scheduler.spawn(
-            WriteResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .write = .{
-                .fd = self.handle,
-                .buffer = buffer,
-                .offset = null,
-            } },
-        );
-    }
-
-    pub fn write_offset(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
-        buffer: []const u8,
-        offset: usize,
-    ) !void {
-        try rt.scheduler.spawn(
-            WriteResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .write = .{
-                .fd = self.handle,
-                .buffer = buffer,
-                .offset = offset,
-            } },
-        );
-    }
-
-    pub fn write_all(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
+    const WriteAction = struct {
+        file: *const File,
         buffer: []const u8,
         offset: ?usize,
-    ) !void {
-        const Provision = struct {
-            const Self = @This();
-            buffer: []const u8,
-            wrote: usize,
-            offset: ?usize = null,
-            file: File,
-            task_ctx: @TypeOf(task_ctx),
 
-            fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
-                var run_task = false;
-                scope: {
-                    errdefer runtime.allocator.destroy(p);
-                    const length = res.unwrap() catch |e| {
-                        switch (e) {
-                            error.NoSpace => {
-                                run_task = true;
-                                break :scope;
-                            },
-                            else => {
-                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                                return e;
-                            },
+        pub fn resolve(self: *const WriteAction, rt: *Runtime) !usize {
+            try rt.scheduler.frame_await(.{ .write = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.write.unwrap();
+        }
+
+        pub fn callback(self: *const WriteAction, rt: *Runtime, task_ctx: anytype, comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx))) !void {
+            try rt.scheduler.spawn(
+                WriteResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .write = .{
+                    .fd = self.file.handle,
+                    .buffer = self.buffer,
+                    .offset = self.offset,
+                } },
+            );
+        }
+    };
+
+    pub fn write(self: *const File, buffer: []const u8, offset: ?usize) WriteAction {
+        return .{ .file = self, .buffer = buffer, .offset = offset };
+    }
+
+    const WriteAllAction = struct {
+        file: *const File,
+        buffer: []const u8,
+        offset: ?usize,
+
+        pub fn resolve(self: *const WriteAllAction, rt: *Runtime) !usize {
+            var length: usize = 0;
+
+            while (length < self.buffer.len) {
+                const real_offset: ?usize = if (self.offset) |offset| offset + length else null;
+
+                const result = self.file.write(self.buffer[length..], real_offset).resolve(rt) catch |e| switch (e) {
+                    error.NoSpace => return length,
+                    else => return e,
+                };
+
+                length += result;
+            }
+
+            return length;
+        }
+
+        pub fn callback(
+            self: *const WriteAllAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
+        ) !void {
+            const Provision = struct {
+                const Self = @This();
+                buffer: []const u8,
+                wrote: usize,
+                offset: ?usize = null,
+                file: File,
+                task_ctx: @TypeOf(task_ctx),
+
+                fn write_all_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
+                    var run_task = false;
+                    scope: {
+                        errdefer runtime.allocator.destroy(p);
+                        const length = res.unwrap() catch |e| {
+                            switch (e) {
+                                error.NoSpace => {
+                                    run_task = true;
+                                    break :scope;
+                                },
+                                else => {
+                                    try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                                    return e;
+                                },
+                            }
+                        };
+
+                        p.wrote += length;
+                        if (p.offset) |*off| off.* = off.* + length;
+
+                        if (p.wrote >= p.buffer.len) {
+                            run_task = true;
+                        } else {
+                            try p.file.write(p.buffer[p.wrote..], p.offset).callback(runtime, p, write_all_task);
                         }
-                    };
+                    }
 
-                    p.wrote += length;
-                    if (p.offset) |*off| off.* = off.* + length;
-
-                    if (p.wrote >= p.buffer.len) {
-                        run_task = true;
-                    } else {
-                        if (p.offset) |off|
-                            try p.file.write_offset(runtime, p, write_all_task, p.buffer[p.wrote..], off)
-                        else
-                            try p.file.write(runtime, p, write_all_task, p.buffer[p.wrote..]);
+                    if (run_task) {
+                        defer runtime.allocator.destroy(p);
+                        try task_fn(runtime, .{ .actual = p.wrote }, p.task_ctx);
                     }
                 }
+            };
 
-                if (run_task) {
-                    defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.wrote }, p.task_ctx);
-                }
-            }
-        };
+            const p = try rt.allocator.create(Provision);
+            errdefer rt.allocator.destroy(p);
+            p.* = Provision{
+                .buffer = self.buffer,
+                .wrote = 0,
+                .file = self.file.*,
+                .offset = self.offset,
+                .task_ctx = task_ctx,
+            };
 
-        const p = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(p);
-        p.* = Provision{
-            .buffer = buffer,
-            .wrote = 0,
-            .file = self.*,
-            .offset = offset,
-            .task_ctx = task_ctx,
-        };
+            try self.file.write(self.buffer, self.offset).callback(rt, p, Provision.write_all_task);
+        }
+    };
 
-        if (offset) |off|
-            try self.write_offset(rt, p, Provision.write_all_task, buffer, off)
-        else
-            try self.write(rt, p, Provision.write_all_task, buffer);
+    pub fn write_all(self: *const File, buffer: []const u8, offset: ?usize) WriteAllAction {
+        return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
-    pub fn stat(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.handle });
+    const StatAction = struct {
+        file: *const File,
+
+        pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
+            try rt.scheduler.frame_await(.{ .stat = self.file.handle });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.stat.unwrap();
+        }
+
+        pub fn callback(
+            self: *const StatAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.handle });
+        }
+    };
+
+    pub fn stat(self: *const File) StatAction {
+        return .{ .file = self };
     }
 
-    pub fn close(
-        self: *const File,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.handle });
+    const CloseAction = struct {
+        file: *const File,
+
+        pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
+            try rt.scheduler.frame_await(.{ .close = self.file.handle });
+        }
+
+        pub fn callback(
+            self: *const CloseAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(void, task_ctx, task_fn, .wait_for_io, .{ .close = self.handle });
+        }
+    };
+
+    pub fn close(self: *const File) CloseAction {
+        return .{ .file = self };
     }
 
     pub fn close_blocking(self: *const File) void {

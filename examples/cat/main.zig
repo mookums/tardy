@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.@"tardy/example/cat");
 
 const Runtime = @import("tardy").Runtime;
+const Frame = @import("tardy").Frame;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
@@ -9,44 +10,30 @@ const Cross = @import("tardy").Cross;
 const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 
-const OpenFileResult = @import("tardy").OpenFileResult;
-const ReadResult = @import("tardy").ReadResult;
-const WriteResult = @import("tardy").WriteResult;
+pub const std_options = .{ .log_level = .warn };
 
-const ZeroCopy = @import("tardy").ZeroCopy;
-
-pub const std_options = .{ .log_level = .err };
-
-const Context = struct {
-    std_out: File = File.std_out(),
-    file: File = undefined,
-    buffer: []u8,
+const EntryParams = struct {
+    file_name: [:0]const u8,
 };
 
-fn open_task(rt: *Runtime, result: OpenFileResult, context: *Context) !void {
-    context.file = try result.unwrap();
-    try context.file.read_all(rt, context, read_task, context.buffer, null);
-}
+fn main_frame(rt: *Runtime, p: *EntryParams) !void {
+    const std_out = File.std_out();
+    const file = Dir.cwd().open_file(p.file_name, .{}).resolve(rt) catch |e| switch (e) {
+        error.NotFound => {
+            std.debug.print("{s}: No such file!", .{p.file_name});
+            return;
+        },
+        else => return e,
+    };
 
-fn read_task(rt: *Runtime, result: ReadResult, context: *Context) !void {
-    const length = try result.unwrap();
+    var buffer: [1024 * 32]u8 = undefined;
+    var done: bool = false;
 
-    if (length != context.buffer.len) {
-        try context.std_out.write_all(rt, context, write_done_task, context.buffer[0..length], null);
-    } else {
-        try context.std_out.write_all(rt, context, write_task, context.buffer, null);
+    while (!done) {
+        const length = try file.read_all(&buffer, null).resolve(rt);
+        done = length < buffer.len;
+        _ = try std_out.write_all(buffer[0..length], null).resolve(rt);
     }
-}
-
-fn write_task(rt: *Runtime, result: WriteResult, context: *Context) !void {
-    _ = try result.unwrap();
-    try context.file.read_all(rt, context, read_task, context.buffer, null);
-}
-
-fn write_done_task(rt: *Runtime, result: WriteResult, context: *Context) !void {
-    _ = try result.unwrap();
-    context.file.close_blocking();
-    rt.stop();
 }
 
 pub fn main() !void {
@@ -75,23 +62,15 @@ pub fn main() !void {
         return;
     };
 
-    const EntryParams = struct {
-        file_name: [:0]const u8,
-        context: Context,
-    };
-
-    // 32kB buffer :)
-    var buf: [1024 * 32]u8 = undefined;
     var params: EntryParams = .{
         .file_name = file_name,
-        .context = .{ .buffer = &buf },
     };
 
     try tardy.entry(
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try Dir.cwd().open_file(rt, &p.context, open_task, p.file_name, .{});
+                try rt.spawn_frame(.{ rt, p }, main_frame, 1024 * 64);
             }
         }.start,
         {},

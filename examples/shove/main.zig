@@ -7,6 +7,7 @@ const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
 const File = @import("tardy").File;
+const Dir = @import("tardy").Dir;
 
 const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
@@ -16,14 +17,14 @@ pub const std_options = .{
     .log_level = .debug,
 };
 
-fn create_task(rt: *Runtime, result: OpenFileResult, _: void) !void {
-    const file = try result.unwrap();
-    try rt.storage.store_alloc("file_fd", file.handle);
-    for (0..8) |_| try file.write_all(rt, {}, end_task, "*shoved*\n", null);
-}
+fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
+    const file = try Dir.cwd().create_file(name, .{}).resolve(rt);
+    for (0..8) |_| _ = try file.write_all("*shoved*\n", null).resolve(rt);
 
-fn end_task(_: *Runtime, res: WriteResult, _: void) !void {
-    _ = try res.unwrap();
+    const stat = try file.stat().resolve(rt);
+    std.debug.print("size: {d}\n", .{stat.size});
+
+    try file.close().resolve(rt);
 }
 
 pub fn main() !void {
@@ -35,7 +36,7 @@ pub fn main() !void {
         .threading = .single,
         .pooling = .grow,
         .size_tasks_initial = 1,
-        .size_aio_reap_max = 256,
+        .size_aio_reap_max = 1,
     });
     defer tardy.deinit();
 
@@ -53,18 +54,12 @@ pub fn main() !void {
         file_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                try File.create(rt, {}, create_task, .{ .rel = .{
-                    .dir = std.posix.AT.FDCWD,
-                    .path = name,
-                } }, .{});
+                try rt.spawn_frame(.{ rt, name }, main_frame, 1024 * 16);
             }
         }.start,
         {},
         struct {
-            fn end(rt: *Runtime, _: void) !void {
-                const fd = rt.storage.get("file_fd", std.posix.fd_t);
-                std.posix.close(fd);
-            }
+            fn end(_: *Runtime, _: void) !void {}
         }.end,
     );
 }

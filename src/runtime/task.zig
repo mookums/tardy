@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.@"tardy/runtime/task");
 
+const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const Result = @import("../aio/completion.zig").Result;
 
@@ -35,7 +36,9 @@ pub fn TaskFn(comptime R: type, comptime C: type) type {
 pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskFn(R, C)) InnerTaskFn {
     return struct {
         fn wrapper(rt: *Runtime, t: *const Task) anyerror!void {
-            const context: C = unwrap(C, t.context);
+            assert(t.runner == .callback);
+            const task_callback = t.runner.callback;
+            const context: C = unwrap(C, task_callback.context);
 
             const result: R = result: {
                 switch (t.result) {
@@ -109,6 +112,14 @@ pub fn TaskFnWrapper(comptime R: type, comptime C: type, comptime task_fn: TaskF
     }.wrapper;
 }
 
+const TaskRunner = union(enum) {
+    callback: struct {
+        func: InnerTaskFn,
+        context: usize,
+    },
+    frame: *Frame,
+};
+
 pub const Task = struct {
     pub const State = union(enum) {
         channel: struct {
@@ -130,6 +141,5 @@ pub const Task = struct {
     // 8 bytes
     index: usize,
     // 8 bytes
-    func: InnerTaskFn,
-    context: usize,
+    runner: TaskRunner,
 };

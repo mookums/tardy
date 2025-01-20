@@ -14,10 +14,9 @@ const WriteResult = @import("tardy").WriteResult;
 
 const DeleteTreeResult = @import("tardy").DeleteTreeResult;
 
-fn end_task(rt: *Runtime, res: DeleteTreeResult, _: void) !void {
-    try res.unwrap();
+fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
+    try Dir.cwd().delete_tree(name).resolve(rt);
     log.debug("deleted tree :)", .{});
-    rt.stop();
 }
 
 pub fn main() !void {
@@ -50,8 +49,7 @@ pub fn main() !void {
         tree_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                const dir = Dir.from_std(std.fs.cwd());
-                try dir.delete_tree(rt, {}, end_task, name, 32);
+                try rt.spawn_frame(.{ rt, name }, main_frame, 1024 * 128);
             }
         }.start,
         {},

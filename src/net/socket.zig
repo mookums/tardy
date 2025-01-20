@@ -94,207 +94,337 @@ pub const Socket = struct {
     }
 
     /// Bind the current Socket
-    pub fn bind(self: *const Socket) !void {
+    pub fn bind(self: Socket) !void {
         try std.posix.bind(self.handle, &self.addr.any, self.addr.getOsSockLen());
     }
 
     /// Listen on the Current Socket.
-    pub fn listen(self: *const Socket, backlog: usize) !void {
+    pub fn listen(self: Socket, backlog: usize) !void {
         assert(self.kind.listenable());
         try std.posix.listen(self.handle, @truncate(backlog));
     }
 
-    pub fn close(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(
-            void,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .close = self.handle },
-        );
+    const CloseAction = struct {
+        socket: Socket,
+
+        pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
+            try rt.scheduler.frame_await(.{ .close = self.socket.handle });
+        }
+
+        pub fn callback(
+            self: *const CloseAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                void,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .close = self.socket.handle },
+            );
+        }
+    };
+
+    pub fn close(self: Socket) CloseAction {
+        return .{ .socket = self };
     }
 
-    pub fn close_blocking(self: *const Socket) void {
+    pub fn close_blocking(self: Socket) void {
         // todo: delete the unix socket if the
         // server is being closed
         std.posix.close(self.handle);
     }
 
-    pub fn accept(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(AcceptResult, @TypeOf(task_ctx)),
-    ) !void {
+    const AcceptAction = struct {
+        socket: Socket,
+
+        pub fn resolve(self: *const AcceptAction, rt: *Runtime) !Socket {
+            try rt.scheduler.frame_await(.{ .accept = .{ .socket = self.socket.handle, .kind = self.socket.kind } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.accept.unwrap();
+        }
+
+        pub fn callback(
+            self: *const AcceptAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(AcceptResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                AcceptResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .accept = .{ .socket = self.socket.*, .kind = self.kind } },
+            );
+        }
+    };
+
+    pub fn accept(self: Socket) AcceptAction {
         assert(self.kind.listenable());
-        // TODO: force nonblocking on all sockets accepted
-
-        try rt.scheduler.spawn(
-            AcceptResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .accept = .{ .socket = self.handle, .kind = self.kind } },
-        );
+        return .{ .socket = self };
     }
 
-    pub fn connect(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(ConnectResult, @TypeOf(task_ctx)),
-    ) !void {
-        try rt.scheduler.spawn(
-            ConnectResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .connect = .{ .socket = self.handle, .addr = self.addr, .kind = self.kind } },
-        );
+    const ConnectAction = struct {
+        socket: Socket,
+
+        pub fn resolve(self: *const ConnectAction, rt: *Runtime) !Socket {
+            try rt.scheduler.frame_await(.{
+                .connect = .{
+                    .socket = self.socket.handle,
+                    .addr = self.socket.addr,
+                    .kind = self.socket.kind,
+                },
+            });
+        }
+
+        pub fn callback(
+            self: *const ConnectAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(ConnectResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                ConnectResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{
+                    .connect = .{
+                        .socket = self.socket.handle,
+                        .addr = self.socket.addr,
+                        .kind = self.socket.kind,
+                    },
+                },
+            );
+        }
+    };
+
+    pub fn connect(self: Socket) ConnectAction {
+        return .{ .socket = self };
     }
 
-    pub fn recv(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
+    const RecvAction = struct {
+        socket: Socket,
         buffer: []u8,
-    ) !void {
-        try rt.scheduler.spawn(
-            RecvResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .recv = .{ .socket = self.handle, .buffer = buffer } },
-        );
+
+        pub fn resolve(self: *const RecvAction, rt: *Runtime) !usize {
+            try rt.scheduler.frame_await(.{ .recv = .{ .socket = self.socket.handle, .buffer = self.buffer } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.recv.unwrap();
+        }
+
+        pub fn callback(
+            self: *const RecvAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                RecvResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .recv = .{ .socket = self.socket.handle, .buffer = self.buffer } },
+            );
+        }
+    };
+
+    pub fn recv(self: Socket, buffer: []u8) RecvAction {
+        return .{ .socket = self, .buffer = buffer };
     }
 
-    pub fn recv_all(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
+    const RecvAllAction = struct {
+        socket: Socket,
         buffer: []u8,
-    ) !void {
-        const Provision = struct {
-            const Self = @This();
-            buffer: []u8,
-            count: usize,
-            socket: Socket,
-            task_ctx: @TypeOf(task_ctx),
 
-            fn recv_all_task(runtime: *Runtime, res: RecvResult, p: *Self) !void {
-                var run_task = false;
+        pub fn resolve(self: *const RecvAllAction, rt: *Runtime) !usize {
+            var length: usize = 0;
 
-                scope: {
-                    errdefer runtime.allocator.destroy(p);
-                    const length = res.unwrap() catch |e| {
-                        switch (e) {
-                            error.Closed => {
-                                run_task = true;
-                                break :scope;
-                            },
-                            else => {
-                                try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                                return;
-                            },
-                        }
-                    };
-                    p.count += length;
+            while (length < self.buffer.len) {
+                const result = self.socket.recv(self.buffer[length..]).resolve(rt) catch |e| switch (e) {
+                    error.Closed => return length,
+                    else => return e,
+                };
 
-                    assert(p.count <= p.buffer.len);
-                    if (p.count == p.buffer.len)
-                        run_task = true
-                    else
-                        try p.socket.recv(runtime, p, recv_all_task, p.buffer[p.count..]);
-                }
-
-                if (run_task) {
-                    defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
-                }
+                length += result;
             }
-        };
 
-        const p = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(p);
-        p.* = Provision{
-            .buffer = buffer,
-            .count = 0,
-            .socket = self.*,
-            .task_ctx = task_ctx,
-        };
+            return length;
+        }
 
-        try self.recv(rt, p, Provision.recv_all_task, buffer);
+        pub fn callback(
+            self: *const RecvAllAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(RecvResult, @TypeOf(task_ctx)),
+        ) !void {
+            const Provision = struct {
+                const Self = @This();
+                buffer: []u8,
+                count: usize,
+                socket: Socket,
+                task_ctx: @TypeOf(task_ctx),
+
+                fn recv_all_task(runtime: *Runtime, res: RecvResult, p: *Self) !void {
+                    var run_task = false;
+
+                    scope: {
+                        errdefer runtime.allocator.destroy(p);
+                        const length = res.unwrap() catch |e| {
+                            switch (e) {
+                                error.Closed => {
+                                    run_task = true;
+                                    break :scope;
+                                },
+                                else => {
+                                    try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                                    return;
+                                },
+                            }
+                        };
+                        p.count += length;
+
+                        assert(p.count <= p.buffer.len);
+                        if (p.count == p.buffer.len)
+                            run_task = true
+                        else
+                            try p.socket.recv(p.buffer[p.count..]).callback(runtime, p, recv_all_task);
+                    }
+
+                    if (run_task) {
+                        defer runtime.allocator.destroy(p);
+                        try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
+                    }
+                }
+            };
+
+            const p = try rt.allocator.create(Provision);
+            errdefer rt.allocator.destroy(p);
+            p.* = Provision{
+                .buffer = self.buffer,
+                .count = 0,
+                .socket = self.*,
+                .task_ctx = task_ctx,
+            };
+
+            try self.socket.recv(self.buffer).callback(rt, p, Provision.recv_all_task);
+        }
+    };
+
+    pub fn recv_all(self: Socket, buffer: []u8) RecvAllAction {
+        return .{ .socket = self, .buffer = buffer };
     }
 
-    pub fn send(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
+    const SendAction = struct {
+        socket: Socket,
         buffer: []const u8,
-    ) !void {
-        try rt.scheduler.spawn(
-            SendResult,
-            task_ctx,
-            task_fn,
-            .wait_for_io,
-            .{ .send = .{ .socket = self.handle, .buffer = buffer } },
-        );
+
+        pub fn resolve(self: *const SendAction, rt: *Runtime) !usize {
+            try rt.scheduler.frame_await(.{ .send = .{
+                .socket = self.socket.handle,
+                .buffer = self.buffer,
+            } });
+
+            const index = rt.current_task orelse unreachable;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.send.unwrap();
+        }
+
+        pub fn callback(
+            self: *const SendAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
+        ) !void {
+            try rt.scheduler.spawn(
+                SendResult,
+                task_ctx,
+                task_fn,
+                .wait_for_io,
+                .{ .send = .{ .socket = self.socket.handle, .buffer = self.buffer } },
+            );
+        }
+    };
+
+    pub fn send(self: Socket, buffer: []const u8) SendAction {
+        return .{ .socket = self, .buffer = buffer };
     }
 
-    pub fn send_all(
-        self: *const Socket,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
+    const SendAllAction = struct {
+        socket: Socket,
         buffer: []const u8,
-    ) !void {
-        const Provision = struct {
-            const Self = @This();
-            buffer: []const u8,
-            count: usize,
-            socket: Socket,
-            task_ctx: @TypeOf(task_ctx),
 
-            fn send_all_task(runtime: *Runtime, res: SendResult, p: *Self) !void {
-                var run_task = false;
-                {
-                    errdefer runtime.allocator.destroy(p);
-                    const length = res.unwrap() catch |e| {
-                        try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
-                        return e;
-                    };
+        pub fn resolve(self: *const SendAllAction, rt: *Runtime) !usize {
+            var length: usize = 0;
 
-                    p.count += length;
-                    if (p.count >= p.buffer.len)
-                        run_task = true
-                    else
-                        try p.socket.send(runtime, p, send_all_task, p.buffer[p.count..]);
-                }
-
-                if (run_task) {
-                    defer runtime.allocator.destroy(p);
-                    try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
-                }
+            while (length < self.buffer.len) {
+                const result = self.socket.send(self.buffer[length..]).resolve(rt) catch |e| switch (e) {
+                    error.ConnectionReset => return length,
+                    else => return e,
+                };
+                length += result;
             }
-        };
 
-        const p = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(p);
-        p.* = Provision{
-            .buffer = buffer,
-            .count = 0,
-            .socket = self.*,
-            .task_ctx = task_ctx,
-        };
+            return length;
+        }
 
-        try self.send(rt, p, Provision.send_all_task, buffer);
+        pub fn callback(
+            self: *const SendAllAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(SendResult, @TypeOf(task_ctx)),
+        ) !void {
+            const Provision = struct {
+                const Self = @This();
+                buffer: []const u8,
+                count: usize,
+                socket: Socket,
+                task_ctx: @TypeOf(task_ctx),
+
+                fn send_all_task(runtime: *Runtime, res: SendResult, p: *Self) !void {
+                    var run_task = false;
+                    {
+                        errdefer runtime.allocator.destroy(p);
+                        const length = res.unwrap() catch |e| {
+                            try task_fn(runtime, .{ .err = @errorCast(e) }, p.task_ctx);
+                            return e;
+                        };
+
+                        p.count += length;
+                        if (p.count >= p.buffer.len)
+                            run_task = true
+                        else
+                            try p.socket.send(p.buffer[p.count..]).callback(runtime, p, send_all_task);
+                    }
+
+                    if (run_task) {
+                        defer runtime.allocator.destroy(p);
+                        try task_fn(runtime, .{ .actual = p.count }, p.task_ctx);
+                    }
+                }
+            };
+
+            const p = try rt.allocator.create(Provision);
+            errdefer rt.allocator.destroy(p);
+            p.* = Provision{
+                .buffer = self.buffer,
+                .count = 0,
+                .socket = self.*,
+                .task_ctx = task_ctx,
+            };
+
+            try self.socket.send(self.buffer).callback(rt, p, Provision.send_all_task);
+        }
+    };
+
+    pub fn send_all(self: Socket, buffer: []const u8) SendAllAction {
+        return .{ .socket = self, .buffer = buffer };
     }
 };

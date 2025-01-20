@@ -7,6 +7,7 @@ const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
 const InnerTaskFn = @import("task.zig").InnerTaskFn;
 
 const Runtime = @import("lib.zig").Runtime;
+const Frame = @import("../frame/lib.zig").Frame;
 
 const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
@@ -23,7 +24,6 @@ const TaskWithJob = struct {
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
-    // for now.
     tasks: Pool(Task),
     runnable: std.DynamicBitSetUnmanaged,
     released: std.ArrayListUnmanaged(usize),
@@ -76,8 +76,12 @@ pub const Scheduler = struct {
         const context: usize = wrap(usize, task_ctx);
         const item: Task = .{
             .index = index,
-            .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
-            .context = context,
+            .runner = .{
+                .callback = .{
+                    .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
+                    .context = context,
+                },
+            },
             .state = task_state,
         };
 
@@ -93,6 +97,47 @@ pub const Scheduler = struct {
             },
             else => {},
         }
+    }
+
+    pub fn frame_await(self: *Scheduler, job: AsyncSubmission) !void {
+        const rt: *Runtime = @fieldParentPtr("scheduler", self);
+        const index = rt.current_task orelse unreachable;
+
+        const task = self.tasks.get_ptr(index);
+        // Return to the waiting state.
+        task.state = .wait_for_io;
+        self.runnable.unset(index);
+        // Queue the related I/O job.
+        try rt.aio.queue_job(index, job);
+        Frame.yield();
+    }
+
+    pub fn spawn_frame(
+        self: *Scheduler,
+        frame_ctx: anytype,
+        comptime frame_fn: anytype,
+        stack_size: usize,
+    ) !void {
+        const index = blk: {
+            if (self.released.popOrNull()) |index| {
+                break :blk self.tasks.borrow_assume_unset(index);
+            } else {
+                break :blk try self.tasks.borrow();
+            }
+        };
+
+        const frame = try Frame.init(self.allocator, stack_size, frame_ctx, frame_fn);
+
+        const item: Task = .{
+            .index = index,
+            .runner = .{ .frame = frame },
+            .state = .runnable,
+        };
+
+        const item_ptr = self.tasks.get_ptr(index);
+        item_ptr.* = item;
+        item_ptr.index = index;
+        try self.set_runnable(index);
     }
 
     pub fn release(self: *Scheduler, index: usize) !void {
