@@ -87,7 +87,6 @@ pub const Scheduler = struct {
 
         const item_ptr = self.tasks.get_ptr(index);
         item_ptr.* = item;
-        item_ptr.index = index;
 
         switch (task_state) {
             .runnable => try self.set_runnable(index),
@@ -101,7 +100,7 @@ pub const Scheduler = struct {
 
     pub fn frame_await(self: *Scheduler, job: AsyncSubmission) !void {
         const rt: *Runtime = @fieldParentPtr("scheduler", self);
-        const index = rt.current_task orelse unreachable;
+        const index = rt.current_task.?;
 
         const task = self.tasks.get_ptr(index);
         // Return to the waiting state.
@@ -136,11 +135,11 @@ pub const Scheduler = struct {
 
         const item_ptr = self.tasks.get_ptr(index);
         item_ptr.* = item;
-        item_ptr.index = index;
         try self.set_runnable(index);
     }
 
     pub fn release(self: *Scheduler, index: usize) !void {
+        // must be runnable to set?
         assert(self.runnable.isSet(index));
         self.runnable.unset(index);
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.@"tardy/e2e/first");
 const assert = std.debug.assert;
 
 const Runtime = @import("tardy").Runtime;
@@ -149,103 +150,42 @@ pub const FileChain = struct {
         };
     }
 
-    pub fn run(
-        self: *FileChain,
-        rt: *Runtime,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(void, @TypeOf(task_ctx)),
-    ) !void {
-        const Provision = struct {
-            const Self = @This();
+    pub fn chain_frame(chain: *FileChain, rt: *Runtime, counter: *usize, seed_string: [:0]const u8) !void {
+        // clean it up :p
+        defer rt.allocator.destroy(chain);
+        defer chain.deinit();
 
-            chain: *FileChain,
-            task_ctx: @TypeOf(task_ctx),
-
-            fn next_step(runtime: *Runtime, p: *Self) !void {
-                switch (p.chain.steps[p.chain.index]) {
-                    .create => try File.create(runtime, p, open_task, p.chain.path, .{ .mode = .read_write }),
-                    .open => try File.open(runtime, p, open_task, p.chain.path, .{ .mode = .read_write }),
-                    .read => try p.chain.file.?.read_all(runtime, p, read_task, p.chain.buffer, null),
-                    .write => {
-                        for (p.chain.buffer[0..]) |*item| item.* = 123;
-                        try p.chain.file.?.write_all(runtime, p, write_task, p.chain.buffer, null);
-                    },
-                    .close => try p.chain.file.?.close(runtime, p, close_task),
-                    .delete => {
-                        const dir = Dir{ .handle = p.chain.path.rel.dir };
-                        try dir.delete_file(runtime, p, delete_task, p.chain.path.rel.path);
-                    },
-                }
+        while (chain.index < chain.steps.len) : (chain.index += 1) {
+            switch (chain.steps[chain.index]) {
+                .create => {
+                    const file = try File.create(chain.path, .{ .mode = .read_write }).resolve(rt);
+                    chain.file = file;
+                },
+                .open => {
+                    const file = try File.open(chain.path, .{ .mode = .read_write }).resolve(rt);
+                    chain.file = file;
+                },
+                .read => {
+                    const length = try chain.file.?.read_all(chain.buffer, null).resolve(rt);
+                    for (chain.buffer[0..length]) |item| assert(item == 123);
+                },
+                .write => {
+                    for (chain.buffer[0..]) |*item| item.* = 123;
+                    _ = try chain.file.?.write_all(chain.buffer, null).resolve(rt);
+                },
+                .close => try chain.file.?.close().resolve(rt),
+                .delete => {
+                    const dir = Dir{ .handle = chain.path.rel.dir };
+                    try dir.delete_file(chain.path.rel.path).resolve(rt);
+                },
             }
+        }
 
-            fn open_task(runtime: *Runtime, res: OpenFileResult, p: *Self) !void {
-                errdefer unreachable;
-
-                const step = p.chain.steps[p.chain.index];
-                p.chain.index += 1;
-                assert(step == .create or step == .open);
-
-                const file = try res.unwrap();
-                p.chain.file = file;
-
-                try next_step(runtime, p);
-            }
-
-            fn read_task(runtime: *Runtime, res: ReadResult, p: *Self) !void {
-                errdefer unreachable;
-
-                const step = p.chain.steps[p.chain.index];
-                p.chain.index += 1;
-                assert(step == .read);
-
-                // assert we wrote the correct thing.
-                const length = try res.unwrap();
-                for (p.chain.buffer[0..length]) |item| assert(item == 123);
-
-                try next_step(runtime, p);
-            }
-
-            fn write_task(runtime: *Runtime, res: WriteResult, p: *Self) !void {
-                errdefer unreachable;
-
-                const step = p.chain.steps[p.chain.index];
-                p.chain.index += 1;
-                assert(step == .write);
-
-                const length = try res.unwrap();
-                for (p.chain.buffer[0..length]) |*item| {
-                    assert(item.* == 123);
-                    item.* = 0;
-                }
-
-                try next_step(runtime, p);
-            }
-
-            fn close_task(runtime: *Runtime, _: void, p: *Self) !void {
-                errdefer unreachable;
-
-                const step = p.chain.steps[p.chain.index];
-                p.chain.index += 1;
-                assert(step == .close);
-
-                try next_step(runtime, p);
-            }
-
-            fn delete_task(runtime: *Runtime, res: DeleteResult, p: *Self) !void {
-                errdefer unreachable;
-
-                try res.unwrap();
-                defer runtime.allocator.destroy(p);
-
-                try task_fn(runtime, {}, p.task_ctx);
-            }
-        };
-
-        const provision = try rt.allocator.create(Provision);
-        errdefer rt.allocator.destroy(provision);
-        provision.* = .{ .chain = self, .task_ctx = task_ctx };
-
-        try Provision.next_step(rt, provision);
+        counter.* -= 1;
+        if (counter.* == 0) {
+            log.debug("deleting the e2e tree...", .{});
+            try Dir.cwd().delete_tree(seed_string).resolve(rt);
+        }
     }
 };
 

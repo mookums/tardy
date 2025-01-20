@@ -60,7 +60,7 @@ pub const Dir = struct {
         pub fn resolve(self: *const OpenAction, rt: *Runtime) !Dir {
             try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = flags } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
 
             const result: OpenDirResult = switch (task.result) {
@@ -104,11 +104,11 @@ pub const Dir = struct {
         pub fn resolve(self: *const CreateAction, rt: *Runtime) !Dir {
             try rt.scheduler.frame_await(.{ .mkdir = .{ .path = self.path, .mode = 0o775 } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
             try task.result.mkdir.unwrap();
 
-            try Dir.open(self.path).resolve(rt);
+            return try Dir.open(self.path).resolve(rt);
         }
 
         pub fn callback(
@@ -231,7 +231,7 @@ pub const Dir = struct {
         subpath: [:0]const u8,
 
         pub fn resolve(self: *const CreateDirAction, rt: *Runtime) !Dir {
-            try Dir.create(rt, .{
+            return try Dir.create(.{
                 .rel = .{ .dir = self.dir.handle, .path = self.subpath },
             }).resolve(rt);
         }
@@ -286,7 +286,7 @@ pub const Dir = struct {
         pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
             try rt.scheduler.frame_await(.{ .stat = self.dir.handle });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
             return try task.result.stat.unwrap();
         }

@@ -73,7 +73,12 @@ pub const Runtime = struct {
     }
 
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
-    pub fn spawn_frame(self: *Runtime, frame_ctx: anytype, comptime frame_fn: anytype, stack_size: usize) !void {
+    pub fn spawn_frame(
+        self: *Runtime,
+        frame_ctx: anytype,
+        comptime frame_fn: anytype,
+        stack_size: usize,
+    ) !void {
         try self.scheduler.spawn_frame(frame_ctx, frame_fn, stack_size);
     }
 
@@ -105,9 +110,16 @@ pub const Runtime = struct {
                 switch (inner.status) {
                     else => {},
                     .done => {
+                        // remember: task is invalid IF it resizes.
+                        // so we only hit that condition sometimes in here.
+                        const index = self.current_task.?;
+                        const inner_task = self.scheduler.tasks.get_ptr(index);
+
                         // If the frame is done, clean it up.
-                        task.state = .dead;
-                        try self.scheduler.release(task.index);
+                        inner_task.state = .dead;
+
+                        // task index is somehow invalid here?
+                        try self.scheduler.release(inner_task.index);
 
                         // frees the heap-allocated stack.
                         //

@@ -143,7 +143,7 @@ pub const Socket = struct {
         pub fn resolve(self: *const AcceptAction, rt: *Runtime) !Socket {
             try rt.scheduler.frame_await(.{ .accept = .{ .socket = self.socket.handle, .kind = self.socket.kind } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.accept.unwrap();
         }
@@ -215,7 +215,7 @@ pub const Socket = struct {
         pub fn resolve(self: *const RecvAction, rt: *Runtime) !usize {
             try rt.scheduler.frame_await(.{ .recv = .{ .socket = self.socket.handle, .buffer = self.buffer } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.recv.unwrap();
         }
@@ -332,7 +332,7 @@ pub const Socket = struct {
                 .buffer = self.buffer,
             } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.send.unwrap();
         }

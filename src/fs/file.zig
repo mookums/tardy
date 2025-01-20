@@ -63,7 +63,7 @@ pub const File = struct {
         pub fn resolve(self: *const CreateAction, rt: *Runtime) !File {
             try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = self.flags } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             const result: OpenFileResult = switch (task.result) {
                 .open => |inner| switch (inner) {
@@ -120,7 +120,7 @@ pub const File = struct {
             };
             try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = aio_flags } });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             const result: OpenFileResult = switch (task.result) {
                 .open => |inner| switch (inner) {
@@ -168,9 +168,11 @@ pub const File = struct {
         offset: ?usize,
 
         pub fn resolve(self: *const ReadAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{ .read = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset } });
+            try rt.scheduler.frame_await(.{
+                .read = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset },
+            });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.read.unwrap();
         }
@@ -297,14 +299,21 @@ pub const File = struct {
         offset: ?usize,
 
         pub fn resolve(self: *const WriteAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{ .write = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset } });
+            try rt.scheduler.frame_await(.{
+                .write = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset },
+            });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.write.unwrap();
         }
 
-        pub fn callback(self: *const WriteAction, rt: *Runtime, task_ctx: anytype, comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx))) !void {
+        pub fn callback(
+            self: *const WriteAction,
+            rt: *Runtime,
+            task_ctx: anytype,
+            comptime task_fn: TaskFn(WriteResult, @TypeOf(task_ctx)),
+        ) !void {
             try rt.scheduler.spawn(
                 WriteResult,
                 task_ctx,
@@ -334,7 +343,10 @@ pub const File = struct {
             while (length < self.buffer.len) {
                 const real_offset: ?usize = if (self.offset) |offset| offset + length else null;
 
-                const result = self.file.write(self.buffer[length..], real_offset).resolve(rt) catch |e| switch (e) {
+                const result = self.file.write(
+                    self.buffer[length..],
+                    real_offset,
+                ).resolve(rt) catch |e| switch (e) {
                     error.NoSpace => return length,
                     else => return e,
                 };
@@ -417,7 +429,7 @@ pub const File = struct {
         pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
             try rt.scheduler.frame_await(.{ .stat = self.file.handle });
 
-            const index = rt.current_task orelse unreachable;
+            const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
             return try task.result.stat.unwrap();
         }

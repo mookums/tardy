@@ -54,7 +54,7 @@ pub fn auto_async_match() AsyncIOType {
                 return AsyncIOType.io_uring;
             }
 
-            if (version.isAtLeast(.{ .major = 2, .minor = 5, .patch = 45 }) orelse unreachable) {
+            if (version.isAtLeast(.{ .major = 2, .minor = 5, .patch = 45 }).?) {
                 return AsyncIOType.epoll;
             }
 

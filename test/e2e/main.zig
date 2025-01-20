@@ -98,10 +98,8 @@ pub fn main() !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *const EntryParams) !void {
-                try rt.storage.store_ptr("params", @constCast(p.shared));
-
                 switch (p.runtime_id.fetchAdd(1, .acquire)) {
-                    0 => try Dir.cwd().create_dir(rt, p.shared, First.start, p.shared.seed_string),
+                    0 => try rt.spawn_frame(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE),
                     //1 => try rt.scheduler.spawn(void, p.shared, Second.start, .runnable, null),
                     else => unreachable,
                 }

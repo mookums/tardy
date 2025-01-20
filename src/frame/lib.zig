@@ -15,7 +15,7 @@ fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
     const Args = @TypeOf(args);
     return struct {
         fn inner() callconv(.C) noreturn {
-            const frame = active_frame orelse unreachable;
+            const frame = active_frame.?;
 
             //const args_ptr: *align(1) Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
             const args_ptr: *Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
@@ -120,7 +120,7 @@ pub const Frame = extern struct {
 
     /// This yields/pauses a Frame.
     pub fn yield() void {
-        const current = active_frame orelse unreachable;
+        const current = active_frame.?;
         tardy_swap_frame(&current.current_sp, &current.caller_sp);
     }
 };
