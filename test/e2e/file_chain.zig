@@ -157,6 +157,9 @@ pub const FileChain = struct {
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
 
+        var read_head: usize = 0;
+        var write_head: usize = 0;
+
         while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
                 .create => {
@@ -168,15 +171,18 @@ pub const FileChain = struct {
                     chain.file = file;
                 },
                 .read => {
-                    const length = try chain.file.?.read_all(chain.buffer, null).resolve(rt);
+                    const length = try chain.file.?.read_all(chain.buffer, read_head).resolve(rt);
+                    assert(length == @min(chain.buffer.len, write_head - read_head));
                     for (chain.buffer[0..length]) |item| assert(item == 123);
+                    read_head += length;
                 },
                 .write => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    _ = try chain.file.?.write_all(chain.buffer, null).resolve(rt);
+                    write_head += try chain.file.?.write_all(chain.buffer, write_head).resolve(rt);
                 },
                 .stat => {
-                    _ = try chain.file.?.stat().resolve(rt);
+                    const stat = try chain.file.?.stat().resolve(rt);
+                    assert(stat.size == write_head);
                 },
                 .close => try chain.file.?.close().resolve(rt),
                 .delete => {

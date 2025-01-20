@@ -16,7 +16,7 @@ const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .debug,
+    .log_level = .err,
 };
 
 pub fn main() !void {
