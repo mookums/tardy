@@ -46,7 +46,7 @@ pub fn main() !void {
                     try std.fs.cwd().openFileZ(path, .{}),
                 );
 
-                try file.stat(rt, {}, stat_task);
+                try file.stat().callback(rt, {}, stat_task);
             }
         }.init,
         {},

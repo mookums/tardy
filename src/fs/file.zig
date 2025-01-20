@@ -428,7 +428,7 @@ pub const File = struct {
             task_ctx: anytype,
             comptime task_fn: TaskFn(StatResult, @TypeOf(task_ctx)),
         ) !void {
-            try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.handle });
+            try rt.scheduler.spawn(StatResult, task_ctx, task_fn, .wait_for_io, .{ .stat = self.file.handle });
         }
     };
 
