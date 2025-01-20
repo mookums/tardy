@@ -3,35 +3,11 @@ const assert = std.debug.assert;
 const log = @import("lib.zig").log;
 
 const Atomic = std.atomic.Value;
-
 const Runtime = @import("tardy").Runtime;
 
 const Dir = @import("tardy").Dir;
-const File = @import("tardy").File;
-const Timer = @import("tardy").Timer;
-
-const OpenFileResult = @import("tardy").OpenFileResult;
-const OpenDirResult = @import("tardy").OpenDirResult;
-
-const CreateFileResult = @import("tardy").OpenFileResult;
-const CreateDirResult = @import("tardy").CreateDirResult;
-
-const StatResult = @import("tardy").StatResult;
-const ReadResult = @import("tardy").ReadResult;
-const WriteResult = @import("tardy").WriteResult;
-const DeleteTreeResult = @import("tardy").DeleteTreeResult;
-
-const ConnectResult = @import("tardy").ConnectResult;
-
 const SharedParams = @import("lib.zig").SharedParams;
-
 const FileChain = @import("file_chain.zig").FileChain;
-
-const Params = struct {
-    shared: *const SharedParams,
-    root_dir: Dir,
-    file_chain: *FileChain,
-};
 
 pub const STACK_SIZE = 1024 * 32;
 threadlocal var file_chain_counter: usize = 0;
@@ -47,7 +23,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     file_chain_counter = chain_count;
 
     for (0..chain_count) |i| {
-        var prng2 = std.Random.DefaultPrng.init(shared_params.seed);
+        var prng2 = std.Random.DefaultPrng.init(shared_params.seed + i);
         const rand2 = prng2.random();
 
         const chain_ptr = try rt.allocator.create(FileChain);

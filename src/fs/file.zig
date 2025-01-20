@@ -163,7 +163,7 @@ pub const File = struct {
     }
 
     const ReadAction = struct {
-        file: *const File,
+        file: File,
         buffer: []u8,
         offset: ?usize,
 
@@ -197,12 +197,12 @@ pub const File = struct {
         }
     };
 
-    pub fn read(self: *const File, buffer: []u8, offset: ?usize) ReadAction {
+    pub fn read(self: File, buffer: []u8, offset: ?usize) ReadAction {
         return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
     const ReadAllAction = struct {
-        file: *const File,
+        file: File,
         buffer: []u8,
         offset: ?usize,
 
@@ -289,12 +289,12 @@ pub const File = struct {
         }
     };
 
-    pub fn read_all(self: *const File, buffer: []u8, offset: ?usize) ReadAllAction {
+    pub fn read_all(self: File, buffer: []u8, offset: ?usize) ReadAllAction {
         return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
     const WriteAction = struct {
-        file: *const File,
+        file: File,
         buffer: []const u8,
         offset: ?usize,
 
@@ -328,12 +328,12 @@ pub const File = struct {
         }
     };
 
-    pub fn write(self: *const File, buffer: []const u8, offset: ?usize) WriteAction {
+    pub fn write(self: File, buffer: []const u8, offset: ?usize) WriteAction {
         return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
     const WriteAllAction = struct {
-        file: *const File,
+        file: File,
         buffer: []const u8,
         offset: ?usize,
 
@@ -419,12 +419,12 @@ pub const File = struct {
         }
     };
 
-    pub fn write_all(self: *const File, buffer: []const u8, offset: ?usize) WriteAllAction {
+    pub fn write_all(self: File, buffer: []const u8, offset: ?usize) WriteAllAction {
         return .{ .file = self, .buffer = buffer, .offset = offset };
     }
 
     const StatAction = struct {
-        file: *const File,
+        file: File,
 
         pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
             try rt.scheduler.frame_await(.{ .stat = self.file.handle });
@@ -444,12 +444,12 @@ pub const File = struct {
         }
     };
 
-    pub fn stat(self: *const File) StatAction {
+    pub fn stat(self: File) StatAction {
         return .{ .file = self };
     }
 
     const CloseAction = struct {
-        file: *const File,
+        file: File,
 
         pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
             try rt.scheduler.frame_await(.{ .close = self.file.handle });
@@ -465,11 +465,11 @@ pub const File = struct {
         }
     };
 
-    pub fn close(self: *const File) CloseAction {
+    pub fn close(self: File) CloseAction {
         return .{ .file = self };
     }
 
-    pub fn close_blocking(self: *const File) void {
+    pub fn close_blocking(self: File) void {
         std.posix.close(self.handle);
     }
 };

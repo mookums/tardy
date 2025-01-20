@@ -47,8 +47,8 @@ const StatError = @import("../completion.zig").StatError;
 
 const JobBundle = struct {
     job: Job,
-    statx: std.os.linux.Statx = undefined,
-    timespec: std.os.linux.kernel_timespec = undefined,
+    statx: *std.os.linux.Statx = undefined,
+    timespec: *std.os.linux.kernel_timespec = undefined,
 };
 
 const URING_SUBMISSION_SIZE: u16 = 4096;
@@ -74,6 +74,7 @@ pub const AsyncIoUring = struct {
         break :blk flags;
     };
 
+    allocator: std.mem.Allocator,
     inner: *std.os.linux.IoUring,
     wake_event_fd: std.posix.fd_t,
     wake_event_buffer: []u8,
@@ -150,6 +151,7 @@ pub const AsyncIoUring = struct {
 
         return AsyncIoUring{
             .inner = uring,
+            .allocator = allocator,
             .wake_event_fd = wake_event_fd,
             .wake_event_buffer = wake_event_buffer,
             .jobs = jobs,
@@ -206,12 +208,16 @@ pub const AsyncIoUring = struct {
             .type = .{ .timer = .none },
         };
 
-        item.timespec = std.os.linux.kernel_timespec{
+        const timespec_ptr = try self.allocator.create(std.os.linux.kernel_timespec);
+        errdefer self.allocator.destroy(timespec_ptr);
+
+        timespec_ptr.* = std.os.linux.kernel_timespec{
             .tv_sec = @intCast(timespec.seconds),
             .tv_nsec = @intCast(timespec.nanos),
         };
+        item.timespec = timespec_ptr;
 
-        _ = try self.inner.timeout(index, &item.timespec, 0, 0);
+        _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
     }
 
     fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AioOpenFlags) !void {
@@ -246,6 +252,7 @@ pub const AsyncIoUring = struct {
             o.NONBLOCK = flags.non_block;
             o.SYNC = flags.sync;
             o.DIRECTORY = flags.directory;
+            o.PATH = false;
 
             break :blk o;
         };
@@ -290,8 +297,18 @@ pub const AsyncIoUring = struct {
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
 
-        const statx = &item.statx;
-        _ = try self.inner.statx(index, fd, "", std.os.linux.AT.EMPTY_PATH, 0, statx);
+        const statx_ptr = try self.allocator.create(std.os.linux.Statx);
+        errdefer self.allocator.destroy(statx_ptr);
+        item.statx = statx_ptr;
+
+        _ = try self.inner.statx(
+            index,
+            fd,
+            "",
+            std.os.linux.AT.EMPTY_PATH,
+            std.os.linux.STATX_BASIC_STATS,
+            statx_ptr,
+        );
     }
 
     fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) !void {
@@ -496,7 +513,10 @@ pub const AsyncIoUring = struct {
                         try uring.queue_wake();
                         break :blk .wake;
                     },
-                    .timer => break :blk .none,
+                    .timer => {
+                        defer uring.allocator.destroy(job_with_data.timespec);
+                        break :blk .none;
+                    },
                     .close => break :blk .close,
                     .accept => |inner| {
                         if (cqe.res >= 0) switch (inner.kind) {
@@ -542,7 +562,9 @@ pub const AsyncIoUring = struct {
                                 LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
                                 LinuxError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
                                 LinuxError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
-                                LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => .{ .err = ConnectError.WouldBlock },
+                                LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => .{
+                                    .err = ConnectError.WouldBlock,
+                                },
                                 LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
                                 LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
                                 LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
@@ -742,8 +764,10 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .write = result };
                     },
                     .stat => {
+                        defer uring.allocator.destroy(job_with_data.statx);
+
                         if (cqe.res == 0) {
-                            const statx = &job_with_data.statx;
+                            const statx = job_with_data.statx;
                             const stat: Stat = .{
                                 .size = @intCast(statx.size),
                                 .mode = @intCast(statx.mode),

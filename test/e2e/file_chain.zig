@@ -21,6 +21,7 @@ pub const FileChain = struct {
         open,
         read,
         write,
+        stat,
         close,
         delete,
     };
@@ -48,6 +49,7 @@ pub const FileChain = struct {
                 },
                 .read => if (!exists or !opened) return false,
                 .write => if (!exists or !opened) return false,
+                .stat => if (!exists or !opened) return false,
                 .close => {
                     if (!opened) return false;
                     opened = false;
@@ -98,6 +100,7 @@ pub const FileChain = struct {
                 },
                 .read => assert(exists and opened),
                 .write => assert(exists and opened),
+                .stat => assert(exists and opened),
                 .close => {
                     assert(opened);
                     opened = false;
@@ -110,7 +113,7 @@ pub const FileChain = struct {
             }
         }
 
-        if (exists and opened) return &.{ .read, .write, .close };
+        if (exists and opened) return &.{ .read, .write, .stat, .close };
         if (exists and !opened) return &.{.delete};
         unreachable;
     }
@@ -151,7 +154,6 @@ pub const FileChain = struct {
     }
 
     pub fn chain_frame(chain: *FileChain, rt: *Runtime, counter: *usize, seed_string: [:0]const u8) !void {
-        // clean it up :p
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
 
@@ -173,15 +175,19 @@ pub const FileChain = struct {
                     for (chain.buffer[0..]) |*item| item.* = 123;
                     _ = try chain.file.?.write_all(chain.buffer, null).resolve(rt);
                 },
+                .stat => {
+                    _ = try chain.file.?.stat().resolve(rt);
+                },
                 .close => try chain.file.?.close().resolve(rt),
                 .delete => {
                     const dir = Dir{ .handle = chain.path.rel.dir };
                     try dir.delete_file(chain.path.rel.path).resolve(rt);
+                    counter.* -= 1;
                 },
             }
         }
 
-        counter.* -= 1;
+        log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("deleting the e2e tree...", .{});
             try Dir.cwd().delete_tree(seed_string).resolve(rt);
@@ -227,6 +233,7 @@ test "FileChain: Never Deleted" {
     const chain: []const FileChain.Step = &.{
         .create,
         .read,
+        .stat,
         .write,
         .close,
     };
