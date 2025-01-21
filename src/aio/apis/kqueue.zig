@@ -696,7 +696,8 @@ pub const AsyncKqueue = struct {
             if (remaining == 0) break;
 
             const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
-            const timeout: ?*std.posix.timespec = if (busy_wait or reaped > 0) &timeout_spec else null;
+            const timeout: ?*const std.posix.timespec = if (busy_wait or reaped > 0) &timeout_spec else null;
+            log.debug("remaining count={d}", .{remaining});
 
             // Handle all of the kqueue I/O
             const kqueue_events = try std.posix.kevent(
