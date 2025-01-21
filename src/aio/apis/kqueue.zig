@@ -4,7 +4,7 @@ const log = std.log.scoped(.@"tardy/aio/kqueue");
 
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
-const Stat = @import("../completion.zig").Stat;
+const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
@@ -65,12 +65,13 @@ pub const AsyncKqueue = struct {
 
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
-        var jobs = try Pool(Job).init(allocator, options.size_aio_jobs_max + 1, null, null);
-        const blocking = std.ArrayList(*Job).init(allocator);
+        var jobs = try Pool(Job).init(allocator, options.size_tasks_initial, options.pooling);
+        const blocking = std.ArrayList(usize).init(allocator);
 
         {
-            const borrowed = jobs.borrow_assume_unset(0);
-            borrowed.item.* = .{
+            const index = jobs.borrow_assume_unset(0);
+            const item = jobs.get_ptr(index);
+            item.* = .{
                 .index = 0,
                 .type = .wake,
                 .task = undefined,
@@ -102,7 +103,7 @@ pub const AsyncKqueue = struct {
         std.posix.close(self.kqueue_fd);
         allocator.free(self.events);
         allocator.free(self.changes);
-        self.jobs.deinit(null, null);
+        self.jobs.deinit();
         self.blocking.deinit();
     }
 
@@ -136,7 +137,7 @@ pub const AsyncKqueue = struct {
     fn queue_timer(self: *AsyncKqueue, task: usize, timespec: Timespec) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
-        const item = try self.jobs.get_ptr(index);
+        const item = self.jobs.get_ptr(index);
 
         item.* = .{
             .index = index,
@@ -296,7 +297,7 @@ pub const AsyncKqueue = struct {
         } else return error.ChangeQueueFull;
     }
 
-    fn queue_close(self: *AsyncIO, task: usize, fd: std.posix.fd_t) !void {
+    fn queue_close(self: *AsyncKqueue, task: usize, fd: std.posix.fd_t) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
@@ -493,7 +494,7 @@ pub const AsyncKqueue = struct {
                     kqueue.jobs.release(job.index);
                 } else {
                     // if not done, readd to blocking list.
-                    kqueue.blocking.appendAssumeCapacity(job);
+                    kqueue.blocking.appendAssumeCapacity(job.index);
                 };
 
                 const result: Result = blk: {
@@ -927,16 +928,7 @@ pub const AsyncKqueue = struct {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
-            ._queue_timer = queue_timer,
-            ._queue_open = queue_open,
-            ._queue_stat = queue_stat,
-            ._queue_read = queue_read,
-            ._queue_write = queue_write,
-            ._queue_close = queue_close,
-            ._queue_accept = queue_accept,
-            ._queue_connect = queue_connect,
-            ._queue_recv = queue_recv,
-            ._queue_send = queue_send,
+            ._queue_job = queue_job,
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,
