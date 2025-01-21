@@ -495,7 +495,7 @@ pub const AsyncKqueue = struct {
                     kqueue.jobs.release(job.index);
                 } else {
                     // if not done, readd to blocking list.
-                    kqueue.blocking.appendAssumeCapacity(job.index);
+                    kqueue.blocking.append(job.index) catch unreachable;
                 };
 
                 const result: Result = blk: {
