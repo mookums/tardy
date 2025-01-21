@@ -66,7 +66,7 @@ pub const AsyncKqueue = struct {
 
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
-        var jobs = try Pool(Job).init(allocator, options.size_tasks_initial, options.pooling);
+        var jobs = try Pool(Job).init(allocator, options.size_tasks_initial + 1, options.pooling);
         const blocking = Queue(usize).init(allocator);
 
         {
@@ -689,9 +689,9 @@ pub const AsyncKqueue = struct {
 
                         .write => |inner| {
                             const rc = if (inner.offset) |offset|
-                                std.os.linux.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
+                                std.posix.system.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
                             else
-                                std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
+                                std.posix.system.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
 
                             const result: WriteResult = result: {
                                 const e: PosixError = std.posix.errno(rc);

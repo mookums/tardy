@@ -63,12 +63,9 @@ pub const Dir = struct {
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
 
-            const result: OpenDirResult = switch (task.result) {
-                .open => |inner| switch (inner) {
-                    .actual => |actual| .{ .actual = actual.dir },
-                    .err => |err| .{ .err = err },
-                },
-                else => unreachable,
+            const result: OpenDirResult = switch (task.result.open) {
+                .actual => |actual| .{ .actual = actual.dir },
+                .err => |err| .{ .err = err },
             };
 
             return try result.unwrap();

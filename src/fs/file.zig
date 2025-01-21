@@ -65,12 +65,10 @@ pub const File = struct {
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
-            const result: OpenFileResult = switch (task.result) {
-                .open => |inner| switch (inner) {
-                    .actual => |actual| .{ .actual = actual.file },
-                    .err => |err| .{ .err = err },
-                },
-                else => unreachable,
+
+            const result: OpenFileResult = switch (task.result.open) {
+                .actual => |actual| .{ .actual = actual.file },
+                .err => |err| .{ .err = err },
             };
 
             return try result.unwrap();
@@ -122,12 +120,9 @@ pub const File = struct {
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
-            const result: OpenFileResult = switch (task.result) {
-                .open => |inner| switch (inner) {
-                    .actual => |actual| .{ .actual = actual.file },
-                    .err => |err| .{ .err = err },
-                },
-                else => unreachable,
+            const result: OpenFileResult = switch (task.result.open) {
+                .actual => |actual| .{ .actual = actual.file },
+                .err => |err| .{ .err = err },
             };
 
             return try result.unwrap();
