@@ -117,6 +117,7 @@ pub const TcpServerChain = struct {
     pub fn chain_frame(chain: *TcpServerChain, rt: *Runtime, counter: *usize, server_socket: Socket) !void {
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
+        errdefer unreachable;
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
@@ -170,6 +171,7 @@ pub const TcpClientChain = struct {
     pub fn chain_frame(chain: *TcpClientChain, rt: *Runtime, counter: *usize, port: u16) !void {
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
+        errdefer unreachable;
 
         var socket: ?Socket = null;
 
