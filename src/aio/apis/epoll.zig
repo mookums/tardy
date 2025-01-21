@@ -11,6 +11,7 @@ const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
+const Queue = @import("../../core/queue.zig").Queue;
 
 const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
@@ -51,7 +52,7 @@ pub const AsyncEpoll = struct {
 
     jobs: Pool(Job),
     // This is for jobs that are not supported and need to be blocking.
-    blocking: std.ArrayList(usize),
+    blocking: Queue(usize),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
@@ -68,8 +69,7 @@ pub const AsyncEpoll = struct {
         var jobs = try Pool(Job).init(allocator, size, options.pooling);
         errdefer jobs.deinit();
 
-        const blocking = std.ArrayList(usize).init(allocator);
-        errdefer blocking.deinit();
+        const blocking = Queue(usize).init(allocator);
 
         // Queue the wake task.
         const index = jobs.borrow_assume_unset(0);
@@ -432,7 +432,7 @@ pub const AsyncEpoll = struct {
             blocking_loop: for (0..epoll.blocking.items.len) |_| {
                 if (self.completions.len - reaped == 0) break;
 
-                const index = epoll.blocking.popOrNull() orelse break;
+                const index = (try epoll.blocking.pop()) orelse break;
                 const job = epoll.jobs.get_ptr(index);
                 assert(epoll.jobs.dirty.isSet(index));
 

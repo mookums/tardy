@@ -39,6 +39,7 @@ pub const DeleteTreeResult = @import("aio/completion.zig").DeleteTreeResult;
 pub const ZeroCopy = @import("core/zero_copy.zig").ZeroCopy;
 pub const Pool = @import("core/pool.zig").Pool;
 pub const PoolKind = @import("core/pool.zig").PoolKind;
+pub const Queue = @import("core/queue.zig").Queue;
 
 pub const wrap = @import("utils.zig").wrap;
 pub const unwrap = @import("utils.zig").unwrap;

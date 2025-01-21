@@ -11,6 +11,7 @@ const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
+const Queue = @import("../../core/queue.zig").Queue;
 
 const Socket = @import("../../net/lib.zig").Socket;
 const Path = @import("../../fs/lib.zig").Path;
@@ -56,7 +57,7 @@ pub const AsyncKqueue = struct {
     events: []std.posix.Kevent,
 
     jobs: Pool(Job),
-    blocking: std.ArrayList(usize),
+    blocking: Queue(usize),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncKqueue {
         const kqueue_fd = try std.posix.kqueue();
@@ -66,7 +67,7 @@ pub const AsyncKqueue = struct {
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         var jobs = try Pool(Job).init(allocator, options.size_tasks_initial, options.pooling);
-        const blocking = std.ArrayList(usize).init(allocator);
+        const blocking = Queue(usize).init(allocator);
 
         {
             const index = jobs.borrow_assume_unset(0);
@@ -485,7 +486,7 @@ pub const AsyncKqueue = struct {
             blocking_loop: for (0..kqueue.blocking.items.len) |_| {
                 if (self.completions.len - reaped == 0) break;
 
-                const index = kqueue.blocking.popOrNull() orelse break;
+                const index = (try kqueue.blocking.pop()) orelse break;
                 const job = kqueue.jobs.get_ptr(index);
                 assert(kqueue.jobs.dirty.isSet(job.index));
 
@@ -691,17 +692,18 @@ pub const AsyncKqueue = struct {
                 reaped += 1;
             }
 
-            const timeout_spec = std.mem.zeroInit(std.posix.timespec, .{});
-
             const remaining = self.completions.len - reaped;
             if (remaining == 0) break;
+
+            const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
+            const timeout: ?*std.posix.timespec = if (busy_wait or reaped > 0) &timeout_spec else null;
 
             // Handle all of the kqueue I/O
             const kqueue_events = try std.posix.kevent(
                 kqueue.kqueue_fd,
                 &.{},
                 kqueue.events[0..remaining],
-                if (busy_wait or reaped > 0) &timeout_spec else null,
+                timeout,
             );
 
             for (kqueue.events[0..kqueue_events]) |event| {
@@ -727,14 +729,24 @@ pub const AsyncKqueue = struct {
                             assert(inner == .none);
                             break :blk .none;
                         },
-                        .accept => |socket| {
+                        .accept => |*inner| {
                             assert(event.filter == std.posix.system.EVFILT_READ);
-                            const rc = std.posix.system.accept(socket, &socket.addr.any, &socket.addr_len);
+                            const rc = std.posix.system.accept(
+                                inner.socket,
+                                &inner.addr.any,
+                                @ptrCast(&inner.addr_len),
+                            );
 
                             const result: AcceptResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
                                 break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
+                                    PosixError.SUCCESS => .{
+                                        .actual = .{
+                                            .handle = @intCast(rc),
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
+                                    },
                                     PosixError.AGAIN => .{ .err = AcceptError.WouldBlock },
                                     PosixError.BADF => .{ .err = AcceptError.InvalidFd },
                                     PosixError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
@@ -759,7 +771,13 @@ pub const AsyncKqueue = struct {
                             const result: ConnectResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
                                 break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = inner.socket },
+                                    PosixError.SUCCESS => .{
+                                        .actual = .{
+                                            .handle = inner.socket,
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
+                                    },
                                     PosixError.AGAIN, PosixError.ALREADY, PosixError.INPROGRESS => .{
                                         .err = ConnectError.WouldBlock,
                                     },
