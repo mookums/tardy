@@ -246,19 +246,7 @@ pub const AsyncKqueue = struct {
             .task = task,
         };
 
-        if (self.change_count < self.changes.len) {
-            const event = &self.changes[self.change_count];
-            self.change_count += 1;
-
-            event.* = std.posix.Kevent{
-                .ident = @intCast(fd),
-                .filter = std.posix.system.EVFILT_READ,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-                .fflags = 0,
-                .data = 0,
-                .udata = index,
-            };
-        } else return error.ChangeQueueFull;
+        try self.blocking.append(index);
     }
 
     fn queue_write(
@@ -283,19 +271,7 @@ pub const AsyncKqueue = struct {
             .task = task,
         };
 
-        if (self.change_count < self.changes.len) {
-            const event = &self.changes[self.change_count];
-            self.change_count += 1;
-
-            event.* = .{
-                .ident = @intCast(fd),
-                .filter = std.posix.system.EVFILT_WRITE,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-                .fflags = 0,
-                .data = 0,
-                .udata = index,
-            };
-        } else return error.ChangeQueueFull;
+        try self.blocking.append(index);
     }
 
     fn queue_close(self: *AsyncKqueue, task: usize, fd: std.posix.fd_t) !void {
@@ -677,6 +653,75 @@ pub const AsyncKqueue = struct {
 
                             break :blk .{ .stat = result };
                         },
+                        .read => |inner| {
+                            const rc = if (inner.offset) |offset|
+                                std.posix.system.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
+                            else
+                                std.posix.system.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
+
+                            const result: ReadResult = result: {
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => switch (rc) {
+                                        0 => .{ .err = ReadError.EndOfFile },
+                                        else => .{ .actual = @intCast(rc) },
+                                    },
+                                    PosixError.AGAIN => {
+                                        job_complete = false;
+                                        continue :blocking_loop;
+                                    },
+                                    // If it is unseekable...
+                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
+                                        .err = ReadError.Unexpected,
+                                    },
+                                    PosixError.BADF => .{ .err = ReadError.InvalidFd },
+                                    PosixError.FAULT => .{ .err = ReadError.InvalidAddress },
+                                    PosixError.INTR => .{ .err = ReadError.Interrupted },
+                                    PosixError.INVAL => .{ .err = ReadError.InvalidArguments },
+                                    PosixError.IO => .{ .err = ReadError.IoError },
+                                    PosixError.ISDIR => .{ .err = ReadError.IsDirectory },
+                                    else => .{ .err = ReadError.Unexpected },
+                                };
+                            };
+
+                            break :blk .{ .read = result };
+                        },
+
+                        .write => |inner| {
+                            const rc = if (inner.offset) |offset|
+                                std.os.linux.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
+                            else
+                                std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
+
+                            const result: WriteResult = result: {
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
+                                    PosixError.AGAIN => {
+                                        job_complete = false;
+                                        continue :blocking_loop;
+                                    },
+                                    // If it is unseekable...
+                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
+                                        .err = WriteError.Unexpected,
+                                    },
+                                    PosixError.BADF => .{ .err = WriteError.InvalidFd },
+                                    PosixError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
+                                    PosixError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
+                                    PosixError.FAULT => .{ .err = WriteError.InvalidAddress },
+                                    PosixError.FBIG => .{ .err = WriteError.FileTooBig },
+                                    PosixError.INTR => .{ .err = WriteError.Interrupted },
+                                    PosixError.INVAL => .{ .err = WriteError.InvalidArguments },
+                                    PosixError.IO => .{ .err = WriteError.IoError },
+                                    PosixError.NOSPC => .{ .err = WriteError.NoSpace },
+                                    PosixError.PERM => .{ .err = WriteError.AccessDenied },
+                                    PosixError.PIPE => .{ .err = WriteError.BrokenPipe },
+                                    else => .{ .err = WriteError.Unexpected },
+                                };
+                            };
+
+                            break :blk .{ .write = result };
+                        },
                         .close => |handle| {
                             std.posix.close(handle);
                             break :blk .none;
@@ -862,71 +907,6 @@ pub const AsyncKqueue = struct {
                             };
 
                             break :blk .{ .send = result };
-                        },
-                        .read => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_READ);
-                            const rc = if (inner.offset) |offset|
-                                std.posix.system.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.posix.system.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: ReadResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => switch (rc) {
-                                        0 => .{ .err = ReadError.EndOfFile },
-                                        else => .{ .actual = @intCast(rc) },
-                                    },
-                                    PosixError.AGAIN => .{ .err = ReadError.WouldBlock },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
-                                        .err = ReadError.Unexpected,
-                                    },
-                                    PosixError.BADF => .{ .err = ReadError.InvalidFd },
-                                    PosixError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = ReadError.Interrupted },
-                                    PosixError.INVAL => .{ .err = ReadError.InvalidArguments },
-                                    PosixError.IO => .{ .err = ReadError.IoError },
-                                    PosixError.ISDIR => .{ .err = ReadError.IsDirectory },
-                                    else => .{ .err = ReadError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .read = result };
-                        },
-
-                        .write => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const rc = if (inner.offset) |offset|
-                                std.os.linux.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: WriteResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
-                                    PosixError.AGAIN => .{ .err = WriteError.WouldBlock },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
-                                        .err = WriteError.Unexpected,
-                                    },
-                                    PosixError.BADF => .{ .err = WriteError.InvalidFd },
-                                    PosixError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                                    PosixError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                                    PosixError.FAULT => .{ .err = WriteError.InvalidAddress },
-                                    PosixError.FBIG => .{ .err = WriteError.FileTooBig },
-                                    PosixError.INTR => .{ .err = WriteError.Interrupted },
-                                    PosixError.INVAL => .{ .err = WriteError.InvalidArguments },
-                                    PosixError.IO => .{ .err = WriteError.IoError },
-                                    PosixError.NOSPC => .{ .err = WriteError.NoSpace },
-                                    PosixError.PERM => .{ .err = WriteError.AccessDenied },
-                                    PosixError.PIPE => .{ .err = WriteError.BrokenPipe },
-                                    else => .{ .err = WriteError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .write = result };
                         },
                     }
                 };
