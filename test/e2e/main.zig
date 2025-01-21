@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.io_uring);
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Dir = @import("tardy").Dir;
 
