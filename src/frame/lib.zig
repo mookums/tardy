@@ -1,11 +1,16 @@
 const std = @import("std");
-const log = std.log.scoped(.@"tardy/frame");
 const builtin = @import("builtin");
+const log = std.log.scoped(.@"tardy/frame");
 const assert = std.debug.assert;
 
-comptime {
-    asm (@embedFile("asm/x86_64_linux.s"));
-}
+const Hardware = switch (builtin.cpu.arch) {
+    .x86_64 => switch (builtin.os.tag) {
+        .windows => x64Windows,
+        else => x64SysV,
+    },
+    .aarch64 => aarch64General,
+    else => @panic("Architecture not currently supported!"),
+};
 
 /// Swap the first stack out and and the second stack in.
 extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
@@ -61,9 +66,7 @@ pub const Frame = extern struct {
     ) !*Frame {
         const stack = try allocator.alloc(u8, stack_size);
         errdefer allocator.free(stack);
-
         const Args = @TypeOf(args);
-        const stack_alignment: usize = 16;
 
         if (comptime builtin.mode == .Debug) {
             // this should mark it easily for the debugger.
@@ -74,7 +77,11 @@ pub const Frame = extern struct {
         const stack_end = @intFromPtr(stack.ptr + stack.len);
 
         // space for the frame
-        var stack_ptr = std.mem.alignBackward(usize, stack_end - @sizeOf(Frame), stack_alignment);
+        var stack_ptr = std.mem.alignBackward(
+            usize,
+            stack_end - @sizeOf(Frame),
+            Hardware.alignment,
+        );
         if (stack_ptr < stack_base) return error.StackTooSmall;
         const frame: *Frame = @ptrFromInt(stack_ptr);
 
@@ -84,14 +91,17 @@ pub const Frame = extern struct {
         arg_ptr.* = args;
 
         // space for the saved registers (pushed)
-        // TODO: support more platforms.
-        stack_ptr = std.mem.alignBackward(usize, stack_ptr - @sizeOf(usize) * 7, stack_alignment);
+        stack_ptr = std.mem.alignBackward(
+            usize,
+            stack_ptr - @sizeOf(usize) * Hardware.stack_count,
+            Hardware.alignment,
+        );
         if (stack_ptr < stack_base) return error.StackTooSmall;
-        assert(std.mem.isAligned(stack_ptr, stack_alignment));
+        assert(std.mem.isAligned(stack_ptr, Hardware.alignment));
 
         // set the return address appropriately
         const entries: [*]FrameEntryFn = @ptrFromInt(stack_ptr);
-        entries[6] = EntryFn(args, func);
+        entries[Hardware.entry] = EntryFn(args, func);
 
         frame.* = .{
             .caller_sp = undefined,
@@ -122,5 +132,35 @@ pub const Frame = extern struct {
     pub fn yield() void {
         const current = active_frame.?;
         tardy_swap_frame(&current.current_sp, &current.caller_sp);
+    }
+};
+
+const x64SysV = struct {
+    pub const stack_count = 7;
+    pub const entry = stack_count - 1;
+    pub const alignment = 16;
+
+    comptime {
+        asm (@embedFile("asm/x86_64_sysv.s"));
+    }
+};
+
+const x64Windows = struct {
+    pub const stack_count = 31;
+    pub const entry = stack_count - 1;
+    pub const alignment = 16;
+
+    comptime {
+        asm (@embedFile("asm/x86_64_win.s"));
+    }
+};
+
+const aarch64General = struct {
+    pub const stack_count = 20;
+    pub const entry = 0;
+    pub const alignment = 16;
+
+    comptime {
+        asm (@embedFile("asm/aarch64_gen.s"));
     }
 };

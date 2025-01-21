@@ -51,8 +51,6 @@ const JobBundle = struct {
     timespec: *std.os.linux.kernel_timespec = undefined,
 };
 
-const URING_SUBMISSION_SIZE: u16 = 4096;
-
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
@@ -97,6 +95,12 @@ pub const AsyncIoUring = struct {
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
 
+        const submit_size: u16 = @min(
+            // 4096 is the max uring submit size.
+            4096,
+            std.math.ceilPowerOfTwo(u16, @intCast(options.size_aio_reap_max)) catch 4096,
+        );
+
         const uring = blk: {
             if (options.parent_async) |parent| {
                 const parent_uring: *AsyncIoUring = @ptrCast(
@@ -114,10 +118,7 @@ pub const AsyncIoUring = struct {
                 const uring = try allocator.create(std.os.linux.IoUring);
                 errdefer allocator.destroy(uring);
 
-                uring.* = try std.os.linux.IoUring.init_params(
-                    URING_SUBMISSION_SIZE,
-                    &params,
-                );
+                uring.* = try std.os.linux.IoUring.init_params(submit_size, &params);
                 errdefer uring.deinit();
 
                 break :blk uring;
@@ -126,10 +127,7 @@ pub const AsyncIoUring = struct {
                 const uring = try allocator.create(std.os.linux.IoUring);
                 errdefer allocator.destroy(uring);
 
-                uring.* = try std.os.linux.IoUring.init(
-                    URING_SUBMISSION_SIZE,
-                    base_flags,
-                );
+                uring.* = try std.os.linux.IoUring.init(submit_size, base_flags);
                 errdefer uring.deinit();
 
                 break :blk uring;
@@ -200,6 +198,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Timespec) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -222,6 +221,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AioOpenFlags) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -267,6 +267,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .delete = .{ .path = path, .is_dir = is_dir } }, .task = task };
@@ -281,6 +282,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: std.posix.mode_t) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
@@ -293,6 +295,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
@@ -316,6 +319,7 @@ pub const AsyncIoUring = struct {
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
@@ -337,6 +341,7 @@ pub const AsyncIoUring = struct {
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
@@ -355,6 +360,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .close = fd }, .task = task };
@@ -364,6 +370,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -396,6 +403,7 @@ pub const AsyncIoUring = struct {
         kind: Socket.Kind,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
@@ -424,6 +432,7 @@ pub const AsyncIoUring = struct {
         buffer: []u8,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
@@ -441,6 +450,7 @@ pub const AsyncIoUring = struct {
 
     fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -459,6 +469,7 @@ pub const AsyncIoUring = struct {
 
     inline fn queue_wake(self: *AsyncIoUring) !void {
         const index = try self.jobs.borrow();
+        errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
         item.job = .{

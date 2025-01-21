@@ -57,30 +57,35 @@ pub const AsyncEpoll = struct {
         const size = options.size_tasks_initial + 1;
         const epoll_fd = try std.posix.epoll_create1(0);
         assert(epoll_fd > -1);
+        errdefer std.posix.close(epoll_fd);
 
         const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+        errdefer std.posix.close(wake_event_fd);
 
         const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
+        errdefer allocator.free(events);
+
         var jobs = try Pool(Job).init(allocator, size, options.pooling);
+        errdefer jobs.deinit();
+
         const blocking = std.ArrayList(usize).init(allocator);
+        errdefer blocking.deinit();
 
         // Queue the wake task.
-        {
-            const index = jobs.borrow_assume_unset(0);
-            const item = jobs.get_ptr(index);
-            item.* = .{
-                .index = index,
-                .type = .wake,
-                .task = @bitCast(@as(isize, -1)),
-            };
+        const index = jobs.borrow_assume_unset(0);
+        const item = jobs.get_ptr(index);
+        item.* = .{
+            .index = index,
+            .type = .wake,
+            .task = @bitCast(@as(isize, -1)),
+        };
 
-            var event: std.os.linux.epoll_event = .{
-                .events = std.os.linux.EPOLL.IN,
-                .data = .{ .u64 = index },
-            };
+        var event: std.os.linux.epoll_event = .{
+            .events = std.os.linux.EPOLL.IN,
+            .data = .{ .u64 = index },
+        };
 
-            try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
-        }
+        try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
 
         return AsyncEpoll{
             .epoll_fd = epoll_fd,
@@ -421,11 +426,10 @@ pub const AsyncEpoll = struct {
         log.debug("blocking item count={d}", .{epoll.blocking.items.len});
         log.debug("dirty jobs count={d}", .{epoll.jobs.dirty.count()});
 
-        while (reaped == 0 and wait) {
+        while ((reaped == 0 and wait) or first_run) {
             defer first_run = false;
 
             blocking_loop: for (0..epoll.blocking.items.len) |_| {
-                // Prevent overflow on completions.
                 if (self.completions.len - reaped == 0) break;
 
                 const index = epoll.blocking.popOrNull() orelse break;
@@ -448,11 +452,10 @@ pub const AsyncEpoll = struct {
                                 .abs => |path| std.os.linux.mkdir(path, @intCast(inner.mode)),
                             };
 
-                            if (rc == 0) break :blk .{ .mkdir = .{ .actual = {} } };
-
                             const result: MkdirResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => .{ .actual = {} },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :blocking_loop;
@@ -497,18 +500,13 @@ pub const AsyncEpoll = struct {
                                 .abs => |path| std.os.linux.open(path, o_flags, perms),
                             };
 
-                            if (rc >= 0) switch (inner.kind) {
-                                .file => break :blk .{
-                                    .open = .{ .actual = .{ .file = .{ .handle = @intCast(rc) } } },
-                                },
-                                .dir => break :blk .{
-                                    .open = .{ .actual = .{ .dir = .{ .handle = @intCast(rc) } } },
-                                },
-                            };
-
                             const result: InnerOpenResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => switch (inner.kind) {
+                                        .file => .{ .actual = .{ .file = .{ .handle = @intCast(rc) } } },
+                                        .dir => .{ .actual = .{ .dir = .{ .handle = @intCast(rc) } } },
+                                    },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :blocking_loop;
@@ -517,7 +515,7 @@ pub const AsyncEpoll = struct {
                                     LinuxError.BADF => .{ .err = OpenError.InvalidFd },
                                     LinuxError.BUSY => .{ .err = OpenError.Busy },
                                     LinuxError.DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                                    LinuxError.EXIST => .{ .err = OpenError.FileAlreadyExists },
+                                    LinuxError.EXIST => .{ .err = OpenError.AlreadyExists },
                                     LinuxError.FAULT => .{ .err = OpenError.InvalidAddress },
                                     LinuxError.FBIG, LinuxError.OVERFLOW => .{ .err = OpenError.FileTooBig },
                                     LinuxError.INTR => .{ .err = OpenError.Interrupted },
@@ -548,11 +546,10 @@ pub const AsyncEpoll = struct {
                                 .abs => |path| std.os.linux.unlinkat(std.posix.AT.FDCWD, path, mode),
                             };
 
-                            if (rc == 0) break :blk .{ .delete = .{ .actual = {} } };
-
                             const result: DeleteResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => .{ .actual = {} },
                                     // unlink
                                     LinuxError.AGAIN => {
                                         job_complete = false;
@@ -583,30 +580,29 @@ pub const AsyncEpoll = struct {
                             var fstat: std.os.linux.Stat = undefined;
                             const rc = std.os.linux.fstat(fd, &fstat);
 
-                            if (rc == 0) {
-                                const stat = Stat{
-                                    .size = @intCast(fstat.size),
-                                    .mode = @intCast(fstat.mode),
-                                    .accessed = .{
-                                        .seconds = @intCast(fstat.atim.tv_sec),
-                                        .nanos = @intCast(fstat.atim.tv_nsec),
-                                    },
-                                    .modified = .{
-                                        .seconds = @intCast(fstat.mtim.tv_sec),
-                                        .nanos = @intCast(fstat.mtim.tv_nsec),
-                                    },
-                                    .changed = .{
-                                        .seconds = @intCast(fstat.ctim.tv_sec),
-                                        .nanos = @intCast(fstat.ctim.tv_nsec),
-                                    },
-                                };
-
-                                break :blk .{ .stat = .{ .actual = stat } };
-                            }
-
                             const result: StatResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => {
+                                        const stat = Stat{
+                                            .size = @intCast(fstat.size),
+                                            .mode = @intCast(fstat.mode),
+                                            .accessed = .{
+                                                .seconds = @intCast(fstat.atim.tv_sec),
+                                                .nanos = @intCast(fstat.atim.tv_nsec),
+                                            },
+                                            .modified = .{
+                                                .seconds = @intCast(fstat.mtim.tv_sec),
+                                                .nanos = @intCast(fstat.mtim.tv_nsec),
+                                            },
+                                            .changed = .{
+                                                .seconds = @intCast(fstat.ctim.tv_sec),
+                                                .nanos = @intCast(fstat.ctim.tv_nsec),
+                                            },
+                                        };
+
+                                        break :result .{ .actual = stat };
+                                    },
                                     LinuxError.ACCES => .{ .err = StatError.AccessDenied },
                                     LinuxError.BADF => .{ .err = StatError.InvalidFd },
                                     LinuxError.FAULT => .{ .err = StatError.InvalidAddress },
@@ -628,21 +624,21 @@ pub const AsyncEpoll = struct {
                             else
                                 std.os.linux.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
 
-                            if (rc == 0) {
-                                break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
-                            } else {
-                                break :blk .{ .read = .{ .actual = @intCast(rc) } };
-                            }
-
                             const result: ReadResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => switch (rc) {
+                                        0 => .{ .err = ReadError.EndOfFile },
+                                        else => .{ .actual = @intCast(rc) },
+                                    },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :blocking_loop;
                                     },
                                     // If it is unseekable...
-                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{ .err = ReadError.Unexpected },
+                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{
+                                        .err = ReadError.Unexpected,
+                                    },
                                     LinuxError.BADF => .{ .err = ReadError.InvalidFd },
                                     LinuxError.FAULT => .{ .err = ReadError.InvalidAddress },
                                     LinuxError.INTR => .{ .err = ReadError.Interrupted },
@@ -661,17 +657,18 @@ pub const AsyncEpoll = struct {
                             else
                                 std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
 
-                            if (rc > 0) break :blk .{ .write = .{ .actual = @intCast(rc) } };
-
                             const result: WriteResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
+                                    LinuxError.SUCCESS => .{ .actual = @intCast(rc) },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :blocking_loop;
                                     },
                                     // If it is unseekable...
-                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{ .err = WriteError.Unexpected },
+                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{
+                                        .err = WriteError.Unexpected,
+                                    },
                                     LinuxError.BADF => .{ .err = WriteError.InvalidFd },
                                     LinuxError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
                                     LinuxError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
@@ -704,9 +701,12 @@ pub const AsyncEpoll = struct {
                 reaped += 1;
             }
 
+            const remaining = self.completions.len - reaped;
+            if (remaining == 0) break;
+
             const timeout: i32 = if (busy_wait or reaped > 0) 0 else -1;
             // Handle all of the epoll I/O
-            const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..], timeout);
+            const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
             epoll_loop: for (epoll.events[0..epoll_events]) |event| {
                 const job_index = event.data.u64;
                 assert(epoll.jobs.dirty.isSet(job_index));
@@ -758,18 +758,23 @@ pub const AsyncEpoll = struct {
                         },
                         .accept => |*inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-                            const res = std.os.linux.accept4(
+
+                            const rc = std.os.linux.accept4(
                                 inner.socket,
                                 &inner.addr.any,
                                 @ptrCast(&inner.addr_len),
-                                std.os.linux.SOCK.NONBLOCK,
+                                0,
                             );
 
                             const result: AcceptResult = result: {
-                                const e: LinuxError = std.posix.errno(res);
+                                const e: LinuxError = std.posix.errno(rc);
                                 break :result switch (e) {
                                     LinuxError.SUCCESS => .{
-                                        .actual = .{ .handle = @intCast(res), .addr = inner.addr, .kind = inner.kind },
+                                        .actual = .{
+                                            .handle = @intCast(rc),
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
                                     },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
@@ -794,31 +799,37 @@ pub const AsyncEpoll = struct {
                         },
                         .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const res = std.os.linux.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address));
+                            const rc = std.os.linux.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address));
 
                             const result: ConnectResult = result: {
-                                const e: LinuxError = std.posix.errno(res);
-                                switch (e) {
-                                    LinuxError.SUCCESS => break :result .{ .actual = .{ .handle = inner.socket, .addr = inner.addr, .kind = inner.kind } },
+                                const e: LinuxError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    LinuxError.SUCCESS => .{
+                                        .actual = .{
+                                            .handle = inner.socket,
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
+                                    },
                                     LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => {
                                         job_complete = false;
                                         continue :epoll_loop;
                                     },
-                                    LinuxError.ACCES, LinuxError.PERM => break :result .{ .err = ConnectError.AccessDenied },
-                                    LinuxError.ADDRINUSE => break :result .{ .err = ConnectError.AddressInUse },
-                                    LinuxError.ADDRNOTAVAIL => break :result .{ .err = ConnectError.AddressNotAvailable },
-                                    LinuxError.AFNOSUPPORT => break :result .{ .err = ConnectError.AddressFamilyNotSupported },
-                                    LinuxError.BADF => break :result .{ .err = ConnectError.InvalidFd },
-                                    LinuxError.CONNREFUSED => break :result .{ .err = ConnectError.ConnectionRefused },
-                                    LinuxError.FAULT => break :result .{ .err = ConnectError.InvalidAddress },
-                                    LinuxError.INTR => break :result .{ .err = ConnectError.Interrupted },
-                                    LinuxError.ISCONN => break :result .{ .err = ConnectError.AlreadyConnected },
-                                    LinuxError.NETUNREACH => break :result .{ .err = ConnectError.NetworkUnreachable },
-                                    LinuxError.NOTSOCK => break :result .{ .err = ConnectError.NotASocket },
-                                    LinuxError.PROTOTYPE => break :result .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                    LinuxError.TIMEDOUT => break :result .{ .err = ConnectError.TimedOut },
-                                    else => break :result .{ .err = ConnectError.Unexpected },
-                                }
+                                    LinuxError.ACCES, LinuxError.PERM => .{ .err = ConnectError.AccessDenied },
+                                    LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
+                                    LinuxError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
+                                    LinuxError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
+                                    LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
+                                    LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
+                                    LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
+                                    LinuxError.INTR => .{ .err = ConnectError.Interrupted },
+                                    LinuxError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
+                                    LinuxError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
+                                    LinuxError.NOTSOCK => .{ .err = ConnectError.NotASocket },
+                                    LinuxError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
+                                    LinuxError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
+                                    else => .{ .err = ConnectError.Unexpected },
+                                };
                             };
 
                             try epoll.remove_fd(inner.socket);
@@ -826,30 +837,36 @@ pub const AsyncEpoll = struct {
                         },
                         .recv => |inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-                            const rc = std.os.linux.recvfrom(inner.socket, inner.buffer.ptr, inner.buffer.len, 0, null, null);
-
-                            if (rc == 0)
-                                break :blk .{ .recv = .{ .err = RecvError.Closed } }
-                            else
-                                break :blk .{ .recv = .{ .actual = @intCast(rc) } };
+                            const rc = std.os.linux.recvfrom(
+                                inner.socket,
+                                inner.buffer.ptr,
+                                inner.buffer.len,
+                                0,
+                                null,
+                                null,
+                            );
 
                             const result: RecvResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
-                                switch (e) {
+                                break :result switch (e) {
+                                    LinuxError.SUCCESS => switch (rc) {
+                                        0 => .{ .err = RecvError.Closed },
+                                        else => .{ .actual = @intCast(rc) },
+                                    },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :epoll_loop;
                                     },
-                                    LinuxError.BADF => break :result .{ .err = RecvError.InvalidFd },
-                                    LinuxError.CONNREFUSED => break :result .{ .err = RecvError.ConnectionRefused },
-                                    LinuxError.FAULT => break :result .{ .err = RecvError.InvalidAddress },
-                                    LinuxError.INTR => break :result .{ .err = RecvError.Interrupted },
-                                    LinuxError.INVAL => break :result .{ .err = RecvError.InvalidArguments },
-                                    LinuxError.NOMEM => break :result .{ .err = RecvError.OutOfMemory },
-                                    LinuxError.NOTCONN => break :result .{ .err = RecvError.NotConnected },
-                                    LinuxError.NOTSOCK => break :result .{ .err = RecvError.NotASocket },
-                                    else => break :result .{ .err = RecvError.Unexpected },
-                                }
+                                    LinuxError.BADF => .{ .err = RecvError.InvalidFd },
+                                    LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
+                                    LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
+                                    LinuxError.INTR => .{ .err = RecvError.Interrupted },
+                                    LinuxError.INVAL => .{ .err = RecvError.InvalidArguments },
+                                    LinuxError.NOMEM => .{ .err = RecvError.OutOfMemory },
+                                    LinuxError.NOTCONN => .{ .err = RecvError.NotConnected },
+                                    LinuxError.NOTSOCK => .{ .err = RecvError.NotASocket },
+                                    else => .{ .err = RecvError.Unexpected },
+                                };
                             };
 
                             try epoll.remove_fd(inner.socket);
@@ -857,34 +874,39 @@ pub const AsyncEpoll = struct {
                         },
                         .send => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const res = std.os.linux.sendto(inner.socket, inner.buffer.ptr, inner.buffer.len, 0, null, 0);
+                            const rc = std.os.linux.sendto(
+                                inner.socket,
+                                inner.buffer.ptr,
+                                inner.buffer.len,
+                                0,
+                                null,
+                                0,
+                            );
 
                             const result: SendResult = result: {
-                                const e: LinuxError = std.posix.errno(res);
-                                switch (e) {
-                                    LinuxError.SUCCESS => break :result .{ .actual = @intCast(res) },
+                                const e: LinuxError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    LinuxError.SUCCESS => .{ .actual = @intCast(rc) },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :epoll_loop;
                                     },
-                                    LinuxError.ACCES => break :result .{ .err = SendError.AccessDenied },
-                                    LinuxError.ALREADY => break :result .{ .err = SendError.OpenInProgress },
-                                    LinuxError.BADF => break :result .{ .err = SendError.InvalidFd },
-                                    LinuxError.CONNRESET => break :result .{ .err = SendError.ConnectionReset },
-                                    LinuxError.DESTADDRREQ => break :result .{ .err = SendError.NoDestinationAddress },
-                                    LinuxError.FAULT => break :result .{ .err = SendError.InvalidAddress },
-                                    LinuxError.INTR => break :result .{ .err = SendError.Interrupted },
-                                    LinuxError.INVAL => break :result .{ .err = SendError.InvalidArguments },
-                                    LinuxError.ISCONN => break :result .{ .err = SendError.AlreadyConnected },
-                                    LinuxError.MSGSIZE => break :result .{ .err = SendError.InvalidSize },
-                                    LinuxError.NOBUFS, LinuxError.NOMEM => {
-                                        break :result .{ .err = SendError.OutOfMemory };
-                                    },
-                                    LinuxError.NOTCONN => break :result .{ .err = SendError.NotConnected },
-                                    LinuxError.OPNOTSUPP => break :result .{ .err = SendError.OperationNotSupported },
-                                    LinuxError.PIPE => break :result .{ .err = SendError.BrokenPipe },
-                                    else => break :result .{ .err = SendError.Unexpected },
-                                }
+                                    LinuxError.ACCES => .{ .err = SendError.AccessDenied },
+                                    LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
+                                    LinuxError.BADF => .{ .err = SendError.InvalidFd },
+                                    LinuxError.CONNRESET => .{ .err = SendError.ConnectionReset },
+                                    LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
+                                    LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
+                                    LinuxError.INTR => .{ .err = SendError.Interrupted },
+                                    LinuxError.INVAL => .{ .err = SendError.InvalidArguments },
+                                    LinuxError.ISCONN => .{ .err = SendError.AlreadyConnected },
+                                    LinuxError.MSGSIZE => .{ .err = SendError.InvalidSize },
+                                    LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = SendError.OutOfMemory },
+                                    LinuxError.NOTCONN => .{ .err = SendError.NotConnected },
+                                    LinuxError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
+                                    LinuxError.PIPE => .{ .err = SendError.BrokenPipe },
+                                    else => .{ .err = SendError.Unexpected },
+                                };
                             };
 
                             break :blk .{ .send = result };

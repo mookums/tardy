@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = @import("tardy").Tardy(.io_uring);
 
 const Dir = @import("tardy").Dir;
 
@@ -78,7 +78,8 @@ pub fn main() !void {
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
-        .size_aio_reap_max = shared.size_aio_reap_max,
+        //.size_aio_reap_max = shared.size_aio_reap_max,
+        .size_aio_reap_max = 1,
     });
     defer tardy.deinit();
 
