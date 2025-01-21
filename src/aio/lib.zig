@@ -73,7 +73,7 @@ pub fn async_to_type(comptime aio: AsyncIOType) type {
         .io_uring => @import("../aio/apis/io_uring.zig").AsyncIoUring,
         .epoll => @import("../aio/apis/epoll.zig").AsyncEpoll,
         .busy_loop => @import("../aio/apis/busy_loop.zig").AsyncBusyLoop,
-        .kqueue => @import("../aio/apis/kqueue.zig").AsyncKQueue,
+        .kqueue => @import("../aio/apis/kqueue.zig").AsyncKqueue,
         .custom => |inner| {
             assert(std.meta.hasMethod(inner, "init"));
             assert(std.meta.hasMethod(inner, "to_async"));
