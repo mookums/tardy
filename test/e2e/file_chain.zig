@@ -33,35 +33,26 @@ pub const FileChain = struct {
     index: usize = 0,
     buffer: []u8,
 
+    pub fn next_steps(current: Step) []const Step {
+        switch (current) {
+            .create, .open, .read, .write, .stat => return &.{ .read, .write, .stat, .close },
+            .close => return &.{ .open, .delete },
+            .delete => return &.{},
+        }
+    }
+
     pub fn validate_chain(chain: []const Step) bool {
-        var exists = false;
-        var opened = false;
-        for (chain) |*step| {
-            switch (step.*) {
-                .create => {
-                    if (exists) return false;
-                    exists = true;
-                    opened = true;
-                },
-                .open => {
-                    if (!exists or opened) return false;
-                    opened = true;
-                },
-                .read => if (!exists or !opened) return false,
-                .write => if (!exists or !opened) return false,
-                .stat => if (!exists or !opened) return false,
-                .close => {
-                    if (!opened) return false;
-                    opened = false;
-                },
-                .delete => {
-                    if (!exists) return false;
-                    exists = false;
-                },
-            }
+        if (chain.len < 3) return false;
+        if (chain[0] != .create) return false;
+        if (chain[chain.len - 1] != .delete) return false;
+
+        chain: for (chain[0 .. chain.len - 1], chain[1..]) |prev, curr| {
+            const steps = next_steps(prev);
+            for (steps[0..]) |step| if (curr == step) continue :chain;
+            return false;
         }
 
-        return (!exists and !opened);
+        return true;
     }
 
     pub fn generate_random_chain(allocator: std.mem.Allocator, seed: u64) ![]Step {
@@ -70,52 +61,16 @@ pub const FileChain = struct {
 
         var list = try std.ArrayListUnmanaged(Step).initCapacity(allocator, 0);
         defer list.deinit(allocator);
+        try list.append(allocator, .create);
 
         while (true) {
-            const potentials = next_potential_entry(list.items);
+            const potentials = next_steps(list.getLast());
             if (potentials.len == 0) break;
             const potential = rand.intRangeLessThan(usize, 0, potentials.len);
             try list.append(allocator, potentials[potential]);
         }
 
-        assert(validate_chain(list.items));
         return try list.toOwnedSlice(allocator);
-    }
-
-    pub fn next_potential_entry(chain: []const Step) []const Step {
-        if (chain.len == 0) return &.{.create};
-
-        var exists = false;
-        var opened = false;
-        for (chain) |*step| {
-            switch (step.*) {
-                .create => {
-                    assert(!exists);
-                    exists = true;
-                    opened = true;
-                },
-                .open => {
-                    assert(exists and !opened);
-                    opened = true;
-                },
-                .read => assert(exists and opened),
-                .write => assert(exists and opened),
-                .stat => assert(exists and opened),
-                .close => {
-                    assert(opened);
-                    opened = false;
-                },
-                .delete => {
-                    assert(exists);
-                    exists = false;
-                    return &.{};
-                },
-            }
-        }
-
-        if (exists and opened) return &.{ .read, .write, .stat, .close };
-        if (exists and !opened) return &.{.delete};
-        unreachable;
     }
 
     // Path is expected to remain valid.

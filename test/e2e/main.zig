@@ -75,7 +75,7 @@ pub fn main() !void {
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 1 },
+        .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
@@ -100,6 +100,7 @@ pub fn main() !void {
             fn start(rt: *Runtime, p: *const EntryParams) !void {
                 switch (p.runtime_id.fetchAdd(1, .acquire)) {
                     0 => try rt.spawn_frame(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE),
+                    1 => try rt.spawn_frame(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE),
                     //1 => try rt.scheduler.spawn(void, p.shared, Second.start, .runnable, null),
                     else => unreachable,
                 }

@@ -180,6 +180,10 @@ pub const Socket = struct {
                     .kind = self.socket.kind,
                 },
             });
+
+            const index = rt.current_task.?;
+            const task = rt.scheduler.tasks.get(index);
+            return try task.result.connect.unwrap();
         }
 
         pub fn callback(
