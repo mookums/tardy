@@ -106,7 +106,7 @@ pub const AsyncSubmission = union(enum) {
     },
     mkdir: struct {
         path: Path,
-        mode: std.posix.mode_t,
+        mode: isize,
     },
     stat: std.posix.fd_t,
     read: struct {
@@ -211,7 +211,7 @@ pub const FileMode = enum {
 pub const AioOpenFlags = struct {
     mode: FileMode = .read,
     /// Permissions used for creating files.
-    perms: ?std.posix.mode_t = null,
+    perms: ?isize = null,
     /// Open the file for appending.
     /// This will force writing permissions.
     append: bool = false,

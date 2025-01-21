@@ -193,7 +193,7 @@ pub const AsyncEpoll = struct {
         try self.blocking.append(index);
     }
 
-    fn queue_mkdir(self: *AsyncEpoll, task: usize, path: Path, mode: std.posix.mode_t) !void {
+    fn queue_mkdir(self: *AsyncEpoll, task: usize, path: Path, mode: isize) !void {
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
         item.* = .{
@@ -496,8 +496,8 @@ pub const AsyncEpoll = struct {
                             const perms = inner.flags.perms orelse 0;
 
                             const rc = switch (inner.path) {
-                                .rel => |path| std.os.linux.openat(path.dir, path.path, o_flags, perms),
-                                .abs => |path| std.os.linux.open(path, o_flags, perms),
+                                .rel => |path| std.os.linux.openat(path.dir, path.path, o_flags, @intCast(perms)),
+                                .abs => |path| std.os.linux.open(path, o_flags, @intCast(perms)),
                             };
 
                             const result: InnerOpenResult = result: {

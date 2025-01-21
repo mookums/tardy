@@ -40,7 +40,7 @@ const OpenJob = struct {
 
 const MkdirJob = struct {
     path: Path,
-    mode: std.posix.mode_t,
+    mode: isize,
 };
 
 const DeleteJob = struct {

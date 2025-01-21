@@ -260,8 +260,20 @@ pub const AsyncIoUring = struct {
         const perms = flags.perms orelse 0;
 
         switch (path) {
-            .rel => |inner| _ = try self.inner.openat(index, inner.dir, inner.path.ptr, o_flags, perms),
-            .abs => |inner| _ = try self.inner.openat(index, std.posix.AT.FDCWD, inner.ptr, o_flags, perms),
+            .rel => |inner| _ = try self.inner.openat(
+                index,
+                inner.dir,
+                inner.path.ptr,
+                o_flags,
+                @intCast(perms),
+            ),
+            .abs => |inner| _ = try self.inner.openat(
+                index,
+                std.posix.AT.FDCWD,
+                inner.ptr,
+                o_flags,
+                @intCast(perms),
+            ),
         }
     }
 
@@ -280,7 +292,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: std.posix.mode_t) !void {
+    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -288,8 +300,8 @@ pub const AsyncIoUring = struct {
         item.job = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
 
         switch (path) {
-            .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, mode),
-            .abs => |inner| _ = try self.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, mode),
+            .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, @intCast(mode)),
+            .abs => |inner| _ = try self.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, @intCast(mode)),
         }
     }
 

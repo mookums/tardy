@@ -185,7 +185,7 @@ pub const AsyncKqueue = struct {
         try self.blocking.append(index);
     }
 
-    fn queue_mkdir(self: *AsyncKqueue, task: usize, path: Path, mode: std.posix.mode_t) !void {
+    fn queue_mkdir(self: *AsyncKqueue, task: usize, path: Path, mode: isize) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);

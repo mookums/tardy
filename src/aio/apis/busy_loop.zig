@@ -109,7 +109,7 @@ pub const AsyncBusyLoop = struct {
         try self.inner.append(.{ .type = .{ .delete = .{ .path = path, .is_dir = is_dir } }, .task = task });
     }
 
-    pub fn queue_mkdir(self: *AsyncBusyLoop, task: usize, path: Path, mode: std.posix.mode_t) !void {
+    pub fn queue_mkdir(self: *AsyncBusyLoop, task: usize, path: Path, mode: isize) !void {
         try self.inner.append(.{
             .type = .{ .mkdir = .{ .path = path, .mode = mode } },
             .task = task,
@@ -458,7 +458,7 @@ pub const AsyncBusyLoop = struct {
             .windows => {
                 const write = std.os.windows.WriteFile(fd, buffer, offset) catch |e| {
                     switch (e) {
-                        else => WriteError.Unexpected,
+                        else => return .{ .err = WriteError.Unexpected },
                         //std.os.windows.WriteFileError.BrokenPipe => .{},
                     }
                 };
@@ -468,7 +468,7 @@ pub const AsyncBusyLoop = struct {
             else => if (offset) |o| {
                 const write = std.posix.pwrite(fd, buffer, o) catch |e| {
                     const err: WriteError = switch (e) {
-                        else => WriteError.Unexpected,
+                        else => return .{ .err = WriteError.Unexpected },
                     };
 
                     return .{ .err = err };
@@ -478,7 +478,7 @@ pub const AsyncBusyLoop = struct {
             } else {
                 const write = std.posix.write(fd, buffer) catch |e| {
                     const err = switch (e) {
-                        else => WriteError.Unexpected,
+                        else => return .{ .err = WriteError.Unexpected },
                     };
 
                     return .{ .err = err };

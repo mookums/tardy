@@ -47,7 +47,8 @@ pub const Socket = struct {
                 else
                     try std.net.Address.parseIp(inner.host, inner.port);
             },
-            .unix => |path| try std.net.Address.initUnix(path),
+            // Not supported on Windows at the moment.
+            .unix => |path| if (builtin.os.tag == .windows) unreachable else try std.net.Address.initUnix(path),
         };
 
         const sock_type: u32 = switch (kind) {

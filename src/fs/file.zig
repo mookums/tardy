@@ -24,7 +24,7 @@ pub const File = struct {
 
     pub const CreateFlags = struct {
         mode: FileMode = .write,
-        perms: std.posix.mode_t = 0o644,
+        perms: isize = 0o644,
         truncate: bool = true,
         overwrite: bool = true,
     };
