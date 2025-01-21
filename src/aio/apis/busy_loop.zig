@@ -730,7 +730,7 @@ pub const AsyncBusyLoop = struct {
                                 inner.socket,
                                 &inner.addr.any,
                                 @ptrCast(&inner.addr_len),
-                                0,
+                                std.posix.SOCK.NONBLOCK,
                             ) catch |e| {
                                 const accept_err: AcceptError = err: {
                                     break :err switch (e) {

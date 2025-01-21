@@ -758,13 +758,19 @@ pub const AsyncEpoll = struct {
                         },
                         .accept => |*inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-
-                            const res = std.os.linux.accept4(inner.socket, &inner.addr.any, @ptrCast(&inner.addr_len), 0);
+                            const res = std.os.linux.accept4(
+                                inner.socket,
+                                &inner.addr.any,
+                                @ptrCast(&inner.addr_len),
+                                std.os.linux.SOCK.NONBLOCK,
+                            );
 
                             const result: AcceptResult = result: {
                                 const e: LinuxError = std.posix.errno(res);
                                 break :result switch (e) {
-                                    LinuxError.SUCCESS => .{ .actual = .{ .handle = @intCast(res), .addr = inner.addr, .kind = inner.kind } },
+                                    LinuxError.SUCCESS => .{
+                                        .actual = .{ .handle = @intCast(res), .addr = inner.addr, .kind = inner.kind },
+                                    },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
                                         continue :epoll_loop;
