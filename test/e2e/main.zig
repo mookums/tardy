@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.busy_loop);
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Dir = @import("tardy").Dir;
 
@@ -16,7 +16,7 @@ const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .debug,
+    .log_level = .err,
 };
 
 pub fn main() !void {
@@ -68,9 +68,8 @@ pub fn main() !void {
         p.seed_string = seed_string;
         p.seed = seed;
 
-        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 256);
-        p.size_aio_reap_max = 1;
-        //p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
+        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 512);
+        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
         break :blk p;
     };
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
@@ -111,4 +110,6 @@ pub fn main() !void {
             fn end(_: *Runtime, _: void) !void {}
         }.end,
     );
+
+    std.debug.print("seed={d} passed", .{seed});
 }
