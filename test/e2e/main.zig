@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = @import("tardy").Tardy(.busy_loop);
 
 const Dir = @import("tardy").Dir;
 
@@ -16,7 +16,7 @@ const First = @import("first.zig");
 const Second = @import("second.zig");
 
 pub const std_options = .{
-    .log_level = .err,
+    .log_level = .debug,
 };
 
 pub fn main() !void {
@@ -68,18 +68,18 @@ pub fn main() !void {
         p.seed_string = seed_string;
         p.seed = seed;
 
-        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 1024 * 4);
-        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
+        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 256);
+        p.size_aio_reap_max = 1;
+        //p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
         break :blk p;
     };
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 2 },
+        .threading = .{ .multi = 1 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
-        //.size_aio_reap_max = shared.size_aio_reap_max,
-        .size_aio_reap_max = 1,
+        .size_aio_reap_max = shared.size_aio_reap_max,
     });
     defer tardy.deinit();
 
@@ -102,7 +102,6 @@ pub fn main() !void {
                 switch (p.runtime_id.fetchAdd(1, .acquire)) {
                     0 => try rt.spawn_frame(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE),
                     1 => try rt.spawn_frame(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE),
-                    //1 => try rt.scheduler.spawn(void, p.shared, Second.start, .runnable, null),
                     else => unreachable,
                 }
             }

@@ -788,11 +788,13 @@ pub const AsyncBusyLoop = struct {
                                 break :blk .{ .err = connect_err };
                             };
 
-                            break :blk .{ .actual = .{
-                                .handle = inner.socket,
-                                .addr = inner.addr,
-                                .kind = inner.kind,
-                            } };
+                            break :blk .{
+                                .actual = .{
+                                    .handle = inner.socket,
+                                    .addr = inner.addr,
+                                    .kind = inner.kind,
+                                },
+                            };
                         };
 
                         com_ptr.result = .{ .connect = result };

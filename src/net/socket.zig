@@ -64,7 +64,8 @@ pub const Socket = struct {
 
         const socket = try std.posix.socket(
             addr.any.family,
-            sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK,
+            // Windows can't be nonblocking since connect likes to freak out.
+            sock_type | std.posix.SOCK.CLOEXEC | if (builtin.os.tag == .windows) 0 else std.posix.SOCK.NONBLOCK,
             protocol,
         );
 

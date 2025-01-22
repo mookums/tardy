@@ -173,17 +173,13 @@ pub const TcpClientChain = struct {
         defer chain.deinit();
         errdefer unreachable;
 
-        var socket: ?Socket = null;
+        var socket: Socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
-                .connect => {
-                    // must create a new socket on connect since close will shut it down :(
-                    socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
-                    _ = try socket.?.connect().resolve(rt);
-                },
+                .connect => _ = try socket.connect().resolve(rt),
                 .recv => {
-                    const length = socket.?.recv(chain.buffer).resolve(rt) catch |e| switch (e) {
+                    const length = socket.recv(chain.buffer).resolve(rt) catch |e| switch (e) {
                         error.Closed => break :chain,
                         else => return e,
                     };
@@ -192,9 +188,9 @@ pub const TcpClientChain = struct {
                 },
                 .send => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    _ = try socket.?.send_all(chain.buffer).resolve(rt);
+                    _ = try socket.send_all(chain.buffer).resolve(rt);
                 },
-                .close => try socket.?.close().resolve(rt),
+                .close => try socket.close().resolve(rt),
             }
         }
         counter.* -= 1;
