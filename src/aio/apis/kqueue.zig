@@ -812,7 +812,11 @@ pub const AsyncKqueue = struct {
                         },
                         .connect => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const rc = std.os.linux.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address));
+                            const rc = std.posix.system.connect(
+                                inner.socket,
+                                &inner.addr.any,
+                                inner.addr.getOsSockLen(),
+                            );
 
                             const result: ConnectResult = result: {
                                 const e: PosixError = std.posix.errno(rc);

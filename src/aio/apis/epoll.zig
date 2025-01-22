@@ -799,7 +799,7 @@ pub const AsyncEpoll = struct {
                         },
                         .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const rc = std.os.linux.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address));
+                            const rc = std.os.linux.connect(inner.socket, &inner.addr.any, inner.addr.getOsSockLen());
 
                             const result: ConnectResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);

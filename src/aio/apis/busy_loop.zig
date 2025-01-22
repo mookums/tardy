@@ -767,7 +767,7 @@ pub const AsyncBusyLoop = struct {
                         const com_ptr = &self.completions[reaped];
 
                         const result: ConnectResult = blk: {
-                            std.posix.connect(inner.socket, &inner.addr.any, @sizeOf(std.net.Address)) catch |e| {
+                            std.posix.connect(inner.socket, &inner.addr.any, inner.addr.getOsSockLen()) catch |e| {
                                 const connect_err: ConnectError = err: {
                                     break :err switch (e) {
                                         std.posix.ConnectError.WouldBlock => continue,
