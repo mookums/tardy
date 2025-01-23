@@ -47,19 +47,11 @@ pub fn auto_async_match() AsyncIOType {
         .linux => {
             const version = comptime builtin.target.os.getVersionRange().linux;
 
-            if (version.isAtLeast(.{
-                .major = 5,
-                .minor = 1,
-                .patch = 0,
-            }) orelse @compileError("Unable to determine kernel version. Specify an Async I/O Backend.")) {
+            if (version.isAtLeast(.{ .major = 5, .minor = 1, .patch = 0 }) orelse false) {
                 return AsyncIOType.io_uring;
             }
 
-            if (version.isAtLeast(.{ .major = 2, .minor = 5, .patch = 45 }).?) {
-                return AsyncIOType.epoll;
-            }
-
-            return AsyncIOType.busy_loop;
+            return AsyncIOType.epoll;
         },
         .windows => return AsyncIOType.poll,
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.kqueue,

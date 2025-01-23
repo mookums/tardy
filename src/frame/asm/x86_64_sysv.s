@@ -1,5 +1,7 @@
+.global _tardy_swap_frame
 .global tardy_swap_frame
 
+_tardy_swap_frame:
 tardy_swap_frame:
     pushq %rbx
     pushq %rbp

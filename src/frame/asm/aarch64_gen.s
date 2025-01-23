@@ -1,5 +1,7 @@
+.global _tardy_swap_frame
 .global tardy_swap_frame 
 
+_tardy_swap_frame:
 tardy_swap_frame:
       stp lr, fp, [sp, #-20*8]!
       stp d8, d9, [sp, #2*8]
