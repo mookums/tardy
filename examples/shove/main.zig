@@ -18,13 +18,13 @@ pub const std_options = .{
 };
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
-    const file = try Dir.cwd().create_file(name, .{}).resolve(rt);
-    for (0..8) |_| _ = try file.write_all("*shoved*\n", null).resolve(rt);
+    const file = try Dir.cwd().create_file(rt, name, .{});
+    for (0..8) |_| _ = try file.write_all(rt, "*shoved*\n", null);
 
-    const stat = try file.stat().resolve(rt);
+    const stat = try file.stat(rt);
     std.debug.print("size: {d}\n", .{stat.size});
 
-    try file.close().resolve(rt);
+    try file.close(rt);
 }
 
 pub fn main() !void {
@@ -54,7 +54,7 @@ pub fn main() !void {
         file_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                try rt.spawn_frame(.{ rt, name }, main_frame, 1024 * 16);
+                try rt.spawn(.{ rt, name }, main_frame, 1024 * 16);
             }
         }.start,
         {},

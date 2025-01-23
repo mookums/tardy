@@ -2,10 +2,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Task = @import("task.zig").Task;
-const TaskFn = @import("task.zig").TaskFn;
-const TaskFnWrapper = @import("task.zig").TaskFnWrapper;
-const InnerTaskFn = @import("task.zig").InnerTaskFn;
-
 const Runtime = @import("lib.zig").Runtime;
 const Frame = @import("../frame/lib.zig").Frame;
 
@@ -56,49 +52,7 @@ pub const Scheduler = struct {
         self.runnable.set(index);
     }
 
-    /// Spawns a Task by adding it into the scheduler pool.
-    pub fn spawn(
-        self: *Scheduler,
-        comptime R: type,
-        task_ctx: anytype,
-        comptime task_fn: TaskFn(R, @TypeOf(task_ctx)),
-        task_state: Task.State,
-        job: ?AsyncSubmission,
-    ) !void {
-        const index = blk: {
-            if (self.released.popOrNull()) |index| {
-                break :blk self.tasks.borrow_assume_unset(index);
-            } else {
-                break :blk try self.tasks.borrow();
-            }
-        };
-
-        const context: usize = wrap(usize, task_ctx);
-        const item: Task = .{
-            .index = index,
-            .runner = .{
-                .callback = .{
-                    .func = TaskFnWrapper(R, @TypeOf(task_ctx), task_fn),
-                    .context = context,
-                },
-            },
-            .state = task_state,
-        };
-
-        const item_ptr = self.tasks.get_ptr(index);
-        item_ptr.* = item;
-
-        switch (task_state) {
-            .runnable => try self.set_runnable(index),
-            .wait_for_io => if (job) |j| {
-                const rt: *Runtime = @fieldParentPtr("scheduler", self);
-                try rt.aio.queue_job(index, j);
-            },
-            else => {},
-        }
-    }
-
-    pub fn frame_await(self: *Scheduler, job: AsyncSubmission) !void {
+    pub fn io_await(self: *Scheduler, job: AsyncSubmission) !void {
         const rt: *Runtime = @fieldParentPtr("scheduler", self);
         const index = rt.current_task.?;
 
@@ -111,7 +65,7 @@ pub const Scheduler = struct {
         Frame.yield();
     }
 
-    pub fn spawn_frame(
+    pub fn spawn(
         self: *Scheduler,
         frame_ctx: anytype,
         comptime frame_fn: anytype,
@@ -129,7 +83,7 @@ pub const Scheduler = struct {
 
         const item: Task = .{
             .index = index,
-            .runner = .{ .frame = frame },
+            .frame = frame,
             .state = .runnable,
         };
 

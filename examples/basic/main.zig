@@ -8,27 +8,13 @@ const Timer = @import("tardy").Timer;
 
 const Tardy = @import("tardy").Tardy(.auto);
 
-const Counter = packed struct {
-    count: usize = 0,
-
-    pub fn increment(self: Counter) usize {
-        return self.count + 1;
-    }
-};
-
 fn log_frame(rt: *Runtime) !void {
     var count: usize = 0;
 
     while (count < 10) : (count += 1) {
         log.debug("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
-        try Timer.delay(.{ .seconds = 1 }).resolve(rt);
+        try Timer.delay(rt, .{ .seconds = 1 });
     }
-}
-
-fn log_task_struct(rt: *Runtime, _: void, counter: Counter) !void {
-    const count = counter.increment();
-    log.debug("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
-    try Timer.delay(.{ .seconds = 1 }).callback(rt, Counter{ .count = count }, log_task_struct);
 }
 
 pub fn main() !void {
@@ -46,8 +32,7 @@ pub fn main() !void {
         {},
         struct {
             fn init(rt: *Runtime, _: void) !void {
-                try rt.spawn_frame(.{rt}, log_frame, 1024 * 16);
-                //try rt.spawn_task(void, Counter{ .count = 0 }, log_task_struct);
+                try rt.spawn(.{rt}, log_frame, 1024 * 16);
             }
         }.init,
         {},

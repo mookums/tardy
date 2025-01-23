@@ -34,12 +34,12 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     server_chain_ptr.* = try TcpServerChain.init(rt.allocator, chain, 4096);
     client_chain_ptr.* = try server_chain_ptr.derive_client_chain();
 
-    try rt.spawn_frame(
+    try rt.spawn(
         .{ client_chain_ptr, rt, &tcp_client_chain_count, port },
         TcpClientChain.chain_frame,
         STACK_SIZE,
     );
-    try rt.spawn_frame(
+    try rt.spawn(
         .{ server_chain_ptr, rt, &tcp_server_chain_count, socket },
         TcpServerChain.chain_frame,
         STACK_SIZE,

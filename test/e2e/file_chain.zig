@@ -13,8 +13,6 @@ const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
 const DeleteResult = @import("tardy").DeleteResult;
 
-const TaskFn = @import("tardy").TaskFn;
-
 pub const FileChain = struct {
     const Step = enum {
         create,
@@ -118,31 +116,31 @@ pub const FileChain = struct {
         while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
                 .create => {
-                    const file = try File.create(chain.path, .{ .mode = .read_write }).resolve(rt);
+                    const file = try File.create(rt, chain.path, .{ .mode = .read_write });
                     chain.file = file;
                 },
                 .open => {
-                    const file = try File.open(chain.path, .{ .mode = .read_write }).resolve(rt);
+                    const file = try File.open(rt, chain.path, .{ .mode = .read_write });
                     chain.file = file;
                 },
                 .read => {
-                    const length = try chain.file.?.read_all(chain.buffer, read_head).resolve(rt);
+                    const length = try chain.file.?.read_all(rt, chain.buffer, read_head);
                     assert(length == @min(chain.buffer.len, write_head - read_head));
                     for (chain.buffer[0..length]) |item| assert(item == 123);
                     read_head += length;
                 },
                 .write => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    write_head += try chain.file.?.write_all(chain.buffer, write_head).resolve(rt);
+                    write_head += try chain.file.?.write_all(rt, chain.buffer, write_head);
                 },
                 .stat => {
-                    const stat = try chain.file.?.stat().resolve(rt);
+                    const stat = try chain.file.?.stat(rt);
                     assert(stat.size == write_head);
                 },
-                .close => try chain.file.?.close().resolve(rt),
+                .close => try chain.file.?.close(rt),
                 .delete => {
                     const dir = Dir{ .handle = chain.path.rel.dir };
-                    try dir.delete_file(chain.path.rel.path).resolve(rt);
+                    try dir.delete_file(rt, chain.path.rel.path);
                     counter.* -= 1;
                 },
             }
@@ -151,7 +149,7 @@ pub const FileChain = struct {
         log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("deleting the e2e tree...", .{});
-            try Dir.cwd().delete_tree(seed_string).resolve(rt);
+            try Dir.cwd().delete_tree(rt, seed_string);
         }
     }
 };

@@ -88,8 +88,8 @@ pub fn main() !void {
         struct {
             fn start(rt: *Runtime, p: *const SharedParams) !void {
                 switch (rt.id) {
-                    0 => try rt.spawn_frame(.{ rt, p }, First.start_frame, First.STACK_SIZE),
-                    1 => try rt.spawn_frame(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
+                    0 => try rt.spawn(.{ rt, p }, First.start_frame, First.STACK_SIZE),
+                    1 => try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
                     else => unreachable,
                 }
             }

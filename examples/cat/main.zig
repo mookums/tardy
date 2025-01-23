@@ -18,7 +18,7 @@ const EntryParams = struct {
 
 fn main_frame(rt: *Runtime, p: *EntryParams) !void {
     const std_out = File.std_out();
-    const file = Dir.cwd().open_file(p.file_name, .{}).resolve(rt) catch |e| switch (e) {
+    const file = Dir.cwd().open_file(rt, p.file_name, .{}) catch |e| switch (e) {
         error.NotFound => {
             std.debug.print("{s}: No such file!", .{p.file_name});
             return;
@@ -30,9 +30,9 @@ fn main_frame(rt: *Runtime, p: *EntryParams) !void {
     var done: bool = false;
 
     while (!done) {
-        const length = try file.read_all(&buffer, null).resolve(rt);
+        const length = try file.read_all(rt, &buffer, null);
         done = length < buffer.len;
-        _ = try std_out.write_all(buffer[0..length], null).resolve(rt);
+        _ = try std_out.write_all(rt, buffer[0..length], null);
     }
 }
 
@@ -70,7 +70,7 @@ pub fn main() !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try rt.spawn_frame(.{ rt, p }, main_frame, 1024 * 64);
+                try rt.spawn(.{ rt, p }, main_frame, 1024 * 64);
             }
         }.start,
         {},

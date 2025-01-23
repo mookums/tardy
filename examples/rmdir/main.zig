@@ -5,17 +5,10 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
-
 const Dir = @import("tardy").Dir;
 
-const OpenFileResult = @import("tardy").OpenFileResult;
-const ReadResult = @import("tardy").ReadResult;
-const WriteResult = @import("tardy").WriteResult;
-
-const DeleteTreeResult = @import("tardy").DeleteTreeResult;
-
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
-    try Dir.cwd().delete_tree(name).resolve(rt);
+    try Dir.cwd().delete_tree(rt, name);
     log.debug("deleted tree :)", .{});
 }
 
@@ -49,7 +42,7 @@ pub fn main() !void {
         tree_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                try rt.spawn_frame(.{ rt, name }, main_frame, 1024 * 128);
+                try rt.spawn(.{ rt, name }, main_frame, 1024 * 128);
             }
         }.start,
         {},

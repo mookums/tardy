@@ -11,8 +11,6 @@ const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
 const DeleteResult = @import("tardy").DeleteResult;
 
-const TaskFn = @import("tardy").TaskFn;
-
 pub const TcpServerChain = struct {
     const Step = enum {
         accept,
@@ -122,11 +120,11 @@ pub const TcpServerChain = struct {
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
                 .accept => {
-                    const socket = try server_socket.accept().resolve(rt);
+                    const socket = try server_socket.accept(rt);
                     chain.socket = socket;
                 },
                 .recv => {
-                    const length = chain.socket.?.recv(chain.buffer).resolve(rt) catch |e| switch (e) {
+                    const length = chain.socket.?.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
                         else => return e,
                     };
@@ -135,9 +133,9 @@ pub const TcpServerChain = struct {
                 },
                 .send => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    _ = try chain.socket.?.send_all(chain.buffer).resolve(rt);
+                    _ = try chain.socket.?.send_all(rt, chain.buffer);
                 },
-                .close => try chain.socket.?.close().resolve(rt),
+                .close => try chain.socket.?.close(rt),
             }
         }
         counter.* -= 1;
@@ -145,7 +143,7 @@ pub const TcpServerChain = struct {
         log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("closing main accept socket", .{});
-            try server_socket.close().resolve(rt);
+            try server_socket.close(rt);
         }
     }
 };
@@ -177,9 +175,9 @@ pub const TcpClientChain = struct {
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
-                .connect => _ = try socket.connect().resolve(rt),
+                .connect => _ = try socket.connect(rt),
                 .recv => {
-                    const length = socket.recv(chain.buffer).resolve(rt) catch |e| switch (e) {
+                    const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
                         else => return e,
                     };
@@ -188,9 +186,9 @@ pub const TcpClientChain = struct {
                 },
                 .send => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    _ = try socket.send_all(chain.buffer).resolve(rt);
+                    _ = try socket.send_all(rt, chain.buffer);
                 },
-                .close => try socket.close().resolve(rt),
+                .close => try socket.close(rt),
             }
         }
         counter.* -= 1;

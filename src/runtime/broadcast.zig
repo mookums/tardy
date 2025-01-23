@@ -1,6 +1,5 @@
 const std = @import("std");
 const Ring = @import("../core/ring.zig").Ring;
-const TaskFn = @import("task.zig").TaskFn;
 const Runtime = @import("lib.zig").Runtime;
 const Channel = @import("channel.zig").Channel;
 const Pool = @import("../core/pool.zig").Pool;

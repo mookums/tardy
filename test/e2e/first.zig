@@ -13,7 +13,7 @@ pub const STACK_SIZE = 1024 * 32;
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
-    const new_dir = try Dir.cwd().create_dir(shared_params.seed_string).resolve(rt);
+    const new_dir = try Dir.cwd().create_dir(rt, shared_params.seed_string);
     log.debug("created new shared dir (seed={d})", .{shared_params.seed});
 
     var prng = std.Random.DefaultPrng.init(shared_params.seed);
@@ -46,7 +46,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         );
         errdefer chain_ptr.deinit();
 
-        try rt.spawn_frame(
+        try rt.spawn(
             .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
             FileChain.chain_frame,
             STACK_SIZE,

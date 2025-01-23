@@ -11,14 +11,12 @@ pub fn build(b: *std.Build) void {
     });
 
     add_example(b, "basic", target, optimize, tardy);
-    add_example(b, "channel", target, optimize, tardy);
     add_example(b, "echo", target, optimize, tardy);
     add_example(b, "http", target, optimize, tardy);
     add_example(b, "cat", target, optimize, tardy);
     add_example(b, "shove", target, optimize, tardy);
     add_example(b, "rmdir", target, optimize, tardy);
     add_example(b, "stat", target, optimize, tardy);
-    add_example(b, "resolve", target, optimize, tardy);
 
     add_test(b, "e2e", target, optimize, tardy);
 }

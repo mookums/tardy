@@ -15,7 +15,7 @@ const RecvResult = @import("tardy").RecvResult;
 const SendResult = @import("tardy").SendResult;
 
 fn echo_frame(rt: *Runtime, server: *const Socket) !void {
-    const socket = try server.accept().resolve(rt);
+    const socket = try server.accept(rt);
     defer socket.close_blocking();
 
     log.debug(
@@ -24,16 +24,16 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
     );
 
     // spawn off a new frame.
-    try rt.spawn_frame(.{ rt, server }, echo_frame, 1024 * 16);
+    try rt.spawn(.{ rt, server }, echo_frame, 1024 * 16);
 
     var buffer: [1024]u8 = undefined;
     while (true) {
-        const recv_length = socket.recv(&buffer).resolve(rt) catch |e| {
+        const recv_length = socket.recv(rt, &buffer) catch |e| {
             log.err("Failed to recv on socket | {}", .{e});
             return;
         };
 
-        const send_length = socket.send_all(buffer[0..recv_length]).resolve(rt) catch |e| {
+        const send_length = socket.send_all(rt, buffer[0..recv_length]) catch |e| {
             log.err("Failed to send on socket | {}", .{e});
             return;
         };
@@ -66,7 +66,7 @@ pub fn main() !void {
         &server,
         struct {
             fn start(rt: *Runtime, tcp_server: *const Socket) !void {
-                try rt.spawn_frame(.{ rt, tcp_server }, echo_frame, 1024 * 16);
+                try rt.spawn(.{ rt, tcp_server }, echo_frame, 1024 * 16);
             }
         }.start,
         {},

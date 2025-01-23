@@ -9,7 +9,6 @@ pub const Frame = @import("frame/lib.zig").Frame;
 
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
-pub const TaskFn = @import("runtime/task.zig").TaskFn;
 pub const Broadcast = @import("runtime/broadcast.zig").Broadcast;
 pub const Channel = @import("runtime/channel.zig").Channel;
 

@@ -5,14 +5,17 @@ const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 
+const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 const Stat = @import("tardy").Stat;
 const StatResult = @import("tardy").StatResult;
 
-fn stat_task(rt: *Runtime, result: StatResult, _: void) !void {
-    const stat = try result.unwrap();
-    try std.io.getStdOut().writer().print("stat: {}\n", .{stat});
-    rt.stop();
+fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
+    const file = try Dir.cwd().open_file(rt, name, .{});
+    defer file.close_blocking();
+
+    const stat = try file.stat(rt);
+    std.debug.print("stat: {any}\n", .{stat});
 }
 
 pub fn main() !void {
@@ -42,11 +45,7 @@ pub fn main() !void {
         file_name,
         struct {
             fn init(rt: *Runtime, path: [:0]const u8) !void {
-                const file: File = File.from_std(
-                    try std.fs.cwd().openFileZ(path, .{}),
-                );
-
-                try file.stat().callback(rt, {}, stat_task);
+                try rt.spawn(.{ rt, path }, main_frame, 1024 * 32);
             }
         }.init,
         {},
