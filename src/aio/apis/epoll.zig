@@ -17,13 +17,10 @@ const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
 
 const Cross = @import("../../cross/lib.zig");
+const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const LinuxError = std.os.linux.E;
-
-const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
-const OpenError = @import("../completion.zig").OpenError;
-const AioOpenFlags = @import("../lib.zig").AioOpenFlags;
 
 const AcceptResult = @import("../completion.zig").AcceptResult;
 const AcceptError = @import("../completion.zig").AcceptError;
@@ -34,25 +31,12 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
-const MkdirResult = @import("../completion.zig").MkdirResult;
-const MkdirError = @import("../completion.zig").MkdirError;
-const DeleteResult = @import("../completion.zig").DeleteResult;
-const DeleteError = @import("../completion.zig").DeleteError;
-const ReadResult = @import("../completion.zig").ReadResult;
-const ReadError = @import("../completion.zig").ReadError;
-const WriteResult = @import("../completion.zig").WriteResult;
-const WriteError = @import("../completion.zig").WriteError;
-const StatResult = @import("../completion.zig").StatResult;
-const StatError = @import("../completion.zig").StatError;
-
 pub const AsyncEpoll = struct {
     epoll_fd: std.posix.fd_t,
     wake_event_fd: std.posix.fd_t,
     events: []std.os.linux.epoll_event,
 
     jobs: Pool(Job),
-    // This is for jobs that are not supported and need to be blocking.
-    blocking: Queue(usize),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
@@ -68,8 +52,6 @@ pub const AsyncEpoll = struct {
 
         var jobs = try Pool(Job).init(allocator, size, options.pooling);
         errdefer jobs.deinit();
-
-        const blocking = Queue(usize).init(allocator);
 
         // Queue the wake task.
         const index = jobs.borrow_assume_unset(0);
@@ -92,7 +74,6 @@ pub const AsyncEpoll = struct {
             .wake_event_fd = wake_event_fd,
             .events = events,
             .jobs = jobs,
-            .blocking = blocking,
         };
     }
 
@@ -100,7 +81,6 @@ pub const AsyncEpoll = struct {
         std.posix.close(self.epoll_fd);
         allocator.free(self.events);
         self.jobs.deinit();
-        self.blocking.deinit();
         std.posix.close(self.wake_event_fd);
     }
 
@@ -114,17 +94,11 @@ pub const AsyncEpoll = struct {
 
         try switch (job) {
             .timer => |inner| queue_timer(epoll, task, inner),
-            .open => |inner| queue_open(epoll, task, inner.path, inner.flags),
-            .delete => |inner| queue_delete(epoll, task, inner.path, inner.is_dir),
-            .mkdir => |inner| queue_mkdir(epoll, task, inner.path, inner.mode),
-            .stat => |inner| queue_stat(epoll, task, inner),
-            .read => |inner| queue_read(epoll, task, inner.fd, inner.buffer, inner.offset),
-            .write => |inner| queue_write(epoll, task, inner.fd, inner.buffer, inner.offset),
-            .close => |inner| queue_close(epoll, task, inner),
             .accept => |inner| queue_accept(epoll, task, inner.socket, inner.kind),
             .connect => |inner| queue_connect(epoll, task, inner.socket, inner.addr, inner.kind),
             .recv => |inner| queue_recv(epoll, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(epoll, task, inner.socket, inner.buffer),
+            .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
         };
     }
 
@@ -161,125 +135,6 @@ pub const AsyncEpoll = struct {
         };
 
         try self.add_fd(timer_fd, &event);
-    }
-
-    fn queue_open(self: *AsyncEpoll, task: usize, path: Path, flags: AioOpenFlags) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .open = .{
-                    .path = path,
-                    .kind = if (flags.directory) .dir else .file,
-                    .flags = flags,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_delete(self: *AsyncEpoll, task: usize, path: Path, is_dir: bool) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .delete = .{ .path = path, .is_dir = is_dir } },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_mkdir(self: *AsyncEpoll, task: usize, path: Path, mode: isize) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .mkdir = .{ .path = path, .mode = mode } },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_stat(self: *AsyncEpoll, task: usize, fd: std.posix.fd_t) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .stat = fd },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_read(
-        self: *AsyncEpoll,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: ?usize,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .read = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_write(
-        self: *AsyncEpoll,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: ?usize,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .write = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_close(
-        self: *AsyncEpoll,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .close = fd },
-            .task = task,
-        };
-
-        self.remove_fd(fd) catch {};
-        try self.blocking.append(index);
     }
 
     fn queue_accept(
@@ -410,7 +265,7 @@ pub const AsyncEpoll = struct {
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
         while (i < bytes.len) {
-            i += try std.posix.write(epoll.wake_event_fd, bytes);
+            i += try std.posix.write(epoll.wake_event_fd, bytes[i..]);
         }
     }
 
@@ -419,295 +274,15 @@ pub const AsyncEpoll = struct {
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
-        var first_run: bool = true;
 
-        const busy_wait: bool = !wait or epoll.blocking.items.len > 0;
-        log.debug("busy wait? {}", .{busy_wait});
-        log.debug("blocking item count={d}", .{epoll.blocking.items.len});
-        log.debug("dirty jobs count={d}", .{epoll.jobs.dirty.count()});
-
-        while ((reaped == 0 and wait) or first_run) {
-            defer first_run = false;
-
-            blocking_loop: for (0..epoll.blocking.items.len) |_| {
-                if (self.completions.len - reaped == 0) break;
-
-                const index = (try epoll.blocking.pop()) orelse break;
-                const job = epoll.jobs.get_ptr(index);
-                assert(epoll.jobs.dirty.isSet(index));
-
-                var job_complete = true;
-                defer if (job_complete) {
-                    epoll.jobs.release(index);
-                } else {
-                    epoll.blocking.append(index) catch unreachable;
-                };
-
-                const result: Result = blk: {
-                    switch (job.type) {
-                        else => unreachable,
-                        .mkdir => |inner| {
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.os.linux.mkdirat(path.dir, path.path, @intCast(inner.mode)),
-                                .abs => |path| std.os.linux.mkdir(path, @intCast(inner.mode)),
-                            };
-
-                            const result: MkdirResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{ .actual = {} },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    LinuxError.ACCES => .{ .err = MkdirError.AccessDenied },
-                                    LinuxError.EXIST => .{ .err = MkdirError.AlreadyExists },
-                                    LinuxError.LOOP, LinuxError.MLINK => .{ .err = MkdirError.Loop },
-                                    LinuxError.NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
-                                    LinuxError.NOENT => .{ .err = MkdirError.NotFound },
-                                    LinuxError.NOSPC => .{ .err = MkdirError.NoSpace },
-                                    LinuxError.NOTDIR => .{ .err = MkdirError.NotADirectory },
-                                    LinuxError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
-                                    else => .{ .err = MkdirError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .mkdir = result };
-                        },
-                        .open => |inner| {
-                            const o_flags: std.os.linux.O = flag: {
-                                var o: std.os.linux.O = .{};
-                                switch (inner.flags.mode) {
-                                    .read => o.ACCMODE = .RDONLY,
-                                    .write => o.ACCMODE = .WRONLY,
-                                    .read_write => o.ACCMODE = .RDWR,
-                                }
-
-                                o.APPEND = inner.flags.append;
-                                o.CREAT = inner.flags.create;
-                                o.TRUNC = inner.flags.truncate;
-                                o.EXCL = inner.flags.exclusive;
-                                o.NONBLOCK = inner.flags.non_block;
-                                o.SYNC = inner.flags.sync;
-                                o.DIRECTORY = inner.flags.directory;
-
-                                break :flag o;
-                            };
-                            const perms = inner.flags.perms orelse 0;
-
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.os.linux.openat(path.dir, path.path, o_flags, @intCast(perms)),
-                                .abs => |path| std.os.linux.open(path, o_flags, @intCast(perms)),
-                            };
-
-                            const result: InnerOpenResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => switch (inner.kind) {
-                                        .file => .{ .actual = .{ .file = .{ .handle = @intCast(rc) } } },
-                                        .dir => .{ .actual = .{ .dir = .{ .handle = @intCast(rc) } } },
-                                    },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    LinuxError.ACCES, LinuxError.PERM => .{ .err = OpenError.AccessDenied },
-                                    LinuxError.BADF => .{ .err = OpenError.InvalidFd },
-                                    LinuxError.BUSY => .{ .err = OpenError.Busy },
-                                    LinuxError.DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                                    LinuxError.EXIST => .{ .err = OpenError.AlreadyExists },
-                                    LinuxError.FAULT => .{ .err = OpenError.InvalidAddress },
-                                    LinuxError.FBIG, LinuxError.OVERFLOW => .{ .err = OpenError.FileTooBig },
-                                    LinuxError.INTR => .{ .err = OpenError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = OpenError.InvalidArguments },
-                                    LinuxError.ISDIR => .{ .err = OpenError.IsDirectory },
-                                    LinuxError.LOOP => .{ .err = OpenError.Loop },
-                                    LinuxError.MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
-                                    LinuxError.NAMETOOLONG => .{ .err = OpenError.NameTooLong },
-                                    LinuxError.NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
-                                    LinuxError.NODEV, LinuxError.NXIO => .{ .err = OpenError.DeviceNotFound },
-                                    LinuxError.NOENT => .{ .err = OpenError.NotFound },
-                                    LinuxError.NOMEM => .{ .err = OpenError.OutOfMemory },
-                                    LinuxError.NOSPC => .{ .err = OpenError.NoSpace },
-                                    LinuxError.NOTDIR => .{ .err = OpenError.NotADirectory },
-                                    LinuxError.OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
-                                    LinuxError.ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
-                                    LinuxError.TXTBSY => .{ .err = OpenError.FileLocked },
-                                    else => .{ .err = OpenError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .open = result };
-                        },
-                        .delete => |inner| {
-                            const mode: u32 = if (inner.is_dir) std.posix.AT.REMOVEDIR else 0;
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.os.linux.unlinkat(path.dir, path.path, mode),
-                                .abs => |path| std.os.linux.unlinkat(std.posix.AT.FDCWD, path, mode),
-                            };
-
-                            const result: DeleteResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{ .actual = {} },
-                                    // unlink
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    LinuxError.ACCES => .{ .err = DeleteError.AccessDenied },
-                                    LinuxError.BUSY => .{ .err = DeleteError.Busy },
-                                    LinuxError.FAULT => .{ .err = DeleteError.InvalidAddress },
-                                    LinuxError.IO => .{ .err = DeleteError.IoError },
-                                    LinuxError.ISDIR, LinuxError.PERM => .{ .err = DeleteError.IsDirectory },
-                                    LinuxError.LOOP => .{ .err = DeleteError.Loop },
-                                    LinuxError.NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
-                                    LinuxError.NOENT => .{ .err = DeleteError.NotFound },
-                                    LinuxError.NOMEM => .{ .err = DeleteError.OutOfMemory },
-                                    LinuxError.NOTDIR => .{ .err = DeleteError.IsNotDirectory },
-                                    LinuxError.ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
-                                    LinuxError.BADF => .{ .err = DeleteError.InvalidFd },
-                                    // rmdir
-                                    LinuxError.INVAL => .{ .err = DeleteError.InvalidArguments },
-                                    LinuxError.NOTEMPTY => .{ .err = DeleteError.NotEmpty },
-                                    else => .{ .err = DeleteError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .delete = result };
-                        },
-                        .stat => |fd| {
-                            var fstat: std.os.linux.Stat = undefined;
-                            const rc = std.os.linux.fstat(fd, &fstat);
-
-                            const result: StatResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => {
-                                        const stat = Stat{
-                                            .size = @intCast(fstat.size),
-                                            .mode = @intCast(fstat.mode),
-                                            .accessed = .{
-                                                .seconds = @intCast(fstat.atim.tv_sec),
-                                                .nanos = @intCast(fstat.atim.tv_nsec),
-                                            },
-                                            .modified = .{
-                                                .seconds = @intCast(fstat.mtim.tv_sec),
-                                                .nanos = @intCast(fstat.mtim.tv_nsec),
-                                            },
-                                            .changed = .{
-                                                .seconds = @intCast(fstat.ctim.tv_sec),
-                                                .nanos = @intCast(fstat.ctim.tv_nsec),
-                                            },
-                                        };
-
-                                        break :result .{ .actual = stat };
-                                    },
-                                    LinuxError.ACCES => .{ .err = StatError.AccessDenied },
-                                    LinuxError.BADF => .{ .err = StatError.InvalidFd },
-                                    LinuxError.FAULT => .{ .err = StatError.InvalidAddress },
-                                    LinuxError.INVAL => .{ .err = StatError.InvalidArguments },
-                                    LinuxError.LOOP => .{ .err = StatError.Loop },
-                                    LinuxError.NAMETOOLONG => .{ .err = StatError.NameTooLong },
-                                    LinuxError.NOENT => .{ .err = StatError.NotFound },
-                                    LinuxError.NOMEM => .{ .err = StatError.OutOfMemory },
-                                    LinuxError.NOTDIR => .{ .err = StatError.NotADirectory },
-                                    else => .{ .err = StatError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .stat = result };
-                        },
-                        .read => |inner| {
-                            const rc = if (inner.offset) |offset|
-                                std.os.linux.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.os.linux.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: ReadResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => switch (rc) {
-                                        0 => .{ .err = ReadError.EndOfFile },
-                                        else => .{ .actual = @intCast(rc) },
-                                    },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    // If it is unseekable...
-                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{
-                                        .err = ReadError.Unexpected,
-                                    },
-                                    LinuxError.BADF => .{ .err = ReadError.InvalidFd },
-                                    LinuxError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                    LinuxError.INTR => .{ .err = ReadError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = ReadError.InvalidArguments },
-                                    LinuxError.IO => .{ .err = ReadError.IoError },
-                                    LinuxError.ISDIR => .{ .err = ReadError.IsDirectory },
-                                    else => .{ .err = ReadError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .read = result };
-                        },
-                        .write => |inner| {
-                            const rc = if (inner.offset) |offset|
-                                std.os.linux.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: WriteResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{ .actual = @intCast(rc) },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    // If it is unseekable...
-                                    LinuxError.NXIO, LinuxError.SPIPE, LinuxError.OVERFLOW => .{
-                                        .err = WriteError.Unexpected,
-                                    },
-                                    LinuxError.BADF => .{ .err = WriteError.InvalidFd },
-                                    LinuxError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                                    LinuxError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                                    LinuxError.FAULT => .{ .err = WriteError.InvalidAddress },
-                                    LinuxError.FBIG => .{ .err = WriteError.FileTooBig },
-                                    LinuxError.INTR => .{ .err = WriteError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = WriteError.InvalidArguments },
-                                    LinuxError.IO => .{ .err = WriteError.IoError },
-                                    LinuxError.NOSPC => .{ .err = WriteError.NoSpace },
-                                    LinuxError.PERM => .{ .err = WriteError.AccessDenied },
-                                    LinuxError.PIPE => .{ .err = WriteError.BrokenPipe },
-                                    else => .{ .err = WriteError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .write = result };
-                        },
-                        .close => |handle| {
-                            std.posix.close(handle);
-                            break :blk .none;
-                        },
-                    }
-                };
-
-                self.completions[reaped] = .{
-                    .result = result,
-                    .task = job.task,
-                };
-
-                reaped += 1;
-            }
-
+        while (reaped == 0 and wait) {
             const remaining = self.completions.len - reaped;
             if (remaining == 0) break;
 
-            const timeout: i32 = if (busy_wait or reaped > 0) 0 else -1;
+            const timeout: i32 = if (!wait) 0 else -1;
             // Handle all of the epoll I/O
             const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
-            epoll_loop: for (epoll.events[0..epoll_events]) |event| {
+            for (epoll.events[0..epoll_events]) |event| {
                 const job_index = event.data.u64;
                 assert(epoll.jobs.dirty.isSet(job_index));
 
@@ -717,7 +292,6 @@ pub const AsyncEpoll = struct {
 
                 const result: Result = blk: {
                     switch (job.type) {
-                        else => unreachable,
                         .wake => {
                             // this keeps it in the job queue and we pretty
                             // much never want to remove this fd.
@@ -726,13 +300,8 @@ pub const AsyncEpoll = struct {
 
                             // Should NEVER fail.
                             _ = std.posix.read(epoll.wake_event_fd, buffer[0..]) catch |e| {
-                                switch (e) {
-                                    error.WouldBlock => unreachable,
-                                    else => {
-                                        log.err("wake failed: {}", .{e});
-                                        unreachable;
-                                    },
-                                }
+                                log.err("wake failed: {}", .{e});
+                                unreachable;
                             };
 
                             break :blk .wake;
@@ -745,13 +314,8 @@ pub const AsyncEpoll = struct {
                             var buffer: [8]u8 = undefined;
                             // Should NEVER fail.
                             _ = std.posix.read(timer_fd, buffer[0..]) catch |e| {
-                                switch (e) {
-                                    error.WouldBlock => unreachable,
-                                    else => {
-                                        log.debug("timer failed: {}", .{e});
-                                        unreachable;
-                                    },
-                                }
+                                log.debug("timer failed: {}", .{e});
+                                unreachable;
                             };
 
                             break :blk .none;
@@ -778,7 +342,7 @@ pub const AsyncEpoll = struct {
                                     },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
-                                        continue :epoll_loop;
+                                        continue;
                                     },
                                     LinuxError.BADF => .{ .err = AcceptError.InvalidFd },
                                     LinuxError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
@@ -799,7 +363,11 @@ pub const AsyncEpoll = struct {
                         },
                         .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const rc = std.os.linux.connect(inner.socket, &inner.addr.any, inner.addr.getOsSockLen());
+                            const rc = std.os.linux.connect(
+                                inner.socket,
+                                &inner.addr.any,
+                                inner.addr.getOsSockLen(),
+                            );
 
                             const result: ConnectResult = result: {
                                 const e: LinuxError = std.posix.errno(rc);
@@ -813,7 +381,7 @@ pub const AsyncEpoll = struct {
                                     },
                                     LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => {
                                         job_complete = false;
-                                        continue :epoll_loop;
+                                        continue;
                                     },
                                     LinuxError.ACCES, LinuxError.PERM => .{ .err = ConnectError.AccessDenied },
                                     LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
@@ -855,7 +423,7 @@ pub const AsyncEpoll = struct {
                                     },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
-                                        continue :epoll_loop;
+                                        continue;
                                     },
                                     LinuxError.BADF => .{ .err = RecvError.InvalidFd },
                                     LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
@@ -889,7 +457,7 @@ pub const AsyncEpoll = struct {
                                     LinuxError.SUCCESS => .{ .actual = @intCast(rc) },
                                     LinuxError.AGAIN => {
                                         job_complete = false;
-                                        continue :epoll_loop;
+                                        continue;
                                     },
                                     LinuxError.ACCES => .{ .err = SendError.AccessDenied },
                                     LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
@@ -911,6 +479,14 @@ pub const AsyncEpoll = struct {
 
                             break :blk .{ .send = result };
                         },
+                        .open,
+                        .delete,
+                        .mkdir,
+                        .stat,
+                        .read,
+                        .write,
+                        .close,
+                        => unreachable,
                     }
                 };
 
@@ -933,6 +509,13 @@ pub const AsyncEpoll = struct {
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,
+            .features = AsyncFeatures.init(&.{
+                .timer,
+                .accept,
+                .connect,
+                .recv,
+                .send,
+            }),
         };
     }
 };

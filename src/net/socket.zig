@@ -6,9 +6,13 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
 
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
+const AcceptError = @import("../aio/completion.zig").AcceptError;
 const ConnectResult = @import("../aio/completion.zig").ConnectResult;
+const ConnectError = @import("../aio/completion.zig").ConnectError;
 const RecvResult = @import("../aio/completion.zig").RecvResult;
+const RecvError = @import("../aio/completion.zig").RecvError;
 const SendResult = @import("../aio/completion.zig").SendResult;
+const SendError = @import("../aio/completion.zig").SendError;
 
 pub const Socket = struct {
     pub const Kind = enum {
@@ -65,7 +69,8 @@ pub const Socket = struct {
         const socket = try std.posix.socket(
             addr.any.family,
             // Windows can't be nonblocking since connect likes to freak out.
-            sock_type | std.posix.SOCK.CLOEXEC | if (builtin.os.tag == .windows) 0 else std.posix.SOCK.NONBLOCK,
+            //sock_type | std.posix.SOCK.CLOEXEC | if (builtin.os.tag == .windows) 0 else std.posix.SOCK.NONBLOCK,
+            sock_type | std.posix.SOCK.CLOEXEC,
             protocol,
         );
 
@@ -110,7 +115,10 @@ pub const Socket = struct {
         socket: Socket,
 
         pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
-            try rt.scheduler.frame_await(.{ .close = self.socket.handle });
+            if (rt.aio.features.has_capability(.close))
+                try rt.scheduler.frame_await(.{ .close = self.socket.handle })
+            else
+                std.posix.close(self.socket.handle);
         }
 
         pub fn callback(
@@ -143,11 +151,44 @@ pub const Socket = struct {
         socket: Socket,
 
         pub fn resolve(self: *const AcceptAction, rt: *Runtime) !Socket {
-            try rt.scheduler.frame_await(.{ .accept = .{ .socket = self.socket.handle, .kind = self.socket.kind } });
+            if (rt.aio.features.has_capability(.accept)) {
+                try rt.scheduler.frame_await(.{
+                    .accept = .{
+                        .socket = self.socket.handle,
+                        .kind = self.socket.kind,
+                    },
+                });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.accept.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.accept.unwrap();
+            } else {
+                var addr: std.net.Address = undefined;
+                var addr_len = addr.getOsSockLen();
+
+                const socket = std.posix.accept(
+                    self.socket.handle,
+                    &addr.any,
+                    &addr_len,
+                    0,
+                ) catch |e| return switch (e) {
+                    std.posix.AcceptError.ConnectionAborted,
+                    std.posix.AcceptError.ConnectionResetByPeer,
+                    => AcceptError.ConnectionAborted,
+                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
+                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
+                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
+                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                    else => AcceptError.Unexpected,
+                };
+
+                return .{
+                    .handle = socket,
+                    .addr = addr,
+                    .kind = self.socket.kind,
+                };
+            }
         }
 
         pub fn callback(
@@ -175,17 +216,29 @@ pub const Socket = struct {
         socket: Socket,
 
         pub fn resolve(self: *const ConnectAction, rt: *Runtime) !Socket {
-            try rt.scheduler.frame_await(.{
-                .connect = .{
-                    .socket = self.socket.handle,
-                    .addr = self.socket.addr,
-                    .kind = self.socket.kind,
-                },
-            });
+            if (rt.aio.features.has_capability(.connect)) {
+                try rt.scheduler.frame_await(.{
+                    .connect = .{
+                        .socket = self.socket.handle,
+                        .addr = self.socket.addr,
+                        .kind = self.socket.kind,
+                    },
+                });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.connect.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.connect.unwrap();
+            } else {
+                std.posix.connect(
+                    self.socket.handle,
+                    &self.socket.addr.any,
+                    self.socket.addr.getOsSockLen(),
+                ) catch |e| return switch (e) {
+                    else => ConnectError.Unexpected,
+                };
+
+                return self.socket;
+            }
         }
 
         pub fn callback(
@@ -219,11 +272,20 @@ pub const Socket = struct {
         buffer: []u8,
 
         pub fn resolve(self: *const RecvAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{ .recv = .{ .socket = self.socket.handle, .buffer = self.buffer } });
+            if (rt.aio.features.has_capability(.recv)) {
+                try rt.scheduler.frame_await(.{ .recv = .{ .socket = self.socket.handle, .buffer = self.buffer } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.recv.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.recv.unwrap();
+            } else {
+                const count = std.posix.recv(self.socket.handle, self.buffer, 0) catch |e| return switch (e) {
+                    else => RecvError.Unexpected,
+                };
+
+                if (count == 0) return RecvError.Closed;
+                return count;
+            }
         }
 
         pub fn callback(
@@ -333,14 +395,23 @@ pub const Socket = struct {
         buffer: []const u8,
 
         pub fn resolve(self: *const SendAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{ .send = .{
-                .socket = self.socket.handle,
-                .buffer = self.buffer,
-            } });
+            if (rt.aio.features.has_capability(.send)) {
+                try rt.scheduler.frame_await(.{ .send = .{
+                    .socket = self.socket.handle,
+                    .buffer = self.buffer,
+                } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.send.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.send.unwrap();
+            } else {
+                const count = std.posix.send(self.socket.handle, self.buffer, 0) catch |e| return switch (e) {
+                    std.posix.SendError.ConnectionResetByPeer => SendError.ConnectionReset,
+                    else => SendError.Unexpected,
+                };
+
+                return count;
+            }
         }
 
         pub fn callback(

@@ -30,6 +30,10 @@ const CreateDirResult = @import("../aio/completion.zig").CreateDirResult;
 const MkdirResult = @import("../aio/completion.zig").MkdirResult;
 const MkdirError = @import("../aio/completion.zig").MkdirError;
 
+const StatError = @import("../aio/completion.zig").StatError;
+
+const StdDir = std.fs.Dir;
+
 pub const Dir = struct {
     handle: std.posix.fd_t,
 
@@ -58,17 +62,43 @@ pub const Dir = struct {
         };
 
         pub fn resolve(self: *const OpenAction, rt: *Runtime) !Dir {
-            try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = flags } });
+            if (rt.aio.features.has_capability(.open)) {
+                try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = flags } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get_ptr(index);
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get_ptr(index);
 
-            const result: OpenDirResult = switch (task.result.open) {
-                .actual => |actual| .{ .actual = actual.dir },
-                .err => |err| .{ .err = err },
-            };
+                const result: OpenDirResult = switch (task.result.open) {
+                    .actual => |actual| .{ .actual = actual.dir },
+                    .err => |err| .{ .err = err },
+                };
 
-            return try result.unwrap();
+                return try result.unwrap();
+            } else {
+                switch (self.path) {
+                    .rel => |inner| {
+                        const dir: StdDir = .{ .fd = inner.dir };
+                        const opened = dir.openDirZ(inner.path, .{ .iterate = true }) catch |e| {
+                            return switch (e) {
+                                StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
+                                else => OpenError.Unexpected,
+                            };
+                        };
+
+                        return .{ .handle = opened.fd };
+                    },
+                    .abs => |inner| {
+                        const opened = std.fs.openDirAbsoluteZ(inner, .{ .iterate = true }) catch |e| {
+                            return switch (e) {
+                                StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
+                                else => OpenError.Unexpected,
+                            };
+                        };
+
+                        return .{ .handle = opened.fd };
+                    },
+                }
+            }
         }
 
         pub fn callback(
@@ -99,13 +129,35 @@ pub const Dir = struct {
         path: Path,
 
         pub fn resolve(self: *const CreateAction, rt: *Runtime) !Dir {
-            try rt.scheduler.frame_await(.{ .mkdir = .{ .path = self.path, .mode = 0o775 } });
+            if (rt.aio.features.has_capability(.mkdir)) {
+                try rt.scheduler.frame_await(.{ .mkdir = .{ .path = self.path, .mode = 0o775 } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get_ptr(index);
-            try task.result.mkdir.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get_ptr(index);
+                try task.result.mkdir.unwrap();
 
-            return try Dir.open(self.path).resolve(rt);
+                return try Dir.open(self.path).resolve(rt);
+            } else {
+                switch (self.path) {
+                    .rel => |path| {
+                        const dir: StdDir = .{ .fd = path.dir };
+                        dir.makeDirZ(path.path) catch |e| {
+                            return switch (e) {
+                                else => MkdirError.Unexpected,
+                            };
+                        };
+                    },
+                    .abs => |path| {
+                        std.fs.makeDirAbsoluteZ(path) catch |e| {
+                            return switch (e) {
+                                else => MkdirError.Unexpected,
+                            };
+                        };
+                    },
+                }
+
+                return try Dir.open(self.path).resolve(rt);
+            }
         }
 
         pub fn callback(
@@ -281,11 +333,39 @@ pub const Dir = struct {
         dir: Dir,
 
         pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
-            try rt.scheduler.frame_await(.{ .stat = self.dir.handle });
+            if (rt.aio.features.has_capability(.stat)) {
+                try rt.scheduler.frame_await(.{ .stat = self.dir.handle });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get_ptr(index);
-            return try task.result.stat.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get_ptr(index);
+                return try task.result.stat.unwrap();
+            } else {
+                const std_dir = self.dir.to_std();
+                const dir_stat = std_dir.stat() catch |e| {
+                    return switch (e) {
+                        StdDir.StatError.AccessDenied => StatError.AccessDenied,
+                        StdDir.StatError.SystemResources => StatError.OutOfMemory,
+                        StdDir.StatError.Unexpected => StatError.Unexpected,
+                    };
+                };
+
+                return Stat{
+                    .size = dir_stat.size,
+                    .mode = dir_stat.mode,
+                    .changed = .{
+                        .seconds = @intCast(@divTrunc(dir_stat.ctime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(dir_stat.ctime, std.time.ns_per_s)),
+                    },
+                    .modified = .{
+                        .seconds = @intCast(@divTrunc(dir_stat.mtime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(dir_stat.mtime, std.time.ns_per_s)),
+                    },
+                    .accessed = .{
+                        .seconds = @intCast(@divTrunc(dir_stat.atime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(dir_stat.atime, std.time.ns_per_s)),
+                    },
+                };
+            }
         }
 
         pub fn callback(
@@ -314,10 +394,19 @@ pub const Dir = struct {
         subpath: [:0]const u8,
 
         pub fn resolve(self: *const DeleteFileAction, rt: *Runtime) !void {
-            try rt.scheduler.frame_await(.{ .delete = .{
-                .path = .{ .rel = .{ .dir = self.dir.handle, .path = self.subpath } },
-                .is_dir = false,
-            } });
+            if (rt.aio.features.has_capability(.delete)) {
+                try rt.scheduler.frame_await(.{
+                    .delete = .{
+                        .path = .{ .rel = .{ .dir = self.dir.handle, .path = self.subpath } },
+                        .is_dir = false,
+                    },
+                });
+            } else {
+                const std_dir = self.dir.to_std();
+                return std_dir.deleteFileZ(self.subpath) catch |e| switch (e) {
+                    else => DeleteError.Unexpected,
+                };
+            }
         }
 
         pub fn callback(
@@ -351,10 +440,19 @@ pub const Dir = struct {
         subpath: [:0]const u8,
 
         pub fn resolve(self: *const DeleteDirAction, rt: *Runtime) !void {
-            try rt.scheduler.frame_await(.{ .delete = .{
-                .path = .{ .rel = .{ .dir = self.dir.handle, .path = self.subpath } },
-                .is_dir = true,
-            } });
+            if (rt.aio.features.has_capability(.delete)) {
+                try rt.scheduler.frame_await(.{
+                    .delete = .{
+                        .path = .{ .rel = .{ .dir = self.dir.handle, .path = self.subpath } },
+                        .is_dir = true,
+                    },
+                });
+            } else {
+                const std_dir = self.dir.to_std();
+                return std_dir.deleteDirZ(self.subpath) catch |e| switch (e) {
+                    else => DeleteError.Unexpected,
+                };
+            }
         }
 
         pub fn callback(
@@ -610,7 +708,10 @@ pub const Dir = struct {
         dir: Dir,
 
         pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
-            try rt.scheduler.frame_await(.{ .close = self.dir.handle });
+            if (rt.aio.features.has_capability(.close))
+                try rt.scheduler.frame_await(.{ .close = self.dir.handle })
+            else
+                std.posix.close(self.dir.handle);
         }
 
         pub fn callback(

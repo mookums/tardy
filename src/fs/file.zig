@@ -1,5 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
+const log = std.log.scoped(.@"tardy/fs/file");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const TaskFn = @import("../runtime/task.zig").TaskFn;
@@ -12,12 +14,19 @@ const AioOpenFlags = @import("../aio/lib.zig").AioOpenFlags;
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
+const OpenError = @import("../aio/completion.zig").OpenError;
 const StatResult = @import("../aio/completion.zig").StatResult;
+const StatError = @import("../aio/completion.zig").StatError;
 const ReadResult = @import("../aio/completion.zig").ReadResult;
+const ReadError = @import("../aio/completion.zig").ReadError;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
+const WriteError = @import("../aio/completion.zig").WriteError;
 
 const Cross = @import("../cross/lib.zig");
 const wrap = @import("../utils.zig").wrap;
+
+const StdFile = std.fs.File;
+const StdDir = std.fs.Dir;
 
 pub const File = struct {
     handle: std.posix.fd_t,
@@ -61,17 +70,78 @@ pub const File = struct {
         flags: AioOpenFlags,
 
         pub fn resolve(self: *const CreateAction, rt: *Runtime) !File {
-            try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = self.flags } });
+            if (rt.aio.features.has_capability(.open)) {
+                try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = self.flags } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
 
-            const result: OpenFileResult = switch (task.result.open) {
-                .actual => |actual| .{ .actual = actual.file },
-                .err => |err| .{ .err = err },
-            };
+                const result: OpenFileResult = switch (task.result.open) {
+                    .actual => |actual| .{ .actual = actual.file },
+                    .err => |err| .{ .err = err },
+                };
 
-            return try result.unwrap();
+                return try result.unwrap();
+            } else {
+                const std_flags: StdFile.CreateFlags = .{
+                    .read = (self.flags.mode == .read or self.flags.mode == .read_write),
+                    .truncate = self.flags.truncate,
+                    .exclusive = self.flags.exclusive,
+                };
+
+                switch (self.path) {
+                    .rel => |inner| {
+                        const dir: StdDir = .{ .fd = inner.dir };
+                        const opened = dir.createFileZ(inner.path, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
+
+                        return .{ .handle = opened.handle };
+                    },
+                    .abs => |inner| {
+                        const opened = std.fs.cwd().createFileZ(inner, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
+
+                        return .{ .handle = opened.handle };
+                    },
+                }
+            }
         }
 
         pub fn callback(
@@ -111,21 +181,86 @@ pub const File = struct {
         flags: OpenFlags,
 
         pub fn resolve(self: *const OpenAction, rt: *Runtime) !File {
-            const aio_flags: AioOpenFlags = .{
+            const flags: AioOpenFlags = .{
                 .mode = self.flags.mode,
                 .create = false,
                 .directory = false,
             };
-            try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = aio_flags } });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            const result: OpenFileResult = switch (task.result.open) {
-                .actual => |actual| .{ .actual = actual.file },
-                .err => |err| .{ .err = err },
-            };
+            if (rt.aio.features.has_capability(.open)) {
+                try rt.scheduler.frame_await(.{ .open = .{ .path = self.path, .flags = flags } });
 
-            return try result.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                const result: OpenFileResult = switch (task.result.open) {
+                    .actual => |actual| .{ .actual = actual.file },
+                    .err => |err| .{ .err = err },
+                };
+
+                return try result.unwrap();
+            } else {
+                log.debug("rt aio doesnt have open...", .{});
+                const std_flags: StdFile.OpenFlags = .{
+                    .mode = switch (flags.mode) {
+                        .read => .read_only,
+                        .write => .write_only,
+                        .read_write => .read_write,
+                    },
+                };
+
+                switch (self.path) {
+                    .rel => |inner| {
+                        const dir: StdDir = .{ .fd = inner.dir };
+                        const opened = dir.openFileZ(inner.path, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
+
+                        return .{ .handle = opened.handle };
+                    },
+                    .abs => |inner| {
+                        const opened = std.fs.cwd().openFileZ(inner, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
+
+                        return .{ .handle = opened.handle };
+                    },
+                }
+            }
         }
 
         pub fn callback(
@@ -163,13 +298,37 @@ pub const File = struct {
         offset: ?usize,
 
         pub fn resolve(self: *const ReadAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{
-                .read = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset },
-            });
+            if (rt.aio.features.has_capability(.read)) {
+                try rt.scheduler.frame_await(.{
+                    .read = .{
+                        .fd = self.file.handle,
+                        .buffer = self.buffer,
+                        .offset = self.offset,
+                    },
+                });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.read.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.read.unwrap();
+            } else {
+                const std_file = self.file.to_std();
+
+                // TODO: Proper error handling.
+                const count = blk: {
+                    if (self.offset) |o| {
+                        break :blk std.fs.File.pread(std_file, self.buffer, o) catch |e| return switch (e) {
+                            else => ReadError.Unexpected,
+                        };
+                    } else {
+                        break :blk std.fs.File.read(std_file, self.buffer) catch |e| return switch (e) {
+                            else => ReadError.Unexpected,
+                        };
+                    }
+                };
+
+                if (count == 0) return ReadError.EndOfFile;
+                return count;
+            }
         }
 
         pub fn callback(
@@ -294,13 +453,30 @@ pub const File = struct {
         offset: ?usize,
 
         pub fn resolve(self: *const WriteAction, rt: *Runtime) !usize {
-            try rt.scheduler.frame_await(.{
-                .write = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset },
-            });
+            if (rt.aio.features.has_capability(.write)) {
+                try rt.scheduler.frame_await(.{
+                    .write = .{ .fd = self.file.handle, .buffer = self.buffer, .offset = self.offset },
+                });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.write.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.write.unwrap();
+            } else {
+                const std_file = self.file.to_std();
+
+                // TODO: Proper error handling.
+                if (self.offset) |o| {
+                    return std.fs.File.pwrite(std_file, self.buffer, o) catch |e| switch (e) {
+                        StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
+                        else => WriteError.Unexpected,
+                    };
+                } else {
+                    return std.fs.File.write(std_file, self.buffer) catch |e| switch (e) {
+                        StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
+                        else => WriteError.Unexpected,
+                    };
+                }
+            }
         }
 
         pub fn callback(
@@ -422,11 +598,40 @@ pub const File = struct {
         file: File,
 
         pub fn resolve(self: *const StatAction, rt: *Runtime) !Stat {
-            try rt.scheduler.frame_await(.{ .stat = self.file.handle });
+            if (rt.aio.features.has_capability(.stat)) {
+                try rt.scheduler.frame_await(.{ .stat = self.file.handle });
 
-            const index = rt.current_task.?;
-            const task = rt.scheduler.tasks.get(index);
-            return try task.result.stat.unwrap();
+                const index = rt.current_task.?;
+                const task = rt.scheduler.tasks.get(index);
+                return try task.result.stat.unwrap();
+            } else {
+                const std_file = self.file.to_std();
+
+                const file_stat = std_file.stat() catch |e| {
+                    return switch (e) {
+                        StdFile.StatError.AccessDenied => StatError.AccessDenied,
+                        StdFile.StatError.SystemResources => StatError.OutOfMemory,
+                        StdFile.StatError.Unexpected => StatError.Unexpected,
+                    };
+                };
+
+                return Stat{
+                    .size = file_stat.size,
+                    .mode = file_stat.mode,
+                    .changed = .{
+                        .seconds = @intCast(@divTrunc(file_stat.ctime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(file_stat.ctime, std.time.ns_per_s)),
+                    },
+                    .modified = .{
+                        .seconds = @intCast(@divTrunc(file_stat.mtime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(file_stat.mtime, std.time.ns_per_s)),
+                    },
+                    .accessed = .{
+                        .seconds = @intCast(@divTrunc(file_stat.atime, std.time.ns_per_s)),
+                        .nanos = @intCast(@mod(file_stat.atime, std.time.ns_per_s)),
+                    },
+                };
+            }
         }
 
         pub fn callback(
@@ -447,7 +652,10 @@ pub const File = struct {
         file: File,
 
         pub fn resolve(self: *const CloseAction, rt: *Runtime) !void {
-            try rt.scheduler.frame_await(.{ .close = self.file.handle });
+            if (rt.aio.features.has_capability(.close))
+                try rt.scheduler.frame_await(.{ .close = self.file.handle })
+            else
+                std.posix.close(self.file.handle);
         }
 
         pub fn callback(

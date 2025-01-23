@@ -125,7 +125,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
         }
 
         /// This will spawn a new Runtime.
-        fn spawn_runtime(self: *Self, options: AsyncIOOptions) !Runtime {
+        fn spawn_runtime(self: *Self, id: usize, options: AsyncIOOptions) !Runtime {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -138,12 +138,17 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
 
                 try self.aios.append(self.allocator, io);
                 var aio = io.to_async();
-                aio.attach(try self.allocator.alloc(Completion, self.options.size_aio_reap_max));
+
+                const completions = try self.allocator.alloc(Completion, self.options.size_aio_reap_max);
+                errdefer self.allocator.free(completions);
+
+                aio.attach(completions);
                 break :blk aio;
             };
             errdefer aio.deinit(self.allocator);
 
             return try Runtime.init(self.allocator, aio, .{
+                .id = id,
                 .pooling = self.options.pooling,
                 .size_tasks_initial = self.options.size_tasks_initial,
                 .size_aio_reap_max = self.options.size_aio_reap_max,
@@ -189,7 +194,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                 threads.deinit(self.allocator);
             }
 
-            var runtime = try self.spawn_runtime(.{
+            var runtime = try self.spawn_runtime(0, .{
                 .parent_async = null,
                 .pooling = self.options.pooling,
                 .size_tasks_initial = self.options.size_tasks_initial,
@@ -197,10 +202,15 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
             });
             defer runtime.deinit();
 
+            // for post-spawn syncing
             var spawned_count = Atomic(usize).init(0);
             const spawning_count = runtime_count - 1;
 
+            // for in-spawn id assignment
+            var spawn_id = Atomic(usize).init(1);
+
             for (0..spawning_count) |_| {
+                const current_index = spawn_id.fetchAdd(1, .monotonic);
                 const handle = try std.Thread.spawn(.{}, struct {
                     fn thread_init(
                         tardy: *Self,
@@ -210,8 +220,9 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                         deinit_parameters: @TypeOf(deinit_params),
                         count: *Atomic(usize),
                         total_count: usize,
+                        current_id: usize,
                     ) void {
-                        var thread_rt = tardy.spawn_runtime(.{
+                        var thread_rt = tardy.spawn_runtime(current_id, .{
                             .parent_async = parent,
                             .pooling = options.pooling,
                             .size_tasks_initial = options.size_tasks_initial,
@@ -234,6 +245,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                     deinit_params,
                     &spawned_count,
                     spawning_count,
+                    current_index,
                 });
 
                 threads.appendAssumeCapacity(handle);

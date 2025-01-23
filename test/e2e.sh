@@ -12,5 +12,5 @@ do
 
     echo "running e2e with argument $rand64"
     zig build run_e2e -- "$rand64" 
-    echo "$rand64 passed"
+    # echo "$rand64 passed"
 done

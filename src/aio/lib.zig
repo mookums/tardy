@@ -16,27 +16,28 @@ pub const AsyncIOType = union(enum) {
     /// Attempts to automatically match
     /// the best backend.
     ///
-    /// `Linux: io_uring -> epoll -> busy_loop
-    /// Windows: busy_loop
+    /// Linux: io_uring
+    /// Windows: poll
     /// Darwin & BSD: kqueue
-    /// Solaris: busy_loop`
+    /// Solaris: poll
+    /// POSIX-compliant: poll
     auto,
     /// Available on Linux >= 5.1
     ///
-    /// Utilizes the io_uring interface for handling I/O.
-    /// `https://kernel.dk/io_uring.pdf`
+    /// Utilizes the io_uring API for handling I/O.
     io_uring,
     /// Available on Linux >= 2.5.45
     ///
-    /// Utilizes the epoll interface for handling I/O.
+    /// Utilizes the epoll API for handling I/O.
     epoll,
     /// Available on Darwin & BSD systems
     ///
-    /// Utilizes the kqueue interface for handling I/O.
+    /// Utilizes the kqueue APO for handling I/O.
     kqueue,
-    /// Available on most targets.
-    /// Relies on non-blocking fd operations and busy loop polling.
-    busy_loop,
+    /// Available on all POSIX targets.
+    ///
+    /// Utilizes the poll API for handling I/O.
+    poll,
     /// Available on all targets.
     custom: type,
 };
@@ -60,10 +61,10 @@ pub fn auto_async_match() AsyncIOType {
 
             return AsyncIOType.busy_loop;
         },
-        .windows => return AsyncIOType.busy_loop,
+        .windows => return AsyncIOType.poll,
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.kqueue,
         .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncIOType.kqueue,
-        .solaris, .illumos => return AsyncIOType.busy_loop,
+        .solaris, .illumos => return AsyncIOType.poll,
         else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }
 }
@@ -72,10 +73,12 @@ pub fn async_to_type(comptime aio: AsyncIOType) type {
     return comptime switch (aio) {
         .io_uring => @import("../aio/apis/io_uring.zig").AsyncIoUring,
         .epoll => @import("../aio/apis/epoll.zig").AsyncEpoll,
-        .busy_loop => @import("../aio/apis/busy_loop.zig").AsyncBusyLoop,
+        .poll => @import("../aio/apis/poll.zig").AsyncPoll,
         .kqueue => @import("../aio/apis/kqueue.zig").AsyncKqueue,
         .custom => |inner| {
             assert(std.meta.hasMethod(inner, "init"));
+            assert(std.meta.hasMethod(inner, "inner_deinit"));
+            assert(std.meta.hasMethod(inner, "queue_job"));
             assert(std.meta.hasMethod(inner, "to_async"));
             return inner;
         },
@@ -94,7 +97,46 @@ pub const AsyncIOOptions = struct {
     size_aio_reap_max: usize,
 };
 
-pub const AsyncSubmission = union(enum) {
+const AsyncOp = enum(u16) {
+    timer = 1 << 0,
+    open = 1 << 1,
+    delete = 1 << 2,
+    mkdir = 1 << 3,
+    stat = 1 << 4,
+    read = 1 << 5,
+    write = 1 << 6,
+    close = 1 << 7,
+    accept = 1 << 8,
+    connect = 1 << 9,
+    recv = 1 << 10,
+    send = 1 << 11,
+};
+
+pub const AsyncFeatures = struct {
+    bitmask: u16,
+
+    pub fn init(features: []const AsyncOp) AsyncFeatures {
+        var mask: u16 = 0;
+        for (features) |op| mask |= @intFromEnum(op);
+        return .{ .bitmask = mask };
+    }
+
+    pub fn all() AsyncFeatures {
+        const mask: u16 = comptime blk: {
+            var value: u16 = 0;
+            for (std.meta.tags(AsyncOp)) |op| value |= @intFromEnum(op);
+            break :blk value;
+        };
+
+        return .{ .bitmask = mask };
+    }
+
+    pub fn has_capability(self: AsyncFeatures, op: AsyncOp) bool {
+        return (self.bitmask & @intFromEnum(op)) != 0;
+    }
+};
+
+pub const AsyncSubmission = union(AsyncOp) {
     timer: Timespec,
     open: struct {
         path: Path,
@@ -144,6 +186,10 @@ pub const AsyncIO = struct {
     attached: bool = false,
     completions: []Completion = undefined,
     asleep: Atomic(bool) = Atomic(bool).init(false),
+
+    // List of Async features that this Async I/O backend has.
+    // Stored as a bitmask.
+    features: AsyncFeatures = .{ .bitmask = 0 },
 
     _queue_job: *const fn (
         self: *AsyncIO,
@@ -222,7 +268,7 @@ pub const AioOpenFlags = struct {
     /// Fail if the file already exists.
     exclusive: bool = false,
     /// Open the file for non-blocking I/O.
-    non_block: bool = true,
+    non_block: bool = false,
     /// Ensure data is physically written to disk immediately.
     sync: bool = false,
     /// Ensure that the file is a directory.

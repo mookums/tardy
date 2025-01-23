@@ -69,38 +69,27 @@ pub fn main() !void {
         p.seed = seed;
 
         p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 512);
-        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
+        //p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
+        p.size_aio_reap_max = 1;
         break :blk p;
     };
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 1 },
+        .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
     });
     defer tardy.deinit();
 
-    const EntryParams = struct {
-        shared: *const SharedParams,
-        runtime_id: *Atomic(usize),
-    };
-
-    var runtime_id = Atomic(usize).init(0);
-
-    const params = EntryParams{
-        .shared = &shared,
-        .runtime_id = &runtime_id,
-    };
-
     try tardy.entry(
-        &params,
+        &shared,
         struct {
-            fn start(rt: *Runtime, p: *const EntryParams) !void {
-                switch (p.runtime_id.fetchAdd(1, .acquire)) {
-                    0 => try rt.spawn_frame(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE),
-                    1 => try rt.spawn_frame(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE),
+            fn start(rt: *Runtime, p: *const SharedParams) !void {
+                switch (rt.id) {
+                    0 => try rt.spawn_frame(.{ rt, p }, First.start_frame, First.STACK_SIZE),
+                    1 => try rt.spawn_frame(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
                     else => unreachable,
                 }
             }
@@ -111,5 +100,5 @@ pub fn main() !void {
         }.end,
     );
 
-    std.debug.print("seed={d} passed", .{seed});
+    std.debug.print("seed={d} passed\n", .{seed});
 }

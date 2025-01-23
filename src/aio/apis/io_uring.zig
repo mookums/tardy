@@ -17,6 +17,7 @@ const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 const Socket = @import("../../net/lib.zig").Socket;
 
+const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const LinuxError = std.os.linux.E;
@@ -848,6 +849,7 @@ pub const AsyncIoUring = struct {
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,
+            .features = AsyncFeatures.all(),
         };
     }
 };

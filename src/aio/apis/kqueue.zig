@@ -4,19 +4,15 @@ const log = std.log.scoped(.@"tardy/aio/kqueue");
 
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
-const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
-const Queue = @import("../../core/queue.zig").Queue;
 
 const Socket = @import("../../net/lib.zig").Socket;
-const Path = @import("../../fs/lib.zig").Path;
-
-const AioOpenFlags = @import("../lib.zig").AioOpenFlags;
+const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const PosixError = std.posix.E;
@@ -30,21 +26,6 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
-const MkdirResult = @import("../completion.zig").MkdirResult;
-const MkdirError = @import("../completion.zig").MkdirError;
-const DeleteResult = @import("../completion.zig").DeleteResult;
-const DeleteError = @import("../completion.zig").DeleteError;
-
-const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
-const OpenError = @import("../completion.zig").OpenError;
-const ReadResult = @import("../completion.zig").ReadResult;
-const ReadError = @import("../completion.zig").ReadError;
-const WriteResult = @import("../completion.zig").WriteResult;
-const WriteError = @import("../completion.zig").WriteError;
-
-const StatResult = @import("../completion.zig").StatResult;
-const StatError = @import("../completion.zig").StatError;
-
 const Atomic = std.atomic.Value;
 
 const WAKE_IDENT = 1;
@@ -57,7 +38,6 @@ pub const AsyncKqueue = struct {
     events: []std.posix.Kevent,
 
     jobs: Pool(Job),
-    blocking: Queue(usize),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncKqueue {
         const kqueue_fd = try std.posix.kqueue();
@@ -67,28 +47,25 @@ pub const AsyncKqueue = struct {
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         var jobs = try Pool(Job).init(allocator, options.size_tasks_initial + 1, options.pooling);
-        const blocking = Queue(usize).init(allocator);
 
-        {
-            const index = jobs.borrow_assume_unset(0);
-            const item = jobs.get_ptr(index);
-            item.* = .{
-                .index = 0,
-                .type = .wake,
-                .task = undefined,
-            };
+        const index = jobs.borrow_assume_unset(0);
+        const item = jobs.get_ptr(index);
+        item.* = .{
+            .index = 0,
+            .type = .wake,
+            .task = undefined,
+        };
 
-            const event: std.posix.Kevent = .{
-                .ident = WAKE_IDENT,
-                .filter = std.posix.system.EVFILT_USER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_CLEAR,
-                .fflags = 0,
-                .data = 0,
-                .udata = 0,
-            };
+        const event: std.posix.Kevent = .{
+            .ident = WAKE_IDENT,
+            .filter = std.posix.system.EVFILT_USER,
+            .flags = std.posix.system.EV_ADD | std.posix.system.EV_CLEAR,
+            .fflags = 0,
+            .data = 0,
+            .udata = 0,
+        };
 
-            _ = try std.posix.kevent(kqueue_fd, &.{event}, &.{}, null);
-        }
+        _ = try std.posix.kevent(kqueue_fd, &.{event}, &.{}, null);
 
         return AsyncKqueue{
             .kqueue_fd = kqueue_fd,
@@ -96,7 +73,6 @@ pub const AsyncKqueue = struct {
             .changes = changes,
             .change_count = 0,
             .jobs = jobs,
-            .blocking = blocking,
         };
     }
 
@@ -105,7 +81,6 @@ pub const AsyncKqueue = struct {
         allocator.free(self.events);
         allocator.free(self.changes);
         self.jobs.deinit();
-        self.blocking.deinit();
     }
 
     pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
@@ -118,17 +93,11 @@ pub const AsyncKqueue = struct {
 
         (switch (job) {
             .timer => |inner| queue_timer(kqueue, task, inner),
-            .open => |inner| queue_open(kqueue, task, inner.path, inner.flags),
-            .delete => |inner| queue_delete(kqueue, task, inner.path, inner.is_dir),
-            .mkdir => |inner| queue_mkdir(kqueue, task, inner.path, inner.mode),
-            .stat => |inner| queue_stat(kqueue, task, inner),
-            .read => |inner| queue_read(kqueue, task, inner.fd, inner.buffer, inner.offset),
-            .write => |inner| queue_write(kqueue, task, inner.fd, inner.buffer, inner.offset),
-            .close => |inner| queue_close(kqueue, task, inner),
             .accept => |inner| queue_accept(kqueue, task, inner.socket, inner.kind),
             .connect => |inner| queue_connect(kqueue, task, inner.socket, inner.addr, inner.kind),
             .recv => |inner| queue_recv(kqueue, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(kqueue, task, inner.socket, inner.buffer),
+            .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
         }) catch |e| if (e == error.ChangeQueueFull) {
             try self.submit();
             try queue_job(self, task, job);
@@ -164,127 +133,6 @@ pub const AsyncKqueue = struct {
                 .udata = index,
             };
         } else return error.ChangeQueueFull;
-    }
-
-    fn queue_open(self: *AsyncKqueue, task: usize, path: Path, flags: AioOpenFlags) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .open = .{
-                    .path = path,
-                    .kind = if (flags.directory) .dir else .file,
-                    .flags = flags,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_mkdir(self: *AsyncKqueue, task: usize, path: Path, mode: isize) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .mkdir = .{ .path = path, .mode = mode } },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_delete(self: *AsyncKqueue, task: usize, path: Path, is_dir: bool) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .delete = .{ .path = path, .is_dir = is_dir } },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_stat(self: *AsyncKqueue, task: usize, fd: std.posix.fd_t) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .stat = fd },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_read(
-        self: *AsyncKqueue,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: ?usize,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .read = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_write(
-        self: *AsyncKqueue,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: ?usize,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{
-                .write = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
-                },
-            },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
-    }
-
-    fn queue_close(self: *AsyncKqueue, task: usize, fd: std.posix.fd_t) !void {
-        const index = try self.jobs.borrow_hint(task);
-        errdefer self.jobs.release(index);
-        const item = self.jobs.get_ptr(index);
-        item.* = .{
-            .index = index,
-            .type = .{ .close = fd },
-            .task = task,
-        };
-
-        try self.blocking.append(index);
     }
 
     fn queue_accept(self: *AsyncKqueue, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
@@ -451,297 +299,13 @@ pub const AsyncKqueue = struct {
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
-        var first_run: bool = true;
 
-        const busy_wait: bool = !wait or kqueue.blocking.items.len > 0;
-        log.debug("busy wait? {}", .{busy_wait});
-
-        while ((reaped == 0 and wait) or first_run) {
-            defer first_run = false;
-
-            blocking_loop: for (0..kqueue.blocking.items.len) |_| {
-                if (self.completions.len - reaped == 0) break;
-
-                const index = (try kqueue.blocking.pop()) orelse break;
-                const job = kqueue.jobs.get_ptr(index);
-                assert(kqueue.jobs.dirty.isSet(job.index));
-
-                var job_complete = true;
-                defer if (job_complete) {
-                    kqueue.jobs.release(job.index);
-                } else {
-                    // if not done, readd to blocking list.
-                    kqueue.blocking.append(job.index) catch unreachable;
-                };
-
-                const result: Result = blk: {
-                    switch (job.type) {
-                        else => unreachable,
-                        .mkdir => |inner| {
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.posix.system.mkdirat(path.dir, path.path, @intCast(inner.mode)),
-                                .abs => |path| std.posix.system.mkdir(path, @intCast(inner.mode)),
-                            };
-
-                            const result: MkdirResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = {} },
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    PosixError.ACCES => .{ .err = MkdirError.AccessDenied },
-                                    PosixError.EXIST => .{ .err = MkdirError.AlreadyExists },
-                                    PosixError.LOOP, PosixError.MLINK => .{ .err = MkdirError.Loop },
-                                    PosixError.NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
-                                    PosixError.NOENT => .{ .err = MkdirError.NotFound },
-                                    PosixError.NOSPC => .{ .err = MkdirError.NoSpace },
-                                    PosixError.NOTDIR => .{ .err = MkdirError.NotADirectory },
-                                    PosixError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
-                                    else => .{ .err = MkdirError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .mkdir = result };
-                        },
-                        .open => |inner| {
-                            const o_flags: std.posix.O = flag: {
-                                var o: std.posix.O = .{};
-                                switch (inner.flags.mode) {
-                                    .read => o.ACCMODE = .RDONLY,
-                                    .write => o.ACCMODE = .WRONLY,
-                                    .read_write => o.ACCMODE = .RDWR,
-                                }
-
-                                o.APPEND = inner.flags.append;
-                                o.CREAT = inner.flags.create;
-                                o.TRUNC = inner.flags.truncate;
-                                o.EXCL = inner.flags.exclusive;
-                                o.NONBLOCK = inner.flags.non_block;
-                                o.SYNC = inner.flags.sync;
-                                o.DIRECTORY = inner.flags.directory;
-
-                                break :flag o;
-                            };
-                            const perms = inner.flags.perms orelse 0;
-
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.posix.system.openat(path.dir, path.path, o_flags, perms),
-                                .abs => |path| std.posix.system.open(path, o_flags, perms),
-                            };
-
-                            const result: InnerOpenResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => switch (inner.kind) {
-                                        .file => .{ .actual = .{ .file = .{ .handle = @intCast(rc) } } },
-                                        .dir => .{ .actual = .{ .dir = .{ .handle = @intCast(rc) } } },
-                                    },
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    PosixError.ACCES, PosixError.PERM => .{ .err = OpenError.AccessDenied },
-                                    PosixError.BADF => .{ .err = OpenError.InvalidFd },
-                                    PosixError.BUSY => .{ .err = OpenError.Busy },
-                                    PosixError.DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                                    PosixError.EXIST => .{ .err = OpenError.AlreadyExists },
-                                    PosixError.FAULT => .{ .err = OpenError.InvalidAddress },
-                                    PosixError.FBIG, PosixError.OVERFLOW => .{ .err = OpenError.FileTooBig },
-                                    PosixError.INTR => .{ .err = OpenError.Interrupted },
-                                    PosixError.INVAL => .{ .err = OpenError.InvalidArguments },
-                                    PosixError.ISDIR => .{ .err = OpenError.IsDirectory },
-                                    PosixError.LOOP => .{ .err = OpenError.Loop },
-                                    PosixError.MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
-                                    PosixError.NAMETOOLONG => .{ .err = OpenError.NameTooLong },
-                                    PosixError.NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
-                                    PosixError.NODEV, PosixError.NXIO => .{ .err = OpenError.DeviceNotFound },
-                                    PosixError.NOENT => .{ .err = OpenError.NotFound },
-                                    PosixError.NOMEM => .{ .err = OpenError.OutOfMemory },
-                                    PosixError.NOSPC => .{ .err = OpenError.NoSpace },
-                                    PosixError.NOTDIR => .{ .err = OpenError.NotADirectory },
-                                    PosixError.OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
-                                    PosixError.ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
-                                    PosixError.TXTBSY => .{ .err = OpenError.FileLocked },
-                                    else => .{ .err = OpenError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .open = result };
-                        },
-                        .delete => |inner| {
-                            const mode: u32 = if (inner.is_dir) std.posix.AT.REMOVEDIR else 0;
-                            const rc = switch (inner.path) {
-                                .rel => |path| std.posix.system.unlinkat(path.dir, path.path, mode),
-                                .abs => |path| std.posix.system.unlinkat(std.posix.AT.FDCWD, path, mode),
-                            };
-
-                            const result: DeleteResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = {} },
-                                    // unlink
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    PosixError.ACCES => .{ .err = DeleteError.AccessDenied },
-                                    PosixError.BUSY => .{ .err = DeleteError.Busy },
-                                    PosixError.FAULT => .{ .err = DeleteError.InvalidAddress },
-                                    PosixError.IO => .{ .err = DeleteError.IoError },
-                                    PosixError.ISDIR, PosixError.PERM => .{ .err = DeleteError.IsDirectory },
-                                    PosixError.LOOP => .{ .err = DeleteError.Loop },
-                                    PosixError.NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
-                                    PosixError.NOENT => .{ .err = DeleteError.NotFound },
-                                    PosixError.NOMEM => .{ .err = DeleteError.OutOfMemory },
-                                    PosixError.NOTDIR => .{ .err = DeleteError.IsNotDirectory },
-                                    PosixError.ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
-                                    PosixError.BADF => .{ .err = DeleteError.InvalidFd },
-                                    // rmdir
-                                    PosixError.INVAL => .{ .err = DeleteError.InvalidArguments },
-                                    PosixError.NOTEMPTY => .{ .err = DeleteError.NotEmpty },
-                                    else => .{ .err = DeleteError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .delete = result };
-                        },
-                        .stat => |fd| {
-                            var fstat: std.posix.system.Stat = undefined;
-                            const rc = std.posix.system.fstat(fd, &fstat);
-
-                            const result: StatResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => {
-                                        const atim = fstat.atime();
-                                        const mtim = fstat.mtime();
-                                        const ctim = fstat.ctime();
-
-                                        const stat = Stat{
-                                            .size = @intCast(fstat.size),
-                                            .mode = @intCast(fstat.mode),
-                                            .accessed = .{
-                                                .seconds = @intCast(atim.tv_sec),
-                                                .nanos = @intCast(atim.tv_nsec),
-                                            },
-                                            .modified = .{
-                                                .seconds = @intCast(mtim.tv_sec),
-                                                .nanos = @intCast(mtim.tv_nsec),
-                                            },
-                                            .changed = .{
-                                                .seconds = @intCast(ctim.tv_sec),
-                                                .nanos = @intCast(ctim.tv_nsec),
-                                            },
-                                        };
-
-                                        break :result .{ .actual = stat };
-                                    },
-                                    PosixError.ACCES => .{ .err = StatError.AccessDenied },
-                                    PosixError.BADF => .{ .err = StatError.InvalidFd },
-                                    PosixError.FAULT => .{ .err = StatError.InvalidAddress },
-                                    PosixError.INVAL => .{ .err = StatError.InvalidArguments },
-                                    PosixError.LOOP => .{ .err = StatError.Loop },
-                                    PosixError.NAMETOOLONG => .{ .err = StatError.NameTooLong },
-                                    PosixError.NOENT => .{ .err = StatError.NotFound },
-                                    PosixError.NOMEM => .{ .err = StatError.OutOfMemory },
-                                    PosixError.NOTDIR => .{ .err = StatError.NotADirectory },
-                                    else => .{ .err = StatError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .stat = result };
-                        },
-                        .read => |inner| {
-                            const rc = if (inner.offset) |offset|
-                                std.posix.system.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.posix.system.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: ReadResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => switch (rc) {
-                                        0 => .{ .err = ReadError.EndOfFile },
-                                        else => .{ .actual = @intCast(rc) },
-                                    },
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
-                                        .err = ReadError.Unexpected,
-                                    },
-                                    PosixError.BADF => .{ .err = ReadError.InvalidFd },
-                                    PosixError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = ReadError.Interrupted },
-                                    PosixError.INVAL => .{ .err = ReadError.InvalidArguments },
-                                    PosixError.IO => .{ .err = ReadError.IoError },
-                                    PosixError.ISDIR => .{ .err = ReadError.IsDirectory },
-                                    else => .{ .err = ReadError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .read = result };
-                        },
-
-                        .write => |inner| {
-                            const rc = if (inner.offset) |offset|
-                                std.posix.system.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(offset))
-                            else
-                                std.posix.system.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
-
-                            const result: WriteResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => .{
-                                        .err = WriteError.Unexpected,
-                                    },
-                                    PosixError.BADF => .{ .err = WriteError.InvalidFd },
-                                    PosixError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                                    PosixError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                                    PosixError.FAULT => .{ .err = WriteError.InvalidAddress },
-                                    PosixError.FBIG => .{ .err = WriteError.FileTooBig },
-                                    PosixError.INTR => .{ .err = WriteError.Interrupted },
-                                    PosixError.INVAL => .{ .err = WriteError.InvalidArguments },
-                                    PosixError.IO => .{ .err = WriteError.IoError },
-                                    PosixError.NOSPC => .{ .err = WriteError.NoSpace },
-                                    PosixError.PERM => .{ .err = WriteError.AccessDenied },
-                                    PosixError.PIPE => .{ .err = WriteError.BrokenPipe },
-                                    else => .{ .err = WriteError.Unexpected },
-                                };
-                            };
-
-                            break :blk .{ .write = result };
-                        },
-                        .close => |handle| {
-                            std.posix.close(handle);
-                            break :blk .none;
-                        },
-                    }
-                };
-
-                self.completions[reaped] = .{
-                    .result = result,
-                    .task = job.task,
-                };
-
-                reaped += 1;
-            }
-
+        while (reaped == 0 and wait) {
             const remaining = self.completions.len - reaped;
             if (remaining == 0) break;
 
             const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
-            const timeout: ?*const std.posix.timespec = if (busy_wait or reaped > 0) &timeout_spec else null;
+            const timeout: ?*const std.posix.timespec = if (!wait or reaped > 0) &timeout_spec else null;
             log.debug("remaining count={d}", .{remaining});
 
             // Handle all of the kqueue I/O
@@ -763,7 +327,6 @@ pub const AsyncKqueue = struct {
 
                 const result: Result = blk: {
                     switch (job.type) {
-                        else => unreachable,
                         .wake => {
                             assert(event.filter == std.posix.system.EVFILT_USER);
                             assert(event.ident == WAKE_IDENT);
@@ -912,6 +475,14 @@ pub const AsyncKqueue = struct {
 
                             break :blk .{ .send = result };
                         },
+                        .open,
+                        .delete,
+                        .mkdir,
+                        .stat,
+                        .read,
+                        .write,
+                        .close,
+                        => unreachable,
                     }
                 };
 
@@ -935,6 +506,13 @@ pub const AsyncKqueue = struct {
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,
+            .features = AsyncFeatures.init(&.{
+                .timer,
+                .accept,
+                .connect,
+                .recv,
+                .send,
+            }),
         };
     }
 };

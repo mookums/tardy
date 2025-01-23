@@ -18,6 +18,7 @@ const Storage = @import("storage.zig").Storage;
 const Timespec = @import("../lib.zig").Timespec;
 
 const RuntimeOptions = struct {
+    id: usize,
     pooling: PoolKind,
     size_tasks_initial: usize,
     size_aio_reap_max: usize,
@@ -30,6 +31,7 @@ pub const Runtime = struct {
     storage: Storage,
     scheduler: Scheduler,
     aio: AsyncIO,
+    id: usize,
     running: bool = true,
     // The currently running Task.
     current_task: ?usize = null,
@@ -47,6 +49,7 @@ pub const Runtime = struct {
             .storage = storage,
             .scheduler = scheduler,
             .aio = aio,
+            .id = options.id,
             .current_task = null,
         };
     }
@@ -140,10 +143,6 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
-        // what if we just tracked an index in the runtime?
-        // and then we just used the iterator but starting from that index.
-        // that way this run wouldn't need to break the while loop all the time?
-
         while (true) {
             var force_woken = false;
             var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });
@@ -161,14 +160,11 @@ pub const Runtime = struct {
             if (!self.running) break;
             try self.aio.submit();
 
-            if (self.scheduler.tasks.empty()) {
-                log.info("no more tasks", .{});
-                break;
-            }
-
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
-            const wait_for_io = self.scheduler.runnable.count() == 0;
+            //
+            // Also don't wait for I/O if we have no tasks ready.
+            const wait_for_io = self.scheduler.runnable.count() == 0 and !self.scheduler.tasks.empty();
             log.debug("Wait for I/O: {}", .{wait_for_io});
 
             const completions = try self.aio.reap(wait_for_io);
