@@ -1,84 +1,39 @@
 const std = @import("std");
-const log = std.log.scoped(.@"tardy/example/file");
+const log = std.log.scoped(.@"tardy/example/cat");
 
 const Runtime = @import("tardy").Runtime;
+const Frame = @import("tardy").Frame;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
-const OpenResult = @import("tardy").OpenResult;
-const ReadResult = @import("tardy").ReadResult;
-const WriteResult = @import("tardy").WriteResult;
+const Dir = @import("tardy").Dir;
+const File = @import("tardy").File;
 
-const FileProvision = struct {
-    fd: std.posix.fd_t = undefined,
-    buffer: []u8,
-    offset: usize,
+pub const std_options = .{ .log_level = .err };
+
+const EntryParams = struct {
+    file_name: [:0]const u8,
 };
 
-fn open_task(rt: *Runtime, result: OpenResult, provision: *FileProvision) !void {
-    const fd = try result.unwrap();
-    provision.fd = fd;
+fn main_frame(rt: *Runtime, p: *EntryParams) !void {
+    const std_out = File.std_out();
+    const file = Dir.cwd().open_file(rt, p.file_name, .{}) catch |e| switch (e) {
+        error.NotFound => {
+            std.debug.print("{s}: No such file!", .{p.file_name});
+            return;
+        },
+        else => return e,
+    };
 
-    if (!Cross.fd.is_valid(fd)) {
-        try std.io.getStdOut().writeAll("No such file or directory");
-        rt.stop();
-        return;
+    var buffer: [1024 * 32]u8 = undefined;
+    var done: bool = false;
+
+    while (!done) {
+        const length = try file.read_all(rt, &buffer, null);
+        done = length < buffer.len;
+        _ = try std_out.write_all(rt, buffer[0..length], null);
     }
-
-    try rt.fs.read(
-        provision,
-        read_task,
-        fd,
-        provision.buffer,
-        provision.offset,
-    );
-}
-
-fn read_task(rt: *Runtime, result: ReadResult, provision: *FileProvision) !void {
-    const length = result.unwrap() catch |e| {
-        switch (e) {
-            error.EndOfFile => {
-                try rt.fs.close(provision, close_task, provision.fd);
-                return;
-            },
-            else => {
-                std.debug.print("Unexpected Error: {}\n", .{e});
-                return;
-            },
-        }
-    };
-
-    provision.offset += @intCast(length);
-
-    try rt.fs.write(
-        provision,
-        write_task,
-        try Cross.get_std_out(),
-        provision.buffer,
-        provision.offset,
-    );
-}
-
-fn write_task(rt: *Runtime, result: WriteResult, provision: *FileProvision) !void {
-    _ = result.unwrap() catch |e| {
-        std.debug.print("Unexpected Error: {}\n", .{e});
-        try rt.fs.close(provision, close_task, provision.fd);
-        return;
-    };
-
-    try rt.fs.read(
-        provision,
-        read_task,
-        provision.fd,
-        provision.buffer,
-        provision.offset,
-    );
-}
-
-fn close_task(rt: *Runtime, _: void, _: *FileProvision) !void {
-    log.debug("all done!", .{});
-    rt.stop();
 }
 
 pub fn main() !void {
@@ -86,11 +41,10 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
+    var tardy = try Tardy.init(allocator, .{
         .threading = .single,
-        .size_tasks_max = 1,
-        .size_aio_jobs_max = 1,
+        .pooling = .static,
+        .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
     defer tardy.deinit();
@@ -108,27 +62,15 @@ pub fn main() !void {
         return;
     };
 
-    const EntryParams = struct {
-        provision: FileProvision,
-        file_name: [:0]const u8,
-    };
-
-    const buffer = try allocator.alloc(u8, 512);
-    defer allocator.free(buffer);
-
     var params: EntryParams = .{
         .file_name = file_name,
-        .provision = .{
-            .buffer = buffer,
-            .offset = 0,
-        },
     };
 
     try tardy.entry(
         &params,
         struct {
-            fn start(rt: *Runtime, parameters: *EntryParams) !void {
-                try rt.fs.open(&parameters.provision, open_task, parameters.file_name);
+            fn start(rt: *Runtime, p: *EntryParams) !void {
+                try rt.spawn(.{ rt, p }, main_frame, 1024 * 1024 * 4);
             }
         }.start,
         {},

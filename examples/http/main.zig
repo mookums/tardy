@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.@"tardy/example/http");
+const log = std.log.scoped(.@"tardy/example/echo");
 
 const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
@@ -7,183 +7,76 @@ const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
+const Socket = @import("tardy").Socket;
+const Timer = @import("tardy").Timer;
+
 const AcceptResult = @import("tardy").AcceptResult;
 const RecvResult = @import("tardy").RecvResult;
 const SendResult = @import("tardy").SendResult;
 
-const Provision = struct {
-    index: usize,
-    socket: std.posix.socket_t,
-    buffer: []u8,
-};
-
+const STACK_SIZE: usize = 1024 * 16;
 const HTTP_RESPONSE = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 27\r\nContent-Type: text/plain\r\n\r\nThis is an HTTP benchmark\r\n";
 
-fn create_socket(addr: std.net.Address) !std.posix.socket_t {
-    const socket: std.posix.socket_t = blk: {
-        const socket_flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
-        break :blk try std.posix.socket(
-            addr.any.family,
-            socket_flags,
-            std.posix.IPPROTO.TCP,
-        );
-    };
+fn main_frame(rt: *Runtime, server: *const Socket) !void {
+    const socket = try server.accept(rt);
+    defer socket.close_blocking();
 
-    if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT_LB,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-    } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
-    } else {
-        try std.posix.setsockopt(
-            socket,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEADDR,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
+    log.debug(
+        "{d} - accepted socket [{}]",
+        .{ std.time.milliTimestamp(), socket.addr.in },
+    );
+
+    // spawn off a new frame.
+    try rt.spawn(.{ rt, server }, main_frame, STACK_SIZE);
+
+    var buffer: [1024]u8 = undefined;
+    var recv_length: usize = 0;
+    while (true) {
+        recv_length += socket.recv(rt, &buffer) catch |e| {
+            log.err("Failed to recv on socket | {}", .{e});
+            return;
+        };
+
+        if (std.mem.indexOf(u8, buffer[0..recv_length], "\r\n\r\n")) |_| {
+            _ = socket.send_all(rt, HTTP_RESPONSE[0..]) catch |e| {
+                log.err("Failed to send on socket | {}", .{e});
+                return;
+            };
+            recv_length = 0;
+        }
     }
-
-    return socket;
-}
-
-fn accept_task(rt: *Runtime, result: AcceptResult, _: void) !void {
-    const child_socket = result.unwrap() catch |e| {
-        log.err("failed to accept socket | {}", .{e});
-        rt.stop();
-        return;
-    };
-
-    try Cross.socket.to_nonblock(child_socket);
-    log.debug("accepted socket fd={d}", .{child_socket});
-
-    const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-    const borrowed = try provision_pool.borrow();
-    borrowed.item.index = borrowed.index;
-    borrowed.item.socket = child_socket;
-    try rt.net.recv(
-        borrowed.item,
-        recv_task,
-        child_socket,
-        borrowed.item.buffer,
-    );
-}
-
-fn recv_task(rt: *Runtime, result: RecvResult, provision: *Provision) !void {
-    log.debug("recv socket fd={d}", .{provision.socket});
-    _ = result.unwrap() catch |e| {
-        log.debug("recv closed fd={d} | {}", .{ provision.socket, e });
-        log.debug("queueing close with ctx ptr: {*}", .{provision});
-        try rt.net.close(provision, close_task, provision.socket);
-        return;
-    };
-
-    try rt.net.send(
-        provision,
-        send_task,
-        provision.socket,
-        HTTP_RESPONSE[0..],
-    );
-}
-
-fn send_task(rt: *Runtime, result: SendResult, provision: *Provision) !void {
-    log.debug("send socket fd={d}", .{provision.socket});
-
-    _ = result.unwrap() catch |e| {
-        log.debug("send closed fd={d} | {}", .{ provision.socket, e });
-        log.debug("queueing close with ctx ptr: {*}", .{provision});
-        try rt.net.close(provision, close_task, provision.socket);
-        return;
-    };
-
-    try rt.net.recv(
-        provision,
-        recv_task,
-        provision.socket,
-        provision.buffer,
-    );
-}
-
-fn close_task(rt: *Runtime, _: void, provision: *Provision) !void {
-    const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-
-    log.debug("close socket fd={d}", .{provision.socket});
-    provision_pool.release(provision.index);
-
-    const socket = rt.storage.get("server_socket", std.posix.socket_t);
-    try rt.net.accept({}, accept_task, socket);
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
+
+    var tardy = try Tardy.init(allocator, .{
+        .threading = .auto,
+        .pooling = .grow,
+        .size_tasks_initial = 256,
+        .size_aio_reap_max = 1024,
+    });
+    defer tardy.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
 
-    const thread_count = @max(@as(u16, @intCast(try std.Thread.getCpuCount() / 2 - 1)), 1);
-    const conn_per_thread = try std.math.divCeil(u16, 2000, thread_count);
-
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
-        .threading = .{ .multi = thread_count },
-        .size_tasks_max = conn_per_thread,
-        .size_aio_jobs_max = conn_per_thread,
-        .size_aio_reap_max = conn_per_thread,
-    });
-    defer tardy.deinit();
+    const server = try Socket.init(.{ .tcp = .{ .host = host, .port = port } });
+    try server.bind();
+    try server.listen(1024);
 
     try tardy.entry(
-        conn_per_thread,
+        &server,
         struct {
-            fn rt_start(rt: *Runtime, size: u16) !void {
-                // socket per thread.
-                const addr = try std.net.Address.parseIp(host, port);
-                const socket = try create_socket(addr);
-                try Cross.socket.to_nonblock(socket);
-                try std.posix.bind(socket, &addr.any, addr.getOsSockLen());
-                try std.posix.listen(socket, size);
-
-                const pool = try Pool(Provision).init(rt.allocator, size, rt.allocator, struct {
-                    fn init(items: []Provision, a: std.mem.Allocator) void {
-                        for (items) |*item| {
-                            item.buffer = a.alloc(u8, 512) catch unreachable;
-                        }
-                    }
-                }.init);
-
-                try rt.storage.store_alloc("provision_pool", pool);
-                try rt.storage.store_alloc("server_socket", socket);
-
-                for (0..size) |_| {
-                    try rt.net.accept({}, accept_task, socket);
-                }
+            fn start(rt: *Runtime, tcp_server: *const Socket) !void {
+                try rt.spawn(.{ rt, tcp_server }, main_frame, STACK_SIZE);
             }
-        }.rt_start,
+        }.start,
         {},
         struct {
-            fn rt_end(rt: *Runtime, _: void) !void {
-                const socket = rt.storage.get("server_socket", std.posix.socket_t);
-                std.posix.close(socket);
-
-                const provision_pool = rt.storage.get_ptr("provision_pool", Pool(Provision));
-                provision_pool.deinit(rt.allocator, struct {
-                    fn pool_deinit(items: []Provision, a: std.mem.Allocator) void {
-                        for (items) |item| {
-                            a.free(item.buffer);
-                        }
-                    }
-                }.pool_deinit);
-            }
-        }.rt_end,
+            fn end(_: *Runtime, _: void) !void {}
+        }.end,
     );
 }

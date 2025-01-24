@@ -1,27 +1,26 @@
 const std = @import("std");
-const Timespec = @import("timespec.zig").Timespec;
+const Timespec = @import("../lib.zig").Timespec;
+
+const File = @import("../fs/lib.zig").File;
+const Dir = @import("../fs/lib.zig").Dir;
+const Stat = @import("../fs/lib.zig").Stat;
+
+const Socket = @import("../net/lib.zig").Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
-    return struct {
+    return union(enum) {
         const Self = @This();
-        actual: ?T = null,
-        err: ?E = null,
+        actual: T,
+        err: E,
 
         pub fn unwrap(self: *const Self) E!T {
-            return self.actual orelse self.err.?;
+            switch (self.*) {
+                .actual => |a| return a,
+                .err => |e| return e,
+            }
         }
     };
 }
-
-// This interface is missing a lot of the stuff you get from `stat()` normally.
-// This is minimally what I need.
-pub const Stat = struct {
-    size: u64,
-    mode: u64 = 0,
-    accessed: ?Timespec = null,
-    modified: ?Timespec = null,
-    changed: ?Timespec = null,
-};
 
 pub const AcceptError = error{
     WouldBlock,
@@ -93,9 +92,9 @@ pub const SendError = error{
 pub const OpenError = error{
     AccessDenied,
     InvalidFd,
-    FileBusy,
+    Busy,
     DiskQuotaExceeded,
-    FileAlreadyExists,
+    AlreadyExists,
     InvalidAddress,
     FileTooBig,
     Interrupted,
@@ -106,7 +105,7 @@ pub const OpenError = error{
     NameTooLong,
     SystemFdQuotaExceeded,
     DeviceNotFound,
-    FileNotFound,
+    NotFound,
     OutOfMemory,
     NoSpace,
     NotADirectory,
@@ -153,18 +152,64 @@ pub const StatError = error{
     InvalidArguments,
     Loop,
     NameTooLong,
-    FileNotFound,
+    NotFound,
     OutOfMemory,
     NotADirectory,
     Unexpected,
 };
 
-pub const AcceptResult = Resulted(std.posix.socket_t, AcceptError);
-pub const ConnectResult = Resulted(std.posix.socket_t, ConnectError);
+pub const MkdirError = error{
+    AccessDenied,
+    AlreadyExists,
+    Loop,
+    NameTooLong,
+    NotFound,
+    NoSpace,
+    NotADirectory,
+    ReadOnlyFileSystem,
+    Unexpected,
+};
+
+pub const DeleteError = error{
+    AccessDenied,
+    Busy,
+    InvalidAddress,
+    IoError,
+    IsDirectory,
+    Loop,
+    NameTooLong,
+    NotFound,
+    OutOfMemory,
+    IsNotDirectory,
+    ReadOnlyFileSystem,
+    InvalidArguments,
+    NotEmpty,
+    InvalidFd,
+    Unexpected,
+};
+
+pub const AcceptResult = Resulted(Socket, AcceptError);
+
+pub const ConnectResult = Resulted(Socket, ConnectError);
 pub const RecvResult = Resulted(usize, RecvError);
+
 pub const SendResult = Resulted(usize, SendError);
 
-pub const OpenResult = Resulted(std.posix.fd_t, OpenError);
+// This is ONLY used internally. This helps us avoid Result enum bloat
+// by encoding multiple possibilities within one Result.
+const OpenResultType = union(enum) { file: File, dir: Dir };
+pub const InnerOpenResult = Resulted(OpenResultType, OpenError);
+pub const OpenFileResult = Resulted(File, OpenError);
+pub const OpenDirResult = Resulted(Dir, OpenError);
+
+pub const MkdirResult = Resulted(void, MkdirError);
+pub const CreateDirError = MkdirError || OpenError || error{InternalFailure};
+pub const CreateDirResult = Resulted(Dir, CreateDirError);
+
+pub const DeleteResult = Resulted(void, DeleteError);
+pub const DeleteTreeError = OpenError || DeleteError || error{InternalFailure};
+pub const DeleteTreeResult = Resulted(void, DeleteTreeError);
+
 pub const ReadResult = Resulted(usize, ReadError);
 pub const WriteResult = Resulted(usize, WriteError);
 
@@ -180,7 +225,9 @@ pub const Result = union(enum) {
     connect: ConnectResult,
     recv: RecvResult,
     send: SendResult,
-    open: OpenResult,
+    open: InnerOpenResult,
+    mkdir: MkdirResult,
+    delete: DeleteResult,
     read: ReadResult,
     write: WriteResult,
     close,

@@ -4,13 +4,16 @@ const log = std.log.scoped(.@"tardy/aio/kqueue");
 
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
-const Stat = @import("../completion.zig").Stat;
-const Timespec = @import("../timespec.zig").Timespec;
+const Timespec = @import("../../lib.zig").Timespec;
 
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
+
+const Socket = @import("../../net/lib.zig").Socket;
+const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
+const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const PosixError = std.posix.E;
 
@@ -23,86 +26,91 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
-const OpenResult = @import("../completion.zig").OpenResult;
-const OpenError = @import("../completion.zig").OpenError;
-const ReadResult = @import("../completion.zig").ReadResult;
-const ReadError = @import("../completion.zig").ReadError;
-const WriteResult = @import("../completion.zig").WriteResult;
-const WriteError = @import("../completion.zig").WriteError;
-
-const StatResult = @import("../completion.zig").StatResult;
-const StatError = @import("../completion.zig").StatError;
-
 const Atomic = std.atomic.Value;
 
 const WAKE_IDENT = 1;
 
-pub const AsyncKQueue = struct {
+pub const AsyncKqueue = struct {
     kqueue_fd: std.posix.fd_t,
+
     changes: []std.posix.Kevent,
     change_count: usize = 0,
     events: []std.posix.Kevent,
-    jobs: Pool(Job),
-    blocking: std.ArrayList(*Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncKQueue {
+    jobs: Pool(Job),
+
+    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncKqueue {
         const kqueue_fd = try std.posix.kqueue();
         assert(kqueue_fd > -1);
+        errdefer std.posix.close(kqueue_fd);
 
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
-        const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_jobs_max);
-        var jobs = try Pool(Job).init(allocator, options.size_aio_jobs_max + 1, null, null);
-        const blocking = std.ArrayList(*Job).init(allocator);
+        const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
+        var jobs = try Pool(Job).init(allocator, options.size_tasks_initial + 1, options.pooling);
 
-        {
-            const borrowed = jobs.borrow_assume_unset(0);
-            borrowed.item.* = .{
-                .index = 0,
-                .type = .wake,
-                .task = undefined,
-            };
+        const index = jobs.borrow_assume_unset(0);
+        const item = jobs.get_ptr(index);
+        item.* = .{
+            .index = 0,
+            .type = .wake,
+            .task = undefined,
+        };
 
-            const event: std.posix.Kevent = .{
-                .ident = WAKE_IDENT,
-                .filter = std.posix.system.EVFILT_USER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_CLEAR,
-                .fflags = 0,
-                .data = 0,
-                .udata = 0,
-            };
+        const event: std.posix.Kevent = .{
+            .ident = WAKE_IDENT,
+            .filter = std.posix.system.EVFILT_USER,
+            .flags = std.posix.system.EV_ADD | std.posix.system.EV_CLEAR,
+            .fflags = 0,
+            .data = 0,
+            .udata = 0,
+        };
 
-            _ = try std.posix.kevent(kqueue_fd, &.{event}, &.{}, null);
-        }
+        _ = try std.posix.kevent(kqueue_fd, &.{event}, &.{}, null);
 
-        return AsyncKQueue{
+        return AsyncKqueue{
             .kqueue_fd = kqueue_fd,
             .events = events,
             .changes = changes,
             .change_count = 0,
             .jobs = jobs,
-            .blocking = blocking,
         };
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        std.posix.close(kqueue.kqueue_fd);
-        allocator.free(kqueue.events);
-        allocator.free(kqueue.changes);
-        kqueue.jobs.deinit(null, null);
-        kqueue.blocking.deinit();
+    pub fn inner_deinit(self: *AsyncKqueue, allocator: std.mem.Allocator) void {
+        std.posix.close(self.kqueue_fd);
+        allocator.free(self.events);
+        allocator.free(self.changes);
+        self.jobs.deinit();
     }
 
-    pub fn queue_timer(
-        self: *AsyncIO,
-        task: usize,
-        timespec: Timespec,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
+    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+        kqueue.inner_deinit(allocator);
+    }
 
-        borrowed.item.* = .{
-            .index = borrowed.index,
+    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+
+        (switch (job) {
+            .timer => |inner| queue_timer(kqueue, task, inner),
+            .accept => |inner| queue_accept(kqueue, task, inner.socket, inner.kind),
+            .connect => |inner| queue_connect(kqueue, task, inner.socket, inner.addr, inner.kind),
+            .recv => |inner| queue_recv(kqueue, task, inner.socket, inner.buffer),
+            .send => |inner| queue_send(kqueue, task, inner.socket, inner.buffer),
+            .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
+        }) catch |e| if (e == error.ChangeQueueFull) {
+            try self.submit();
+            try queue_job(self, task, job);
+        } else return e;
+    }
+
+    fn queue_timer(self: *AsyncKqueue, task: usize, timespec: Timespec) !void {
+        const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+        const item = self.jobs.get_ptr(index);
+
+        item.* = .{
+            .index = index,
             .type = .{ .timer = .none },
             .task = task,
         };
@@ -112,207 +120,101 @@ pub const AsyncKQueue = struct {
             timespec.seconds * 1000 + @divFloor(timespec.nanos, std.time.ns_per_ms),
         );
 
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
+        if (self.change_count < self.changes.len) {
+            const event = &self.changes[self.change_count];
+            self.change_count += 1;
 
-        event.* = .{
-            .ident = borrowed.index,
-            .filter = std.posix.system.EVFILT_TIMER,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = milliseconds,
-            .udata = borrowed.index,
-        };
+            event.* = .{
+                .ident = index,
+                .filter = std.posix.system.EVFILT_TIMER,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .fflags = 0,
+                .data = milliseconds,
+                .udata = index,
+            };
+        } else return error.ChangeQueueFull;
     }
 
-    pub fn queue_open(
-        self: *AsyncIO,
-        task: usize,
-        path: [:0]const u8,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
-            .type = .{ .open = path },
-            .task = task,
-        };
-
-        try kqueue.blocking.append(borrowed.item);
-    }
-
-    pub fn queue_stat(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
-            .type = .{ .stat = fd },
-            .task = task,
-        };
-
-        try kqueue.blocking.append(borrowed.item);
-    }
-
-    pub fn queue_read(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []u8,
-        offset: usize,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
+    fn queue_accept(self: *AsyncKqueue, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
+        const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+        const item = self.jobs.get_ptr(index);
+        item.* = .{
+            .index = index,
             .type = .{
-                .read = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
+                .accept = .{
+                    .socket = socket,
+                    .addr = undefined,
+                    .addr_len = @sizeOf(std.net.Address),
+                    .kind = kind,
                 },
             },
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = std.posix.Kevent{
-            .ident = @intCast(fd),
-            .filter = std.posix.system.EVFILT_READ,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
+        if (self.change_count < self.changes.len) {
+            const event = &self.changes[self.change_count];
+            self.change_count += 1;
+
+            event.* = .{
+                .ident = @intCast(socket),
+                .filter = std.posix.system.EVFILT_READ,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .fflags = 0,
+                .data = 0,
+                .udata = index,
+            };
+        } else return error.ChangeQueueFull;
     }
 
-    pub fn queue_write(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-        buffer: []const u8,
-        offset: usize,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
-            .type = .{
-                .write = .{
-                    .fd = fd,
-                    .buffer = buffer,
-                    .offset = offset,
-                },
-            },
-            .task = task,
-        };
-
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = .{
-            .ident = @intCast(fd),
-            .filter = std.posix.system.EVFILT_WRITE,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
-    }
-
-    pub fn queue_close(
-        self: *AsyncIO,
-        task: usize,
-        fd: std.posix.fd_t,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
-            .type = .{ .close = fd },
-            .task = task,
-        };
-
-        try kqueue.blocking.append(borrowed.item);
-    }
-
-    pub fn queue_accept(
-        self: *AsyncIO,
+    fn queue_connect(
+        self: *AsyncKqueue,
         task: usize,
         socket: std.posix.socket_t,
+        addr: std.net.Address,
+        kind: Socket.Kind,
     ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
-            .type = .{ .accept = socket },
-            .task = task,
-        };
-
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = .{
-            .ident = @intCast(socket),
-            .filter = std.posix.system.EVFILT_READ,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
-    }
-
-    pub fn queue_connect(
-        self: *AsyncIO,
-        task: usize,
-        socket: std.posix.socket_t,
-        host: []const u8,
-        port: u16,
-    ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        const addr = try std.net.Address.parseIp(host, port);
-
-        borrowed.item.* = .{
-            .index = borrowed.index,
+        const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+        const item = self.jobs.get_ptr(index);
+        item.* = .{
+            .index = index,
             .type = .{
                 .connect = .{
                     .socket = socket,
                     .addr = addr,
+                    .kind = kind,
                 },
             },
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = .{
-            .ident = @intCast(socket),
-            .filter = std.posix.system.EVFILT_WRITE,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
+        if (self.change_count < self.changes.len) {
+            const event = &self.changes[self.change_count];
+            self.change_count += 1;
+
+            event.* = .{
+                .ident = @intCast(socket),
+                .filter = std.posix.system.EVFILT_WRITE,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .fflags = 0,
+                .data = 0,
+                .udata = index,
+            };
+        } else return error.ChangeQueueFull;
     }
 
-    pub fn queue_recv(
-        self: *AsyncIO,
+    fn queue_recv(
+        self: *AsyncKqueue,
         task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
     ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
+        const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+        const item = self.jobs.get_ptr(index);
+        item.* = .{
+            .index = index,
             .type = .{
                 .recv = .{
                     .socket = socket,
@@ -322,29 +224,32 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = .{
-            .ident = @intCast(socket),
-            .filter = std.posix.system.EVFILT_READ,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
+        if (self.change_count < self.changes.len) {
+            const event = &self.changes[self.change_count];
+            self.change_count += 1;
+
+            event.* = .{
+                .ident = @intCast(socket),
+                .filter = std.posix.system.EVFILT_READ,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .fflags = 0,
+                .data = 0,
+                .udata = index,
+            };
+        } else return error.ChangeQueueFull;
     }
 
-    pub fn queue_send(
-        self: *AsyncIO,
+    fn queue_send(
+        self: *AsyncKqueue,
         task: usize,
         socket: std.posix.socket_t,
         buffer: []const u8,
     ) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        const borrowed = try kqueue.jobs.borrow_hint(task);
-        borrowed.item.* = .{
-            .index = borrowed.index,
+        const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+        const item = self.jobs.get_ptr(index);
+        item.* = .{
+            .index = index,
             .type = .{
                 .send = .{
                     .socket = socket,
@@ -354,21 +259,23 @@ pub const AsyncKQueue = struct {
             .task = task,
         };
 
-        const event = &kqueue.changes[kqueue.change_count];
-        assert(kqueue.change_count < kqueue.changes.len);
-        kqueue.change_count += 1;
-        event.* = .{
-            .ident = @intCast(socket),
-            .filter = std.posix.system.EVFILT_WRITE,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = 0,
-            .data = 0,
-            .udata = borrowed.index,
-        };
+        if (self.change_count < self.changes.len) {
+            const event = &self.changes[self.change_count];
+            self.change_count += 1;
+
+            event.* = .{
+                .ident = @intCast(socket),
+                .filter = std.posix.system.EVFILT_WRITE,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .fflags = 0,
+                .data = 0,
+                .udata = index,
+            };
+        } else return error.ChangeQueueFull;
     }
 
     pub fn wake(self: *AsyncIO) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
 
         const event: std.posix.Kevent = .{
             .ident = WAKE_IDENT,
@@ -384,146 +291,30 @@ pub const AsyncKQueue = struct {
     }
 
     pub fn submit(self: *AsyncIO) !void {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
-        _ = kqueue;
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+        _ = try std.posix.kevent(kqueue.kqueue_fd, kqueue.changes[0..kqueue.change_count], &.{}, null);
+        kqueue.change_count = 0;
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const kqueue: *AsyncKQueue = @ptrCast(@alignCast(self.runner));
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
-        var first_run: bool = true;
 
-        const busy_wait: bool = !wait or kqueue.blocking.items.len > 0;
-        log.debug("busy wait? {}", .{busy_wait});
+        while (reaped == 0 and wait) {
+            const remaining = self.completions.len - reaped;
+            if (remaining == 0) break;
 
-        while ((reaped < 1 and wait) or first_run) {
-            blocking_loop: for (0..kqueue.blocking.items.len) |_| {
-                const job = kqueue.blocking.popOrNull() orelse break;
-                assert(kqueue.jobs.dirty.isSet(job.index));
-
-                if (self.completions.len - reaped == 0) break;
-
-                var job_complete = true;
-                defer if (job_complete) {
-                    kqueue.jobs.release(job.index);
-                } else {
-                    // if not done, readd to blocking list.
-                    kqueue.blocking.appendAssumeCapacity(job);
-                };
-
-                const result: Result = blk: {
-                    switch (job.type) {
-                        else => unreachable,
-                        .open => |path| {
-                            const res = std.posix.system.openat(std.posix.AT.FDCWD, path, .{}, @as(std.posix.mode_t, @intCast(0)));
-
-                            const result: OpenResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => break :result .{ .actual = res },
-                                    PosixError.AGAIN => {
-                                        job_complete = false;
-                                        continue :blocking_loop;
-                                    },
-                                    PosixError.ACCES, PosixError.PERM => break :result .{ .err = OpenError.AccessDenied },
-                                    PosixError.BADF => break :result .{ .err = OpenError.InvalidFd },
-                                    PosixError.BUSY => break :result .{ .err = OpenError.FileBusy },
-                                    PosixError.DQUOT => break :result .{ .err = OpenError.DiskQuotaExceeded },
-                                    PosixError.EXIST => break :result .{ .err = OpenError.FileAlreadyExists },
-                                    PosixError.FAULT => break :result .{ .err = OpenError.InvalidAddress },
-                                    PosixError.FBIG, PosixError.OVERFLOW => break :result .{ .err = OpenError.FileTooBig },
-                                    PosixError.INTR => break :result .{ .err = OpenError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = OpenError.InvalidArguments },
-                                    PosixError.ISDIR => break :result .{ .err = OpenError.IsDirectory },
-                                    PosixError.LOOP => break :result .{ .err = OpenError.Loop },
-                                    PosixError.MFILE => break :result .{ .err = OpenError.ProcessFdQuotaExceeded },
-                                    PosixError.NAMETOOLONG => break :result .{ .err = OpenError.NameTooLong },
-                                    PosixError.NFILE => break :result .{ .err = OpenError.SystemFdQuotaExceeded },
-                                    PosixError.NODEV, PosixError.NXIO => break :result .{ .err = OpenError.DeviceNotFound },
-                                    PosixError.NOENT => break :result .{ .err = OpenError.FileNotFound },
-                                    PosixError.NOMEM => break :result .{ .err = OpenError.OutOfMemory },
-                                    PosixError.NOSPC => break :result .{ .err = OpenError.NoSpace },
-                                    PosixError.NOTDIR => break :result .{ .err = OpenError.NotADirectory },
-                                    PosixError.OPNOTSUPP => break :result .{ .err = OpenError.OperationNotSupported },
-                                    PosixError.ROFS => break :result .{ .err = OpenError.ReadOnlyFileSystem },
-                                    PosixError.TXTBSY => break :result .{ .err = OpenError.FileLocked },
-                                    else => break :result .{ .err = OpenError.Unexpected },
-                                }
-                            };
-
-                            break :blk .{ .open = result };
-                        },
-                        .stat => |fd| {
-                            var fstat: std.posix.system.Stat = undefined;
-                            const res = std.posix.system.fstat(fd, &fstat);
-
-                            const result: StatResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => {
-                                        const atim = fstat.atime();
-                                        const mtim = fstat.mtime();
-                                        const ctim = fstat.ctime();
-
-                                        const stat: Stat = .{
-                                            .size = @intCast(fstat.size),
-                                            .mode = @intCast(fstat.mode),
-                                            .accessed = .{
-                                                .seconds = @intCast(atim.tv_sec),
-                                                .nanos = @intCast(atim.tv_nsec),
-                                            },
-                                            .modified = .{
-                                                .seconds = @intCast(mtim.tv_sec),
-                                                .nanos = @intCast(mtim.tv_nsec),
-                                            },
-                                            .changed = .{
-                                                .seconds = @intCast(ctim.tv_sec),
-                                                .nanos = @intCast(ctim.tv_nsec),
-                                            },
-                                        };
-
-                                        break :result .{ .actual = stat };
-                                    },
-                                    PosixError.ACCES => break :result .{ .err = StatError.AccessDenied },
-                                    PosixError.BADF => break :result .{ .err = StatError.InvalidFd },
-                                    PosixError.FAULT => break :result .{ .err = StatError.InvalidAddress },
-                                    PosixError.INVAL => break :result .{ .err = StatError.InvalidArguments },
-                                    PosixError.LOOP => break :result .{ .err = StatError.Loop },
-                                    PosixError.NAMETOOLONG => break :result .{ .err = StatError.NameTooLong },
-                                    PosixError.NOENT => break :result .{ .err = StatError.FileNotFound },
-                                    PosixError.NOMEM => break :result .{ .err = StatError.OutOfMemory },
-                                    PosixError.NOTDIR => break :result .{ .err = StatError.NotADirectory },
-                                    else => break :result .{ .err = StatError.Unexpected },
-                                }
-                            };
-
-                            break :blk .{ .stat = result };
-                        },
-                        .close => |handle| {
-                            std.posix.close(handle);
-                            break :blk .none;
-                        },
-                    }
-                };
-
-                self.completions[reaped] = .{
-                    .result = result,
-                    .task = job.task,
-                };
-
-                reaped += 1;
-            }
-
-            const timeout_spec = std.mem.zeroInit(std.posix.timespec, .{});
+            const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
+            const timeout: ?*const std.posix.timespec = if (!wait or reaped > 0) &timeout_spec else null;
+            log.debug("remaining count={d}", .{remaining});
 
             // Handle all of the kqueue I/O
             const kqueue_events = try std.posix.kevent(
                 kqueue.kqueue_fd,
-                kqueue.changes[0..kqueue.change_count],
-                kqueue.events,
-                if (busy_wait or reaped > 0) &timeout_spec else null,
+                &.{},
+                kqueue.events[0..remaining],
+                timeout,
             );
-            kqueue.change_count = 0;
 
             for (kqueue.events[0..kqueue_events]) |event| {
                 const job_index = event.udata;
@@ -532,11 +323,10 @@ pub const AsyncKQueue = struct {
                 var job_complete = true;
                 defer if (job_complete) kqueue.jobs.release(job_index);
 
-                const job = kqueue.jobs.items[job_index];
+                const job = kqueue.jobs.get_ptr(job_index);
 
                 const result: Result = blk: {
                     switch (job.type) {
-                        else => unreachable,
                         .wake => {
                             assert(event.filter == std.posix.system.EVFILT_USER);
                             assert(event.ident == WAKE_IDENT);
@@ -548,224 +338,151 @@ pub const AsyncKQueue = struct {
                             assert(inner == .none);
                             break :blk .none;
                         },
-                        .accept => |socket| {
+                        .accept => |*inner| {
                             assert(event.filter == std.posix.system.EVFILT_READ);
-                            const res = std.posix.system.accept(socket, null, null);
+                            const rc = std.posix.system.accept(
+                                inner.socket,
+                                &inner.addr.any,
+                                @ptrCast(&inner.addr_len),
+                            );
 
                             const result: AcceptResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => break :result .{ .actual = @intCast(res) },
-                                    PosixError.AGAIN => break :result .{ .err = AcceptError.WouldBlock },
-                                    PosixError.BADF => break :result .{ .err = AcceptError.InvalidFd },
-                                    PosixError.CONNABORTED => break :result .{ .err = AcceptError.ConnectionAborted },
-                                    PosixError.FAULT => break :result .{ .err = AcceptError.InvalidAddress },
-                                    PosixError.INTR => break :result .{ .err = AcceptError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = AcceptError.NotListening },
-                                    PosixError.MFILE => break :result .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                                    PosixError.NFILE => break :result .{ .err = AcceptError.SystemFdQuotaExceeded },
-                                    PosixError.NOBUFS, PosixError.NOMEM => {
-                                        break :result .{ .err = AcceptError.OutOfMemory };
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => .{
+                                        .actual = .{
+                                            .handle = @intCast(rc),
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
                                     },
-                                    PosixError.NOTSOCK => break :result .{ .err = AcceptError.NotASocket },
-                                    PosixError.OPNOTSUPP => break :result .{ .err = AcceptError.OperationNotSupported },
-                                    else => break :result .{ .err = AcceptError.Unexpected },
-                                }
+                                    PosixError.AGAIN => .{ .err = AcceptError.WouldBlock },
+                                    PosixError.BADF => .{ .err = AcceptError.InvalidFd },
+                                    PosixError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
+                                    PosixError.FAULT => .{ .err = AcceptError.InvalidAddress },
+                                    PosixError.INTR => .{ .err = AcceptError.Interrupted },
+                                    PosixError.INVAL => .{ .err = AcceptError.NotListening },
+                                    PosixError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
+                                    PosixError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
+                                    PosixError.NOBUFS, PosixError.NOMEM => .{ .err = AcceptError.OutOfMemory },
+                                    PosixError.NOTSOCK => .{ .err = AcceptError.NotASocket },
+                                    PosixError.OPNOTSUPP => .{ .err = AcceptError.OperationNotSupported },
+                                    else => .{ .err = AcceptError.Unexpected },
+                                };
                             };
 
                             break :blk .{ .accept = result };
                         },
                         .connect => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const addr_len: std.posix.socklen_t = switch (inner.addr.any.family) {
-                                std.posix.AF.INET => @sizeOf(std.posix.sockaddr.in),
-                                std.posix.AF.INET6 => @sizeOf(std.posix.sockaddr.in6),
-                                std.posix.AF.UNIX => @sizeOf(std.posix.sockaddr.un),
-                                else => @panic("Unsupported!"),
-                            };
-
-                            const res = std.os.linux.connect(inner.socket, &inner.addr.any, addr_len);
+                            const rc = std.posix.system.connect(
+                                inner.socket,
+                                &inner.addr.any,
+                                inner.addr.getOsSockLen(),
+                            );
 
                             const result: ConnectResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => break :result .{ .actual = inner.socket },
-                                    PosixError.AGAIN, PosixError.ALREADY, PosixError.INPROGRESS => {
-                                        break :result .{ .err = ConnectError.WouldBlock };
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => .{
+                                        .actual = .{
+                                            .handle = inner.socket,
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
                                     },
-                                    PosixError.ACCES, PosixError.PERM => break :result .{ .err = ConnectError.AccessDenied },
-                                    PosixError.ADDRINUSE => break :result .{ .err = ConnectError.AddressInUse },
-                                    PosixError.ADDRNOTAVAIL => break :result .{ .err = ConnectError.AddressNotAvailable },
-                                    PosixError.AFNOSUPPORT => break :result .{ .err = ConnectError.AddressFamilyNotSupported },
-                                    PosixError.BADF => break :result .{ .err = ConnectError.InvalidFd },
-                                    PosixError.CONNREFUSED => break :result .{ .err = ConnectError.ConnectionRefused },
-                                    PosixError.FAULT => break :result .{ .err = ConnectError.InvalidAddress },
-                                    PosixError.INTR => break :result .{ .err = ConnectError.Interrupted },
-                                    PosixError.ISCONN => break :result .{ .err = ConnectError.AlreadyConnected },
-                                    PosixError.NETUNREACH => break :result .{ .err = ConnectError.NetworkUnreachable },
-                                    PosixError.NOTSOCK => break :result .{ .err = ConnectError.NotASocket },
-                                    PosixError.PROTOTYPE => break :result .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                    PosixError.TIMEDOUT => break :result .{ .err = ConnectError.TimedOut },
-                                    else => break :result .{ .err = ConnectError.Unexpected },
-                                }
+                                    PosixError.AGAIN, PosixError.ALREADY, PosixError.INPROGRESS => .{
+                                        .err = ConnectError.WouldBlock,
+                                    },
+                                    PosixError.ACCES, PosixError.PERM => .{ .err = ConnectError.AccessDenied },
+                                    PosixError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
+                                    PosixError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
+                                    PosixError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
+                                    PosixError.BADF => .{ .err = ConnectError.InvalidFd },
+                                    PosixError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
+                                    PosixError.FAULT => .{ .err = ConnectError.InvalidAddress },
+                                    PosixError.INTR => .{ .err = ConnectError.Interrupted },
+                                    PosixError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
+                                    PosixError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
+                                    PosixError.NOTSOCK => .{ .err = ConnectError.NotASocket },
+                                    PosixError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
+                                    PosixError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
+                                    else => .{ .err = ConnectError.Unexpected },
+                                };
                             };
 
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_READ);
-                            const res = std.posix.system.recvfrom(inner.socket, inner.buffer.ptr, inner.buffer.len, 0, null, null);
+                            const rc = std.posix.system.recvfrom(
+                                inner.socket,
+                                inner.buffer.ptr,
+                                inner.buffer.len,
+                                0,
+                                null,
+                                null,
+                            );
 
                             const result: RecvResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => if (res == 0) {
-                                        break :result .{ .err = RecvError.Closed };
-                                    } else {
-                                        break :result .{ .actual = @intCast(res) };
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => switch (rc) {
+                                        0 => .{ .err = RecvError.Closed },
+                                        else => .{ .actual = @intCast(rc) },
                                     },
-                                    PosixError.AGAIN => break :result .{ .err = RecvError.WouldBlock },
-                                    PosixError.BADF => break :result .{ .err = RecvError.InvalidFd },
-                                    PosixError.CONNREFUSED => break :result .{ .err = RecvError.ConnectionRefused },
-                                    PosixError.FAULT => break :result .{ .err = RecvError.InvalidAddress },
-                                    PosixError.INTR => break :result .{ .err = RecvError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = RecvError.InvalidArguments },
-                                    PosixError.NOMEM => break :result .{ .err = RecvError.OutOfMemory },
-                                    PosixError.NOTCONN => break :result .{ .err = RecvError.NotConnected },
-                                    PosixError.NOTSOCK => break :result .{ .err = RecvError.NotASocket },
-                                    else => break :result .{ .err = RecvError.Unexpected },
-                                }
+                                    PosixError.AGAIN => .{ .err = RecvError.WouldBlock },
+                                    PosixError.BADF => .{ .err = RecvError.InvalidFd },
+                                    PosixError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
+                                    PosixError.FAULT => .{ .err = RecvError.InvalidAddress },
+                                    PosixError.INTR => .{ .err = RecvError.Interrupted },
+                                    PosixError.INVAL => .{ .err = RecvError.InvalidArguments },
+                                    PosixError.NOMEM => .{ .err = RecvError.OutOfMemory },
+                                    PosixError.NOTCONN => .{ .err = RecvError.NotConnected },
+                                    PosixError.NOTSOCK => .{ .err = RecvError.NotASocket },
+                                    else => .{ .err = RecvError.Unexpected },
+                                };
                             };
 
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const res = std.posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
+                            const rc = std.posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
 
                             const result: SendResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => break :result .{ .actual = @intCast(res) },
-                                    PosixError.AGAIN => break :result .{ .err = SendError.WouldBlock },
-                                    PosixError.ACCES => break :result .{ .err = SendError.AccessDenied },
-                                    PosixError.ALREADY => break :result .{ .err = SendError.OpenInProgress },
-                                    PosixError.BADF => break :result .{ .err = SendError.InvalidFd },
-                                    PosixError.CONNRESET => break :result .{ .err = SendError.ConnectionReset },
-                                    PosixError.DESTADDRREQ => break :result .{ .err = SendError.NoDestinationAddress },
-                                    PosixError.FAULT => break :result .{ .err = SendError.InvalidAddress },
-                                    PosixError.INTR => break :result .{ .err = SendError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = SendError.InvalidArguments },
-                                    PosixError.ISCONN => break :result .{ .err = SendError.AlreadyConnected },
-                                    PosixError.MSGSIZE => break :result .{ .err = SendError.InvalidSize },
-                                    PosixError.NOBUFS, PosixError.NOMEM => {
-                                        break :result .{ .err = SendError.OutOfMemory };
-                                    },
-                                    PosixError.NOTCONN => break :result .{ .err = SendError.NotConnected },
-                                    PosixError.OPNOTSUPP => break :result .{ .err = SendError.OperationNotSupported },
-                                    PosixError.PIPE => break :result .{ .err = SendError.BrokenPipe },
-                                    else => break :result .{ .err = SendError.Unexpected },
-                                }
+                                const e: PosixError = std.posix.errno(rc);
+                                break :result switch (e) {
+                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
+                                    PosixError.AGAIN => .{ .err = SendError.WouldBlock },
+                                    PosixError.ACCES => .{ .err = SendError.AccessDenied },
+                                    PosixError.ALREADY => .{ .err = SendError.OpenInProgress },
+                                    PosixError.BADF => .{ .err = SendError.InvalidFd },
+                                    PosixError.CONNRESET => .{ .err = SendError.ConnectionReset },
+                                    PosixError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
+                                    PosixError.FAULT => .{ .err = SendError.InvalidAddress },
+                                    PosixError.INTR => .{ .err = SendError.Interrupted },
+                                    PosixError.INVAL => .{ .err = SendError.InvalidArguments },
+                                    PosixError.ISCONN => .{ .err = SendError.AlreadyConnected },
+                                    PosixError.MSGSIZE => .{ .err = SendError.InvalidSize },
+                                    PosixError.NOBUFS, PosixError.NOMEM => .{ .err = SendError.OutOfMemory },
+                                    PosixError.NOTCONN => .{ .err = SendError.NotConnected },
+                                    PosixError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
+                                    PosixError.PIPE => .{ .err = SendError.BrokenPipe },
+                                    else => .{ .err = SendError.Unexpected },
+                                };
                             };
 
                             break :blk .{ .send = result };
                         },
-                        .read => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_READ);
-                            const res = std.posix.system.pread(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(inner.offset));
-
-                            const result: ReadResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => if (res == 0) {
-                                        break :result .{ .err = ReadError.EndOfFile };
-                                    } else {
-                                        break :result .{ .actual = @intCast(res) };
-                                    },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => {
-                                        // try normal read.
-                                        const read_res = std.os.linux.read(inner.fd, inner.buffer.ptr, inner.buffer.len);
-                                        const read_e: PosixError = std.posix.errno(read_res);
-                                        switch (read_e) {
-                                            PosixError.SUCCESS => if (read_res == 0) {
-                                                break :result .{ .err = ReadError.EndOfFile };
-                                            } else {
-                                                break :result .{ .actual = @intCast(read_res) };
-                                            },
-                                            PosixError.AGAIN => break :result .{ .err = ReadError.WouldBlock },
-                                            PosixError.BADF => break :result .{ .err = ReadError.InvalidFd },
-                                            PosixError.FAULT => break :result .{ .err = ReadError.InvalidAddress },
-                                            PosixError.INTR => break :result .{ .err = ReadError.Interrupted },
-                                            PosixError.INVAL => break :result .{ .err = ReadError.InvalidArguments },
-                                            PosixError.IO => break :result .{ .err = ReadError.IoError },
-                                            PosixError.ISDIR => break :result .{ .err = ReadError.IsDirectory },
-                                            else => break :result .{ .err = ReadError.Unexpected },
-                                        }
-                                    },
-                                    PosixError.AGAIN => break :result .{ .err = ReadError.WouldBlock },
-                                    PosixError.BADF => break :result .{ .err = ReadError.InvalidFd },
-                                    PosixError.FAULT => break :result .{ .err = ReadError.InvalidAddress },
-                                    PosixError.INTR => break :result .{ .err = ReadError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = ReadError.InvalidArguments },
-                                    PosixError.IO => break :result .{ .err = ReadError.IoError },
-                                    PosixError.ISDIR => break :result .{ .err = ReadError.IsDirectory },
-                                    else => break :result .{ .err = ReadError.Unexpected },
-                                }
-                            };
-
-                            break :blk .{ .read = result };
-                        },
-
-                        .write => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const res = std.posix.system.pwrite(inner.fd, inner.buffer.ptr, inner.buffer.len, @intCast(inner.offset));
-
-                            const result: WriteResult = result: {
-                                const e: PosixError = std.posix.errno(res);
-                                switch (e) {
-                                    PosixError.SUCCESS => break :result .{ .actual = @intCast(res) },
-                                    // If it is unseekable...
-                                    PosixError.NXIO, PosixError.SPIPE, PosixError.OVERFLOW => {
-                                        // try normal write.
-                                        const write_res = std.os.linux.write(inner.fd, inner.buffer.ptr, inner.buffer.len);
-                                        if (write_res >= 0) break :blk .{ .write = .{ .actual = @intCast(write_res) } };
-                                        const write_e: PosixError = std.posix.errno(write_res);
-                                        switch (write_e) {
-                                            PosixError.SUCCESS => break :result .{ .actual = @intCast(write_res) },
-                                            PosixError.AGAIN => break :result .{ .err = WriteError.WouldBlock },
-                                            PosixError.BADF => break :result .{ .err = WriteError.InvalidFd },
-                                            PosixError.DESTADDRREQ => break :result .{ .err = WriteError.NoDestinationAddress },
-                                            PosixError.DQUOT => break :result .{ .err = WriteError.DiskQuotaExceeded },
-                                            PosixError.FAULT => break :result .{ .err = WriteError.InvalidAddress },
-                                            PosixError.FBIG => break :result .{ .err = WriteError.FileTooBig },
-                                            PosixError.INTR => break :result .{ .err = WriteError.Interrupted },
-                                            PosixError.INVAL => break :result .{ .err = WriteError.InvalidArguments },
-                                            PosixError.IO => break :result .{ .err = WriteError.IoError },
-                                            PosixError.NOSPC => break :result .{ .err = WriteError.NoSpace },
-                                            PosixError.PERM => break :result .{ .err = WriteError.AccessDenied },
-                                            PosixError.PIPE => break :result .{ .err = WriteError.BrokenPipe },
-                                            else => break :result .{ .err = WriteError.Unexpected },
-                                        }
-                                    },
-                                    PosixError.AGAIN => break :result .{ .err = WriteError.WouldBlock },
-                                    PosixError.BADF => break :result .{ .err = WriteError.InvalidFd },
-                                    PosixError.DESTADDRREQ => break :result .{ .err = WriteError.NoDestinationAddress },
-                                    PosixError.DQUOT => break :result .{ .err = WriteError.DiskQuotaExceeded },
-                                    PosixError.FAULT => break :result .{ .err = WriteError.InvalidAddress },
-                                    PosixError.FBIG => break :result .{ .err = WriteError.FileTooBig },
-                                    PosixError.INTR => break :result .{ .err = WriteError.Interrupted },
-                                    PosixError.INVAL => break :result .{ .err = WriteError.InvalidArguments },
-                                    PosixError.IO => break :result .{ .err = WriteError.IoError },
-                                    PosixError.NOSPC => break :result .{ .err = WriteError.NoSpace },
-                                    PosixError.PERM => break :result .{ .err = WriteError.AccessDenied },
-                                    PosixError.PIPE => break :result .{ .err = WriteError.BrokenPipe },
-                                    else => break :result .{ .err = WriteError.Unexpected },
-                                }
-                            };
-
-                            break :blk .{ .write = result };
-                        },
+                        .open,
+                        .delete,
+                        .mkdir,
+                        .stat,
+                        .read,
+                        .write,
+                        .close,
+                        => unreachable,
                     }
                 };
 
@@ -776,30 +493,26 @@ pub const AsyncKQueue = struct {
 
                 reaped += 1;
             }
-
-            first_run = false;
         }
 
         return self.completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncKQueue) AsyncIO {
+    pub fn to_async(self: *AsyncKqueue) AsyncIO {
         return AsyncIO{
             .runner = self,
             ._deinit = deinit,
-            ._queue_timer = queue_timer,
-            ._queue_open = queue_open,
-            ._queue_stat = queue_stat,
-            ._queue_read = queue_read,
-            ._queue_write = queue_write,
-            ._queue_close = queue_close,
-            ._queue_accept = queue_accept,
-            ._queue_connect = queue_connect,
-            ._queue_recv = queue_recv,
-            ._queue_send = queue_send,
+            ._queue_job = queue_job,
             ._wake = wake,
             ._submit = submit,
             ._reap = reap,
+            .features = AsyncFeatures.init(&.{
+                .timer,
+                .accept,
+                .connect,
+                .recv,
+                .send,
+            }),
         };
     }
 };

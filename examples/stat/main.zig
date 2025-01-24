@@ -4,13 +4,18 @@ const log = std.log.scoped(.@"tardy/example/stat");
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
 const Tardy = @import("tardy").Tardy(.auto);
+
+const Dir = @import("tardy").Dir;
+const File = @import("tardy").File;
 const Stat = @import("tardy").Stat;
 const StatResult = @import("tardy").StatResult;
 
-fn stat_task(rt: *Runtime, result: StatResult, _: void) !void {
-    const stat = try result.unwrap();
-    try std.io.getStdOut().writer().print("size: {d}\n", .{stat.size});
-    rt.stop();
+fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
+    const file = try Dir.cwd().open_file(rt, name, .{});
+    defer file.close_blocking();
+
+    const stat = try file.stat(rt);
+    std.debug.print("stat: {any}\n", .{stat});
 }
 
 pub fn main() !void {
@@ -18,8 +23,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var tardy = try Tardy.init(.{
-        .allocator = allocator,
+    var tardy = try Tardy.init(allocator, .{
         .threading = .single,
     });
     defer tardy.deinit();
@@ -41,8 +45,7 @@ pub fn main() !void {
         file_name,
         struct {
             fn init(rt: *Runtime, path: [:0]const u8) !void {
-                const file = try std.fs.cwd().openFileZ(path, .{});
-                try rt.fs.stat({}, stat_task, file.handle);
+                try rt.spawn(.{ rt, path }, main_frame, 1024 * 1024 * 2);
             }
         }.init,
         {},

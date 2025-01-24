@@ -1,21 +1,84 @@
 const std = @import("std");
-const Timespec = @import("timespec.zig").Timespec;
+
+const Timespec = @import("../lib.zig").Timespec;
+const Path = @import("../fs/lib.zig").Path;
+const Socket = @import("../net/lib.zig").Socket;
+const AioOpenFlags = @import("lib.zig").AioOpenFlags;
 
 pub const Job = struct {
     type: union(enum) {
         wake,
-        timer: union(enum) { none, fd: std.posix.fd_t, ns: i128 },
-        open: [:0]const u8,
+        timer: TimerJob,
+        open: OpenJob,
+        mkdir: MkdirJob,
+        delete: DeleteJob,
         stat: std.posix.fd_t,
-        read: struct { fd: std.posix.fd_t, buffer: []u8, offset: usize },
-        write: struct { fd: std.posix.fd_t, buffer: []const u8, offset: usize },
+        read: ReadJob,
+        write: WriteJob,
         close: std.posix.fd_t,
-        accept: std.posix.socket_t,
-        connect: struct { socket: std.posix.socket_t, addr: std.net.Address },
-        send: struct { socket: std.posix.socket_t, buffer: []const u8 },
-        recv: struct { socket: std.posix.socket_t, buffer: []u8 },
+        accept: AcceptJob,
+        connect: ConnectJob,
+        send: SendJob,
+        recv: RecvJob,
     },
 
     index: usize = 0,
-    task: usize,
+    task: usize = 0,
+};
+
+const TimerJob = union(enum) {
+    none,
+    fd: std.posix.fd_t,
+    ns: i128,
+};
+
+const OpenJob = struct {
+    path: Path,
+    kind: enum { file, dir },
+    flags: AioOpenFlags,
+};
+
+const MkdirJob = struct {
+    path: Path,
+    mode: isize,
+};
+
+const DeleteJob = struct {
+    path: Path,
+    is_dir: bool,
+};
+
+const ReadJob = struct {
+    fd: std.posix.fd_t,
+    buffer: []u8,
+    offset: ?usize,
+};
+
+const WriteJob = struct {
+    fd: std.posix.fd_t,
+    buffer: []const u8,
+    offset: ?usize,
+};
+
+const AcceptJob = struct {
+    socket: std.posix.socket_t,
+    addr: std.net.Address,
+    addr_len: usize = @sizeOf(std.net.Address),
+    kind: Socket.Kind,
+};
+
+const ConnectJob = struct {
+    socket: std.posix.socket_t,
+    addr: std.net.Address,
+    kind: Socket.Kind,
+};
+
+const SendJob = struct {
+    socket: std.posix.socket_t,
+    buffer: []const u8,
+};
+
+const RecvJob = struct {
+    socket: std.posix.socket_t,
+    buffer: []u8,
 };

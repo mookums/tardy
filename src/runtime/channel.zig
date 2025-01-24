@@ -84,11 +84,14 @@ pub fn Channel(comptime T: type) type {
                 ?*const T,
                 then_ctx,
                 then,
-                .{ .channel = .{
-                    .check = channel_check,
-                    .gen = channel_gen,
-                    .ctx = self,
-                } },
+                .{
+                    .channel = .{
+                        .check = channel_check,
+                        .gen = channel_gen,
+                        .ctx = self,
+                    },
+                },
+                null,
             );
         }
     };
