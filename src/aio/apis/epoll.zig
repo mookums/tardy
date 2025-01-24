@@ -358,7 +358,6 @@ pub const AsyncEpoll = struct {
                                 };
                             };
 
-                            try epoll.remove_fd(inner.socket);
                             break :blk .{ .accept = result };
                         },
                         .connect => |inner| {
@@ -400,7 +399,6 @@ pub const AsyncEpoll = struct {
                                 };
                             };
 
-                            try epoll.remove_fd(inner.socket);
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
@@ -437,7 +435,6 @@ pub const AsyncEpoll = struct {
                                 };
                             };
 
-                            try epoll.remove_fd(inner.socket);
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {

@@ -9,7 +9,7 @@ const Dir = @import("tardy").Dir;
 const SharedParams = @import("lib.zig").SharedParams;
 const FileChain = @import("file_chain.zig").FileChain;
 
-pub const STACK_SIZE = 1024 * 32;
+pub const STACK_SIZE = 1024 * 1024 * 8;
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {

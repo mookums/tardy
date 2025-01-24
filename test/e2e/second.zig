@@ -9,7 +9,7 @@ const Socket = @import("tardy").Socket;
 const TcpServerChain = @import("tcp_chain.zig").TcpServerChain;
 const TcpClientChain = @import("tcp_chain.zig").TcpClientChain;
 
-pub const STACK_SIZE = 1024 * 32;
+pub const STACK_SIZE = 1024 * 1024 * 8;
 threadlocal var tcp_client_chain_count: usize = 1;
 threadlocal var tcp_server_chain_count: usize = 1;
 

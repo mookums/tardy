@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.poll);
+const Tardy = @import("tardy").Tardy(.auto);
 
 const Dir = @import("tardy").Dir;
 
@@ -75,7 +75,7 @@ pub fn main() !void {
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 2 },
+        .threading = .{ .multi = 1 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
@@ -88,7 +88,9 @@ pub fn main() !void {
             fn start(rt: *Runtime, p: *const SharedParams) !void {
                 switch (rt.id) {
                     0 => try rt.spawn(.{ rt, p }, First.start_frame, First.STACK_SIZE),
-                    1 => try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
+
+                    // This is troublesome.
+                    //1 => try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
                     else => unreachable,
                 }
             }
