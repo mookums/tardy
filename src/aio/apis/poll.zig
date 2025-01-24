@@ -36,16 +36,28 @@ pub const AsyncPoll = struct {
         const size = options.size_tasks_initial + 1;
 
         // 0 is read, 1 is write.
-        const pipe = blk: {
+        const pipe: [2]std.posix.fd_t = blk: {
             if (comptime builtin.os.tag == .windows) {
-                var handles: [2]std.posix.fd_t = undefined;
-                const sattr = std.os.windows.SECURITY_ATTRIBUTES{
-                    .nLength = @sizeOf(std.os.windows.SECURITY_ATTRIBUTES),
-                    .lpSecurityDescriptor = null,
-                    .bInheritHandle = std.os.windows.FALSE,
-                };
-                assert(std.os.windows.kernel32.CreatePipe(&handles[0], &handles[1], &sattr, 8) != 0);
-                break :blk handles;
+                const server_socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+                defer std.posix.close(server_socket);
+
+                const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 0);
+                try std.posix.bind(server_socket, &addr.any, addr.getOsSockLen());
+
+                var binded_addr: std.posix.sockaddr = undefined;
+                var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
+                try std.posix.getsockname(server_socket, &binded_addr, &binded_size);
+
+                try std.posix.listen(server_socket, 1);
+
+                const write_end = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+                errdefer std.posix.close(write_end);
+                try std.posix.connect(write_end, &binded_addr, binded_size);
+
+                const read_end = try std.posix.accept(server_socket, null, null, 0);
+                errdefer std.posix.close(read_end);
+
+                break :blk .{ read_end, write_end };
             } else break :blk try std.posix.pipe();
         };
         errdefer for (pipe) |fd| std.posix.close(fd);
@@ -57,12 +69,9 @@ pub const AsyncPoll = struct {
         errdefer fd_job_map.deinit();
         try fd_job_map.ensureTotalCapacity(@intCast(size));
 
-        // if (comptime builtin.os.tag == .windows)
-        //     try fd_list.append(.{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 })
-        // else
-        //     try fd_list.append(.{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
-
-        if (comptime builtin.os.tag != .windows)
+        if (comptime builtin.os.tag == .windows)
+            try fd_list.append(.{ .fd = @ptrCast(pipe[0]), .events = std.posix.POLL.IN, .revents = 0 })
+        else
             try fd_list.append(.{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
 
         return AsyncPoll{
@@ -203,7 +212,9 @@ pub const AsyncPoll = struct {
                 try std.posix.poll(poll.fd_list.items, timeout);
 
             log.debug("poll result={d}", .{poll_result});
-            if (poll_result == 0) continue;
+            // poll result cant be 0 if you're waiting.
+            // it can be if there are no fds :shrug:
+            assert(poll_result != 0 and wait or poll.fd_list.items.len == 0);
 
             var i: usize = 0;
             while (i < poll.fd_list.items.len) {
