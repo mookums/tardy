@@ -4,7 +4,7 @@ const log = std.log.scoped(.@"tardy/example/echo");
 const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = @import("tardy").Tardy(.poll);
 const Cross = @import("tardy").Cross;
 
 const Socket = @import("tardy").Socket;
@@ -61,7 +61,7 @@ pub fn main() !void {
     defer tardy.deinit();
 
     const host = "0.0.0.0";
-    const port = 9862;
+    const port = 9863;
 
     const server = try Socket.init(.{ .tcp = .{ .host = host, .port = port } });
     try server.bind();

@@ -202,16 +202,28 @@ pub const AsyncPoll = struct {
             else
                 try std.posix.poll(poll.fd_list.items, timeout);
 
-            for (poll.fd_list.items, 0..) |pollfd, i| {
-                if (poll_result == 0) continue;
+            log.debug("poll result={d}", .{poll_result});
+            if (poll_result == 0) continue;
+
+            var i: usize = 0;
+            while (i < poll.fd_list.items.len) {
+                var increment = true;
+                defer {
+                    if (increment) i += 1;
+                }
+
+                const pollfd = poll.fd_list.items[i];
                 if (pollfd.revents == 0) continue;
                 if (self.completions.len - reaped == 0) break;
-                const job = poll.fd_job_map.getPtr(pollfd.fd).?;
 
+                const job = poll.fd_job_map.getPtr(pollfd.fd) orelse {
+                    @panic("failed to get job from fd!");
+                };
                 defer {
                     poll_result -= 1;
                     _ = poll.fd_list.swapRemove(i);
                     assert(poll.fd_job_map.remove(pollfd.fd));
+                    increment = false;
                 }
 
                 log.debug("revents={x}", .{pollfd.revents});
@@ -284,10 +296,14 @@ pub const AsyncPoll = struct {
                             };
                         },
                         .recv => |inner| {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                                .recv = .{ .err = RecvError.Closed },
+                            };
 
+                            assert(pollfd.revents & std.posix.POLL.IN != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
                                     else => RecvError.Unexpected,
                                 };
 
@@ -298,9 +314,13 @@ pub const AsyncPoll = struct {
                             break :result .{ .recv = .{ .actual = count } };
                         },
                         .send => |inner| {
-                            assert(pollfd.revents & std.posix.POLL.OUT != 0);
+                            if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                                .send = .{ .err = SendError.ConnectionReset },
+                            };
 
+                            assert(pollfd.revents & std.posix.POLL.OUT != 0);
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
+                                log.err("send failed with {}", .{e});
                                 const err = switch (e) {
                                     else => SendError.Unexpected,
                                 };

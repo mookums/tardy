@@ -6,7 +6,7 @@ const Atomic = std.atomic.Value;
 
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = @import("tardy").Tardy(.poll);
 
 const Dir = @import("tardy").Dir;
 
@@ -68,9 +68,8 @@ pub fn main() !void {
         p.seed_string = seed_string;
         p.seed = seed;
 
-        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 512);
-        //p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
-        p.size_aio_reap_max = 1;
+        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 1024);
+        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
         break :blk p;
     };
     log.debug("{s}\n\n", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});

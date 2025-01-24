@@ -252,7 +252,7 @@ pub const Dir = struct {
             std.posix.close(self.handle);
     }
 
-    pub fn close_blocking(self: *const Dir) void {
+    pub fn close_blocking(self: Dir) void {
         std.posix.close(self.handle);
     }
 };
