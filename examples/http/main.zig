@@ -61,7 +61,7 @@ pub fn main() !void {
     defer tardy.deinit();
 
     const host = "0.0.0.0";
-    const port = 9863;
+    const port = 9862;
 
     const server = try Socket.init(.{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
