@@ -4,7 +4,7 @@ const log = std.log.scoped(.@"tardy/example/echo");
 const Pool = @import("tardy").Pool;
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.poll);
+const Tardy = @import("tardy").Tardy(.auto);
 const Cross = @import("tardy").Cross;
 
 const Socket = @import("tardy").Socket;

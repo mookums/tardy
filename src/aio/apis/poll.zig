@@ -27,10 +27,23 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 
+const TimerPair = struct {
+    milliseconds: usize,
+    task: usize,
+};
+
+const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
+    fn compare(_: void, a: TimerPair, b: TimerPair) std.math.Order {
+        return std.math.order(a.milliseconds, b.milliseconds);
+    }
+}.compare);
+
 pub const AsyncPoll = struct {
     wake_pipe: [2]std.posix.fd_t,
+
     fd_list: std.ArrayList(std.posix.pollfd),
     fd_job_map: std.AutoHashMap(std.posix.fd_t, Job),
+    timers: TimerQueue,
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncPoll {
         const size = options.size_tasks_initial + 1;
@@ -74,10 +87,14 @@ pub const AsyncPoll = struct {
         else
             try fd_list.append(.{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
 
+        const timers = TimerQueue.init(allocator, {});
+        errdefer timers.deinit();
+
         return AsyncPoll{
             .wake_pipe = pipe,
             .fd_list = fd_list,
             .fd_job_map = fd_job_map,
+            .timers = timers,
         };
     }
 
@@ -85,6 +102,7 @@ pub const AsyncPoll = struct {
         _ = allocator;
         self.fd_list.deinit();
         self.fd_job_map.deinit();
+        self.timers.deinit();
         for (self.wake_pipe) |fd| std.posix.close(fd);
     }
 
@@ -107,14 +125,12 @@ pub const AsyncPoll = struct {
     }
 
     fn queue_timer(self: *AsyncPoll, task: usize, timespec: Timespec) !void {
-        _ = self;
-        _ = task;
-        _ = timespec;
-        @panic("TODO");
+        const current: usize = @intCast(std.time.milliTimestamp());
+        const seconds_to_ms: usize = @intCast(timespec.seconds * 1000);
+        const nanos_to_ms: usize = @divFloor(timespec.nanos, std.time.ns_per_ms);
+        const milliseconds: usize = current + seconds_to_ms + nanos_to_ms;
 
-        // TODO:
-        // probably just manually track and apply that poll timeout based on the
-        // shortest timeout value in here and adjust accordingly??
+        try self.timers.add(.{ .milliseconds = milliseconds, .task = task });
     }
 
     fn queue_accept(
@@ -203,8 +219,29 @@ pub const AsyncPoll = struct {
         const poll: *AsyncPoll = @ptrCast(@alignCast(self.runner));
         var reaped: usize = 0;
 
-        while (reaped == 0 and wait) {
-            const timeout: i32 = if (!wait or reaped > 0) 0 else -1;
+        poll_loop: while (reaped == 0 and wait) {
+            var timeout_task: ?usize = null;
+            const timeout: i32 = blk: {
+                while (true) {
+                    if (poll.timers.peek()) |peeked| {
+                        const current: usize = @intCast(std.time.milliTimestamp());
+                        if (peeked.milliseconds < current) {
+                            if (self.completions.len - reaped == 0) break :poll_loop;
+                            const timer = poll.timers.remove();
+                            self.completions[reaped] = .{
+                                .result = .none,
+                                .task = timer.task,
+                            };
+                            reaped += 1;
+                        } else {
+                            if (self.completions.len - reaped == 0) break :poll_loop;
+                            const timer = poll.timers.remove();
+                            timeout_task = timer.task;
+                            break :blk @intCast(timer.milliseconds - current);
+                        }
+                    } else if (!wait or reaped > 0) 0 else -1;
+                }
+            };
 
             var poll_result = if (comptime builtin.os.tag == .windows)
                 std.os.windows.poll(poll.fd_list.items.ptr, @intCast(poll.fd_list.items.len), timeout)
@@ -212,9 +249,21 @@ pub const AsyncPoll = struct {
                 try std.posix.poll(poll.fd_list.items, timeout);
 
             log.debug("poll result={d}", .{poll_result});
+            if (timeout_task) |task| {
+                self.completions[reaped] = .{
+                    .result = .none,
+                    .task = task,
+                };
+                reaped += 1;
+
+                // poll result can only return 0 IF it is a timer event.
+                if (poll_result == 0) continue :poll_loop;
+            }
+
             // poll result cant be 0 if you're waiting.
             // it can be if there are no fds :shrug:
-            assert(poll_result != 0 and wait or poll.fd_list.items.len == 0);
+            // but if there are no fds, we shouldn't be waiting :)
+            assert(poll_result != 0 and wait);
 
             var i: usize = 0;
             while (i < poll.fd_list.items.len) {
