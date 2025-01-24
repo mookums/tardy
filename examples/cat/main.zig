@@ -10,7 +10,7 @@ const Cross = @import("tardy").Cross;
 const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 
-pub const std_options = .{ .log_level = .warn };
+pub const std_options = .{ .log_level = .err };
 
 const EntryParams = struct {
     file_name: [:0]const u8,
@@ -70,7 +70,7 @@ pub fn main() !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try rt.spawn(.{ rt, p }, main_frame, 1024 * 64);
+                try rt.spawn(.{ rt, p }, main_frame, 1024 * 1024 * 4);
             }
         }.start,
         {},

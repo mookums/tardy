@@ -45,7 +45,7 @@ pub fn main() !void {
         file_name,
         struct {
             fn init(rt: *Runtime, path: [:0]const u8) !void {
-                try rt.spawn(.{ rt, path }, main_frame, 1024 * 32);
+                try rt.spawn(.{ rt, path }, main_frame, 1024 * 1024 * 2);
             }
         }.init,
         {},

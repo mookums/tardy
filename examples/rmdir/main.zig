@@ -42,7 +42,7 @@ pub fn main() !void {
         tree_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                try rt.spawn(.{ rt, name }, main_frame, 1024 * 128);
+                try rt.spawn(.{ rt, name }, main_frame, 1024 * 1024 * 2);
             }
         }.start,
         {},

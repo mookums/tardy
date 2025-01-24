@@ -166,7 +166,6 @@ pub const File = struct {
 
             return try result.unwrap();
         } else {
-            log.debug("rt aio doesnt have open...", .{});
             const std_flags: StdFile.OpenFlags = .{
                 .mode = switch (flags.mode) {
                     .read => .read_only,
