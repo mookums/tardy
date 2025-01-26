@@ -9,11 +9,10 @@ pub const Frame = @import("frame/lib.zig").Frame;
 
 pub const Runtime = @import("runtime/lib.zig").Runtime;
 pub const Task = @import("runtime/task.zig").Task;
-pub const Broadcast = @import("runtime/broadcast.zig").Broadcast;
-pub const Channel = @import("runtime/channel.zig").Channel;
+
+pub const Spsc = @import("channel/spsc.zig").Spsc;
 
 pub const Timer = @import("runtime/timer.zig").Timer;
-
 pub const File = @import("fs/lib.zig").File;
 pub const Dir = @import("fs/lib.zig").Dir;
 pub const Path = @import("fs/lib.zig").Path;
@@ -90,8 +89,8 @@ const TardyOptions = struct {
     /// Maximum number of aio completions we can reap
     /// with a single call of reap().
     ///
-    /// Default: 256
-    size_aio_reap_max: usize = 256,
+    /// Default: 1024
+    size_aio_reap_max: usize = 1024,
 };
 
 pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
@@ -162,16 +161,8 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
         /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
         pub fn entry(
             self: *Self,
-            init_params: anytype,
-            comptime init_func: *const fn (
-                *Runtime,
-                @TypeOf(init_params),
-            ) anyerror!void,
-            deinit_params: anytype,
-            comptime deinit_func: *const fn (
-                *Runtime,
-                @TypeOf(deinit_params),
-            ) anyerror!void,
+            entry_params: anytype,
+            comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
         ) !void {
             const runtime_count: usize = switch (self.options.threading) {
                 .single => 1,
@@ -215,8 +206,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                         tardy: *Self,
                         options: TardyOptions,
                         parent: *AsyncIO,
-                        init_parameters: @TypeOf(init_params),
-                        deinit_parameters: @TypeOf(deinit_params),
+                        entry_parameters: @TypeOf(entry_params),
                         count: *Atomic(usize),
                         total_count: usize,
                         current_id: usize,
@@ -232,16 +222,21 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                         _ = count.fetchAdd(1, .release);
                         while (count.load(.acquire) < total_count) {}
 
-                        @call(.auto, init_func, .{ &thread_rt, init_parameters }) catch return;
-                        defer @call(.auto, deinit_func, .{ &thread_rt, deinit_parameters }) catch unreachable;
-                        thread_rt.run() catch return;
+                        @call(.auto, entry_func, .{ &thread_rt, entry_parameters }) catch |e| {
+                            log.err("{d} - entry error={}", .{ thread_rt.id, e });
+                            thread_rt.stop();
+                        };
+
+                        thread_rt.run() catch |e| {
+                            log.err("{d} - runtime error={}", .{ thread_rt.id, e });
+                            return;
+                        };
                     }
                 }.thread_init, .{
                     self,
                     self.options,
                     &runtime.aio,
-                    init_params,
-                    deinit_params,
+                    entry_params,
                     &spawned_count,
                     spawning_count,
                     current_index,
@@ -253,9 +248,11 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
             while (spawned_count.load(.acquire) < spawning_count) {}
             log.debug("all runtimes spawned, initalizing...", .{});
 
-            try @call(.auto, init_func, .{ &runtime, init_params });
-            defer @call(.auto, deinit_func, .{ &runtime, deinit_params }) catch unreachable;
-            try runtime.run();
+            @call(.auto, entry_func, .{ &runtime, entry_params }) catch |e| {
+                log.err("0 - entry error={}", .{e});
+                runtime.stop();
+            };
+            runtime.run() catch |e| log.err("0 - runtime error={}", .{e});
         }
 
         /// This spawns in and enters into the runtime
@@ -263,30 +260,17 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
         /// execute even after the runtime spawns.
         pub fn entry_in_new_thread(
             self: *Self,
-            init_params: anytype,
-            comptime init_func: *const fn (
+            entry_params: anytype,
+            comptime entry_func: *const fn (
                 *Runtime,
-                @TypeOf(init_params),
-            ) anyerror!void,
-            deinit_params: anytype,
-            comptime deinit_func: *const fn (
-                *Runtime,
-                @TypeOf(deinit_params),
+                @TypeOf(entry_params),
             ) anyerror!void,
         ) !void {
             const handle = try std.Thread.spawn(.{}, struct {
-                fn entry_in_new_thread(
-                    tardy: *Self,
-                    ip: @TypeOf(init_params),
-                    dp: @TypeOf(deinit_params),
-                ) void {
-                    tardy.entry(ip, init_func, dp, deinit_func) catch unreachable;
+                fn entry_in_new_thread(tardy: *Self, ip: @TypeOf(entry_params)) void {
+                    tardy.entry(ip, entry_func) catch unreachable;
                 }
-            }.entry_in_new_thread, .{
-                self,
-                init_params,
-                deinit_params,
-            });
+            }.entry_in_new_thread, .{ self, entry_params });
             handle.detach();
         }
     };

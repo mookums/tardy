@@ -7,11 +7,14 @@ const Frame = @import("../frame/lib.zig").Frame;
 
 const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
+const Queue = @import("../core/queue.zig").Queue;
 
 const wrap = @import("../utils.zig").wrap;
 const unwrap = @import("../utils.zig").unwrap;
 
 pub const AsyncSubmission = @import("../aio/lib.zig").AsyncSubmission;
+
+const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBitSet;
 
 const TaskWithJob = struct {
     task: Task,
@@ -21,56 +24,82 @@ const TaskWithJob = struct {
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     tasks: Pool(Task),
-    runnable: std.DynamicBitSetUnmanaged,
+    runnable: usize,
     released: std.ArrayListUnmanaged(usize),
+    triggers: AtomicDynamicBitSet,
 
     pub fn init(allocator: std.mem.Allocator, size: usize, pooling: PoolKind) !Scheduler {
+        var tasks = try Pool(Task).init(allocator, size, pooling);
+        errdefer tasks.deinit();
+
+        var released = try std.ArrayListUnmanaged(usize).initCapacity(allocator, size);
+        errdefer released.deinit(allocator);
+
+        const triggers = try AtomicDynamicBitSet.init(allocator, size, false);
+        errdefer triggers.deinit(allocator);
+
         return .{
             .allocator = allocator,
-            .tasks = try Pool(Task).init(allocator, size, pooling),
-            .runnable = try std.DynamicBitSetUnmanaged.initEmpty(allocator, size),
-            .released = try std.ArrayListUnmanaged(usize).initCapacity(allocator, size),
+            .tasks = tasks,
+            .runnable = 0,
+            .released = released,
+            .triggers = triggers,
         };
     }
 
     pub fn deinit(self: *Scheduler) void {
         self.tasks.deinit();
-        self.runnable.deinit(self.allocator);
         self.released.deinit(self.allocator);
+        self.triggers.deinit(self.allocator);
     }
 
     pub fn set_runnable(self: *Scheduler, index: usize) !void {
-        // Resizes the runnable if the underlying task has changed size
-        if (self.tasks.kind == .grow and self.runnable.bit_length != self.tasks.items.len) {
-            const new_size = self.tasks.items.len;
-            try self.runnable.resize(self.allocator, new_size, false);
-        }
-
-        assert(!self.runnable.isSet(index));
-        const task: *Task = &self.tasks.items[index];
+        const task = self.tasks.get_ptr(index);
+        assert(task.state != .runnable);
         task.state = .runnable;
-        self.runnable.set(index);
+        self.runnable += 1;
     }
 
+    // This is only safe to call from the Runtime that the Frame is running on.
+    pub fn trigger_await(self: *Scheduler) !void {
+        const rt: *Runtime = @fieldParentPtr("scheduler", self);
+        const index = rt.current_task.?;
+        const task = self.tasks.get_ptr(index);
+
+        // To waiting...
+        task.state = .wait_for_trigger;
+        self.runnable -= 1;
+
+        Frame.yield();
+    }
+
+    // NOTE: This can spuriously trigger a Task later in the Run Loop.
+    //
+    // This is because we can't check on the task.state since it isn't protected so we
+    // send a trigger through anyways and check later when we know access will be protected.
+    pub fn trigger(self: *Scheduler, index: usize) !void {
+        if (index > self.triggers.get_bit_length()) {
+            try self.triggers.resize(self.allocator, self.tasks.items.len, false);
+        }
+        self.triggers.set(index);
+    }
+
+    // This is only safe to call from the Runtime that the Frame is running on.
     pub fn io_await(self: *Scheduler, job: AsyncSubmission) !void {
         const rt: *Runtime = @fieldParentPtr("scheduler", self);
         const index = rt.current_task.?;
-
         const task = self.tasks.get_ptr(index);
-        // Return to the waiting state.
+
+        // To waiting...
         task.state = .wait_for_io;
-        self.runnable.unset(index);
+        self.runnable -= 1;
+
         // Queue the related I/O job.
         try rt.aio.queue_job(index, job);
         Frame.yield();
     }
 
-    pub fn spawn(
-        self: *Scheduler,
-        frame_ctx: anytype,
-        comptime frame_fn: anytype,
-        stack_size: usize,
-    ) !void {
+    pub fn spawn(self: *Scheduler, frame_ctx: anytype, comptime frame_fn: anytype, stack_size: usize) !void {
         const index = blk: {
             if (self.released.popOrNull()) |index| {
                 break :blk self.tasks.borrow_assume_unset(index);
@@ -81,12 +110,7 @@ pub const Scheduler = struct {
 
         const frame = try Frame.init(self.allocator, stack_size, frame_ctx, frame_fn);
 
-        const item: Task = .{
-            .index = index,
-            .frame = frame,
-            .state = .runnable,
-        };
-
+        const item: Task = .{ .index = index, .frame = frame, .state = .dead };
         const item_ptr = self.tasks.get_ptr(index);
         item_ptr.* = item;
         try self.set_runnable(index);
@@ -94,8 +118,10 @@ pub const Scheduler = struct {
 
     pub fn release(self: *Scheduler, index: usize) !void {
         // must be runnable to set?
-        assert(self.runnable.isSet(index));
-        self.runnable.unset(index);
+        const task = self.tasks.get_ptr(index);
+        assert(task.state == .runnable);
+        task.state = .dead;
+        self.runnable -= 1;
 
         self.tasks.release(index);
         try self.released.append(self.allocator, index);

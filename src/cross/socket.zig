@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const os = builtin.os.tag;
 
+const Timespec = @import("../lib.zig").Timespec;
+
 /// Invalid `socket_t`.
 pub const INVALID_SOCKET = if (os == .windows) std.os.windows.ws2_32.INVALID_SOCKET else -1;
 
@@ -35,7 +37,7 @@ pub fn to_nonblock(socket: std.posix.socket_t) !void {
 }
 
 pub fn disable_nagle(socket: std.posix.socket_t) !void {
-    if (comptime os.isDarwin() or os.isBSD()) {
+    if (comptime os.isBSD()) {
         // system.TCP is weird on MacOS.
         try std.posix.setsockopt(
             socket,

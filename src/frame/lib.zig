@@ -110,7 +110,7 @@ pub const Frame = extern struct {
         return frame;
     }
 
-    pub fn deinit(self: Frame, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *const Frame, allocator: std.mem.Allocator) void {
         const stack = self.stack_ptr[0..self.stack_len];
         allocator.free(stack);
     }

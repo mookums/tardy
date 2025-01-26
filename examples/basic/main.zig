@@ -35,9 +35,5 @@ pub fn main() !void {
                 try rt.spawn(.{rt}, log_frame, 1024 * 16);
             }
         }.init,
-        {},
-        struct {
-            fn deinit(_: *Runtime, _: void) !void {}
-        }.deinit,
     );
 }

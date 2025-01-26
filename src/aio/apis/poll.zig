@@ -82,10 +82,13 @@ pub const AsyncPoll = struct {
         errdefer fd_job_map.deinit();
         try fd_job_map.ensureTotalCapacity(@intCast(size));
 
-        if (comptime builtin.os.tag == .windows)
-            try fd_list.append(.{ .fd = @ptrCast(pipe[0]), .events = std.posix.POLL.IN, .revents = 0 })
-        else
+        if (comptime builtin.os.tag == .windows) {
+            try fd_list.append(.{ .fd = @ptrCast(pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
+            try fd_job_map.put(@ptrCast(pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
+        } else {
             try fd_list.append(.{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
+            try fd_job_map.put(pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
+        }
 
         const timers = TimerQueue.init(allocator, {});
         errdefer timers.deinit();
@@ -122,6 +125,16 @@ pub const AsyncPoll = struct {
             .send => |inner| queue_send(poll, task, inner.socket, inner.buffer),
             .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
         };
+    }
+
+    fn queue_wake(self: *AsyncPoll) !void {
+        if (comptime builtin.os.tag == .windows) {
+            try self.fd_list.append(.{ .fd = @ptrCast(self.wake_pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
+            try self.fd_job_map.put(@ptrCast(self.wake_pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
+        } else {
+            try self.fd_list.append(.{ .fd = self.wake_pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
+            try self.fd_job_map.put(self.wake_pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
+        }
     }
 
     fn queue_timer(self: *AsyncPoll, task: usize, timespec: Timespec) !void {
@@ -239,7 +252,7 @@ pub const AsyncPoll = struct {
                             timeout_task = timer.task;
                             break :blk @intCast(timer.milliseconds - current);
                         }
-                    } else if (!wait or reaped > 0) 0 else -1;
+                    } else break :blk if (!wait or reaped > 0) 0 else -1;
                 }
             };
 
@@ -279,6 +292,7 @@ pub const AsyncPoll = struct {
                 const job = poll.fd_job_map.getPtr(pollfd.fd) orelse {
                     @panic("failed to get job from fd!");
                 };
+
                 defer {
                     poll_result -= 1;
                     _ = poll.fd_list.swapRemove(i);
@@ -289,6 +303,8 @@ pub const AsyncPoll = struct {
                 log.debug("revents={x}", .{pollfd.revents});
                 const result: Result = result: {
                     switch (job.type) {
+                        // TODO: fix wake on Poll.
+                        // It ends up doing some weird index stuff.
                         .wake => {
                             assert(pollfd.revents & std.posix.POLL.IN != 0);
                             var buf: [8]u8 = undefined;
@@ -375,13 +391,14 @@ pub const AsyncPoll = struct {
                         },
                         .send => |inner| {
                             if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
-                                .send = .{ .err = SendError.ConnectionReset },
+                                .send = .{ .err = SendError.Closed },
                             };
 
                             assert(pollfd.revents & std.posix.POLL.OUT != 0);
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
+                                    std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
                                     else => SendError.Unexpected,
                                 };
 

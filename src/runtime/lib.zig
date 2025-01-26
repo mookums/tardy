@@ -7,10 +7,10 @@ const AsyncIO = @import("../aio/lib.zig").AsyncIO;
 const Scheduler = @import("./scheduler.zig").Scheduler;
 
 const PoolKind = @import("../core/pool.zig").PoolKind;
+const Queue = @import("../core/queue.zig").Queue;
 
 const Task = @import("task.zig").Task;
 const Storage = @import("storage.zig").Storage;
-
 const Timespec = @import("../lib.zig").Timespec;
 
 const RuntimeOptions = struct {
@@ -29,7 +29,8 @@ pub const Runtime = struct {
     aio: AsyncIO,
     id: usize,
     running: bool = true,
-    // The currently running Task.
+
+    // The currently running Task's index.
     current_task: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator, aio: AsyncIO, options: RuntimeOptions) !Runtime {
@@ -61,6 +62,17 @@ pub const Runtime = struct {
         try self.aio.wake();
     }
 
+    /// Is the runtime asleep?
+    pub inline fn asleep(self: *Runtime) bool {
+        return self.aio.asleep.load(.acquire);
+    }
+
+    /// Trigger a waiting Task.
+    pub fn trigger(self: *Runtime, index: usize) !void {
+        try self.scheduler.trigger(index);
+        if (self.asleep()) try self.wake();
+    }
+
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
     pub fn spawn(
         self: *Runtime,
@@ -71,13 +83,9 @@ pub const Runtime = struct {
         try self.scheduler.spawn(frame_ctx, frame_fn, stack_size);
     }
 
-    /// Is the runtime asleep?
-    pub inline fn asleep(self: *Runtime) bool {
-        return self.aio.asleep.load(.acquire);
-    }
-
     pub fn stop(self: *Runtime) void {
         self.running = false;
+        self.wake() catch unreachable;
     }
 
     fn run_task(self: *Runtime, task: *Task) !void {
@@ -95,9 +103,6 @@ pub const Runtime = struct {
                 const inner_task = self.scheduler.tasks.get_ptr(index);
 
                 // If the frame is done, clean it up.
-                inner_task.state = .dead;
-
-                // task index is somehow invalid here?
                 try self.scheduler.release(inner_task.index);
 
                 // frees the heap-allocated stack.
@@ -109,7 +114,6 @@ pub const Runtime = struct {
             },
             .errored => {
                 log.warn("cleaning up failed frame...", .{});
-                task.state = .dead;
                 try self.scheduler.release(task.index);
                 frame.deinit(self.allocator);
             },
@@ -119,43 +123,61 @@ pub const Runtime = struct {
     pub fn run(self: *Runtime) !void {
         while (true) {
             var force_woken = false;
+
+            // Processing Section
             var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
-                log.debug("running index={d}", .{index});
-                const task: *Task = &self.scheduler.tasks.items[index];
+                log.debug("{d} - processing index={d}", .{ self.id, index });
+                const task = self.scheduler.tasks.get_ptr(index);
                 switch (task.state) {
-                    .channel => unreachable,
-                    .runnable => try self.run_task(task),
+                    .runnable => {
+                        log.debug("{d} - running index={d}", .{ self.id, index });
+                        try self.run_task(task);
+                        self.current_task = null;
+                    },
+                    .wait_for_trigger => if (self.scheduler.triggers.is_set(index)) {
+                        log.debug("{d} - trigger={d} | state={s}", .{
+                            self.id,
+                            index,
+                            @tagName(task.state),
+                        });
+                        try self.scheduler.set_runnable(index);
+                    },
                     else => continue,
                 }
-                self.current_task = null;
             }
 
+            self.scheduler.triggers.unset_all();
             if (!self.running) break;
+
+            // I/O Section
             try self.aio.submit();
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
             //
             // Also don't wait for I/O if we have no tasks ready.
-            const wait_for_io = self.scheduler.runnable.count() == 0 and !self.scheduler.tasks.empty();
-            log.debug("Wait for I/O: {}", .{wait_for_io});
+            const wait_for_io = self.scheduler.runnable == 0 and !self.scheduler.tasks.empty();
+            log.debug("{d} - Wait for I/O: {}", .{ self.id, wait_for_io });
 
             const completions = try self.aio.reap(wait_for_io);
             for (completions) |completion| {
                 if (completion.result == .wake) {
+                    assert(force_woken == false);
                     force_woken = true;
+                    if (!self.running) return;
                     continue;
                 }
 
                 const index = completion.task;
-                const task = &self.scheduler.tasks.items[index];
+                log.debug("{d} - completion={d}", .{ self.id, index });
+                const task = self.scheduler.tasks.get_ptr(index);
                 assert(task.state == .wait_for_io);
                 task.result = completion.result;
                 try self.scheduler.set_runnable(index);
             }
 
-            if (self.scheduler.runnable.count() == 0 and !force_woken) {
+            if (self.scheduler.runnable == 0 and !force_woken) {
                 log.warn("no more runnable tasks", .{});
                 break;
             }

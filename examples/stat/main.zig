@@ -48,9 +48,5 @@ pub fn main() !void {
                 try rt.spawn(.{ rt, path }, main_frame, 1024 * 1024 * 2);
             }
         }.init,
-        {},
-        struct {
-            fn deinit(_: *Runtime, _: void) !void {}
-        }.deinit,
     );
 }

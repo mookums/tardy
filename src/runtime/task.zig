@@ -8,11 +8,8 @@ const Result = @import("../aio/completion.zig").Result;
 
 pub const Task = struct {
     pub const State = union(enum) {
-        channel: struct {
-            check: *const fn (*anyopaque) bool,
-            gen: *const fn (*anyopaque) ?*anyopaque,
-            ctx: *anyopaque,
-        },
+        /// Waiting for a Runtime Trigger.
+        wait_for_trigger,
         /// Waiting for an Async I/O Event.
         wait_for_io,
         /// Immediately Runnable.

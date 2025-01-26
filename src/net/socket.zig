@@ -71,27 +71,29 @@ pub const Socket = struct {
             protocol,
         );
 
-        if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEPORT_LB,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
-        } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEPORT,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
-        } else {
-            try std.posix.setsockopt(
-                socket,
-                std.posix.SOL.SOCKET,
-                std.posix.SO.REUSEADDR,
-                &std.mem.toBytes(@as(c_int, 1)),
-            );
+        if (kind != .unix) {
+            if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
+                try std.posix.setsockopt(
+                    socket,
+                    std.posix.SOL.SOCKET,
+                    std.posix.SO.REUSEPORT_LB,
+                    &std.mem.toBytes(@as(c_int, 1)),
+                );
+            } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
+                try std.posix.setsockopt(
+                    socket,
+                    std.posix.SOL.SOCKET,
+                    std.posix.SO.REUSEPORT,
+                    &std.mem.toBytes(@as(c_int, 1)),
+                );
+            } else {
+                try std.posix.setsockopt(
+                    socket,
+                    std.posix.SOL.SOCKET,
+                    std.posix.SO.REUSEADDR,
+                    &std.mem.toBytes(@as(c_int, 1)),
+                );
+            }
         }
 
         return .{ .handle = socket, .addr = addr, .kind = kind };
@@ -216,7 +218,7 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.recv(rt, buffer[length..]) catch |e| switch (e) {
-                error.Closed => return length,
+                RecvError.Closed => return length,
                 else => return e,
             };
 
@@ -240,7 +242,7 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count = std.posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
-                std.posix.SendError.ConnectionResetByPeer => SendError.ConnectionReset,
+                std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
                 else => SendError.Unexpected,
             };
 
@@ -253,7 +255,7 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.send(rt, buffer[length..]) catch |e| switch (e) {
-                error.ConnectionReset => return length,
+                SendError.Closed => return length,
                 else => return e,
             };
             length += result;

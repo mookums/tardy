@@ -19,9 +19,10 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     var prng = std.Random.DefaultPrng.init(shared_params.seed);
     const rand = prng.random();
 
-    const chain_count = shared_params.size_tasks_initial * rand.intRangeLessThan(usize, 1, 3);
+    const chain_count = shared_params.size_tasks_initial * rand.intRangeAtMost(usize, 1, 2);
     file_chain_counter = chain_count;
 
+    log.info("creating file chains... ({d})", .{chain_count});
     for (0..chain_count) |i| {
         var prng2 = std.Random.DefaultPrng.init(shared_params.seed + i);
         const rand2 = prng2.random();
@@ -42,7 +43,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
             rt.allocator,
             sub_chain,
             .{ .rel = .{ .dir = new_dir.handle, .path = subpath } },
-            rand2.intRangeLessThan(usize, 1, 8 * 1024),
+            rand2.intRangeLessThan(usize, 1, 64),
         );
         errdefer chain_ptr.deinit();
 

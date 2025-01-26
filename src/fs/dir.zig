@@ -32,7 +32,7 @@ const StatError = @import("../aio/completion.zig").StatError;
 
 const StdDir = std.fs.Dir;
 
-pub const Dir = struct {
+pub const Dir = packed struct {
     handle: std.posix.fd_t,
 
     /// Create a std.fs.Dir from a Dir.

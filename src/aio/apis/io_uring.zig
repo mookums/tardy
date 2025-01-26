@@ -503,9 +503,7 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) {
-            i += try std.posix.write(uring.wake_event_fd, bytes);
-        }
+        while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
     }
 
     fn submit(self: *AsyncIO) !void {
@@ -521,9 +519,9 @@ pub const AsyncIoUring = struct {
         const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
 
         for (uring.cqes[0..count], 0..) |cqe, i| {
-            const job_with_data: *JobBundle = uring.jobs.get_ptr(cqe.user_data);
+            var job_with_data: JobBundle = uring.jobs.get(cqe.user_data);
             const job: *Job = &job_with_data.job;
-            defer uring.jobs.release(job.index);
+            uring.jobs.release(job.index);
 
             const result: Result = blk: {
                 if (cqe.res < 0) {
@@ -613,6 +611,7 @@ pub const AsyncIoUring = struct {
                             break :result switch (e) {
                                 LinuxError.AGAIN => .{ .err = RecvError.WouldBlock },
                                 LinuxError.BADF => .{ .err = RecvError.InvalidFd },
+                                LinuxError.CONNRESET => .{ .err = RecvError.Closed },
                                 LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
                                 LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
                                 LinuxError.INTR => .{ .err = RecvError.Interrupted },
@@ -636,7 +635,7 @@ pub const AsyncIoUring = struct {
                                 LinuxError.AGAIN => .{ .err = SendError.WouldBlock },
                                 LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
                                 LinuxError.BADF => .{ .err = SendError.InvalidFd },
-                                LinuxError.CONNRESET => .{ .err = SendError.ConnectionReset },
+                                LinuxError.CONNRESET => .{ .err = SendError.Closed },
                                 LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
                                 LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
                                 LinuxError.INTR => .{ .err = SendError.Interrupted },

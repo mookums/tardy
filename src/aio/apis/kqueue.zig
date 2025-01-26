@@ -458,7 +458,7 @@ pub const AsyncKqueue = struct {
                                     PosixError.ACCES => .{ .err = SendError.AccessDenied },
                                     PosixError.ALREADY => .{ .err = SendError.OpenInProgress },
                                     PosixError.BADF => .{ .err = SendError.InvalidFd },
-                                    PosixError.CONNRESET => .{ .err = SendError.ConnectionReset },
+                                    PosixError.CONNRESET => .{ .err = SendError.Closed },
                                     PosixError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
                                     PosixError.FAULT => .{ .err = SendError.InvalidAddress },
                                     PosixError.INTR => .{ .err = SendError.Interrupted },

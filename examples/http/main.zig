@@ -23,7 +23,7 @@ fn main_frame(rt: *Runtime, server: *const Socket) !void {
 
     log.debug(
         "{d} - accepted socket [{}]",
-        .{ std.time.milliTimestamp(), socket.addr.in },
+        .{ std.time.milliTimestamp(), socket.addr },
     );
 
     // spawn off a new frame.
@@ -74,9 +74,5 @@ pub fn main() !void {
                 try rt.spawn(.{ rt, tcp_server }, main_frame, STACK_SIZE);
             }
         }.start,
-        {},
-        struct {
-            fn end(_: *Runtime, _: void) !void {}
-        }.end,
     );
 }

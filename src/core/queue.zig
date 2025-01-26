@@ -24,13 +24,13 @@ pub fn Queue(comptime T: type) type {
             self.items.append(node);
         }
 
-        pub fn pop(self: *Self) !?T {
+        pub fn pop(self: *Self) ?T {
             const node = self.items.popFirst() orelse return null;
             defer self.allocator.destroy(node);
             return node.data;
         }
 
-        pub fn pop_assert(self: *Self) !T {
+        pub fn pop_assert(self: *Self) T {
             const node = self.items.popFirst().?;
             defer self.allocator.destroy(node);
             return node.data;

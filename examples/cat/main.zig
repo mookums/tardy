@@ -73,9 +73,5 @@ pub fn main() !void {
                 try rt.spawn(.{ rt, p }, main_frame, 1024 * 1024 * 4);
             }
         }.start,
-        {},
-        struct {
-            fn end(_: *Runtime, _: void) !void {}
-        }.end,
     );
 }

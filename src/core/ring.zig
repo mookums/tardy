@@ -35,14 +35,21 @@ pub fn Ring(comptime T: type) type {
             return self.count == 0;
         }
 
-        pub fn send(self: *Self, message: T) !void {
+        pub fn push(self: *Self, message: T) !void {
             if (self.full()) return error.RingFull;
             self.items[self.write_index] = message;
             self.write_index = (self.write_index + 1) % self.items.len;
             self.count += 1;
         }
 
-        pub fn recv(self: *Self) !T {
+        pub fn push_assert(self: *Self, message: T) void {
+            assert(!self.full());
+            self.items[self.write_index] = message;
+            self.write_index = (self.write_index + 1) % self.items.len;
+            self.count += 1;
+        }
+
+        pub fn pop(self: *Self) !T {
             if (self.empty()) return error.RingEmpty;
             const message = self.items[self.read_index];
             self.read_index = (self.read_index + 1) % self.items.len;
@@ -50,7 +57,15 @@ pub fn Ring(comptime T: type) type {
             return message;
         }
 
-        pub fn recv_ptr(self: *Self) !*T {
+        pub fn pop_assert(self: *Self) T {
+            assert(!self.empty());
+            const message = self.items[self.read_index];
+            self.read_index = (self.read_index + 1) % self.items.len;
+            self.count -= 1;
+            return message;
+        }
+
+        pub fn pop_ptr(self: *Self) !*T {
             if (self.empty()) return error.RingEmpty;
             const message = &self.items[self.read_index];
             self.read_index = (self.read_index + 1) % self.items.len;
@@ -69,11 +84,11 @@ test "Ring Send and Recv" {
 
     for (0..size) |i| {
         for (0..i) |j| {
-            try ring.send(j);
+            try ring.push(j);
         }
 
         for (0..i) |j| {
-            try testing.expectEqual(j, try ring.recv());
+            try testing.expectEqual(j, try ring.pop());
         }
     }
 }

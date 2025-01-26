@@ -75,7 +75,7 @@ pub const SendError = error{
     WouldBlock,
     OpenInProgress,
     InvalidFd,
-    ConnectionReset,
+    Closed,
     NoDestinationAddress,
     InvalidAddress,
     Interrupted,

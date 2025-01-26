@@ -26,7 +26,7 @@ const wrap = @import("../utils.zig").wrap;
 const StdFile = std.fs.File;
 const StdDir = std.fs.Dir;
 
-pub const File = struct {
+pub const File = packed struct {
     handle: std.posix.fd_t,
 
     pub const CreateFlags = struct {

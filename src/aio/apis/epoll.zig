@@ -323,155 +323,105 @@ pub const AsyncEpoll = struct {
                         .accept => |*inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
 
-                            const rc = std.os.linux.accept4(
-                                inner.socket,
-                                &inner.addr.any,
-                                @ptrCast(&inner.addr_len),
-                                0,
-                            );
-
                             const result: AcceptResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{
-                                        .actual = .{
-                                            .handle = @intCast(rc),
-                                            .addr = inner.addr,
-                                            .kind = inner.kind,
-                                        },
-                                    },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue;
-                                    },
-                                    LinuxError.BADF => .{ .err = AcceptError.InvalidFd },
-                                    LinuxError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
-                                    LinuxError.FAULT => .{ .err = AcceptError.InvalidAddress },
-                                    LinuxError.INTR => .{ .err = AcceptError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = AcceptError.NotListening },
-                                    LinuxError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                                    LinuxError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
-                                    LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = AcceptError.OutOfMemory },
-                                    LinuxError.NOTSOCK => .{ .err = AcceptError.NotASocket },
-                                    LinuxError.OPNOTSUPP => .{ .err = AcceptError.OperationNotSupported },
-                                    else => .{ .err = AcceptError.Unexpected },
+                                const handle = std.posix.accept(
+                                    inner.socket,
+                                    &inner.addr.any,
+                                    @ptrCast(&inner.addr_len),
+                                    0,
+                                ) catch |e| {
+                                    const err = switch (e) {
+                                        std.posix.AcceptError.WouldBlock => unreachable,
+                                        else => AcceptError.Unexpected,
+                                    };
+
+                                    break :result .{ .err = err };
                                 };
+
+                                break :result .{ .actual = .{
+                                    .handle = handle,
+                                    .addr = inner.addr,
+                                    .kind = inner.kind,
+                                } };
                             };
 
                             break :blk .{ .accept = result };
                         },
                         .connect => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const rc = std.os.linux.connect(
-                                inner.socket,
-                                &inner.addr.any,
-                                inner.addr.getOsSockLen(),
-                            );
 
                             const result: ConnectResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{
-                                        .actual = .{
-                                            .handle = inner.socket,
-                                            .addr = inner.addr,
-                                            .kind = inner.kind,
-                                        },
-                                    },
-                                    LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => {
-                                        job_complete = false;
-                                        continue;
-                                    },
-                                    LinuxError.ACCES, LinuxError.PERM => .{ .err = ConnectError.AccessDenied },
-                                    LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
-                                    LinuxError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
-                                    LinuxError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
-                                    LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
-                                    LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
-                                    LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
-                                    LinuxError.INTR => .{ .err = ConnectError.Interrupted },
-                                    LinuxError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
-                                    LinuxError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
-                                    LinuxError.NOTSOCK => .{ .err = ConnectError.NotASocket },
-                                    LinuxError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                    LinuxError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
-                                    else => .{ .err = ConnectError.Unexpected },
+                                std.posix.connect(
+                                    inner.socket,
+                                    &inner.addr.any,
+                                    inner.addr.getOsSockLen(),
+                                ) catch |e| {
+                                    const err = switch (e) {
+                                        std.posix.ConnectError.WouldBlock => unreachable,
+                                        else => ConnectError.Unexpected,
+                                    };
+
+                                    break :result .{ .err = err };
                                 };
+
+                                break :result .{ .actual = .{
+                                    .handle = inner.socket,
+                                    .addr = inner.addr,
+                                    .kind = inner.kind,
+                                } };
                             };
 
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
                             assert(event.events & std.os.linux.EPOLL.IN != 0);
-                            const rc = std.os.linux.recvfrom(
-                                inner.socket,
-                                inner.buffer.ptr,
-                                inner.buffer.len,
-                                0,
-                                null,
-                                null,
-                            );
 
                             const result: RecvResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => switch (rc) {
-                                        0 => .{ .err = RecvError.Closed },
-                                        else => .{ .actual = @intCast(rc) },
-                                    },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue;
-                                    },
-                                    LinuxError.BADF => .{ .err = RecvError.InvalidFd },
-                                    LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                                    LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
-                                    LinuxError.INTR => .{ .err = RecvError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = RecvError.InvalidArguments },
-                                    LinuxError.NOMEM => .{ .err = RecvError.OutOfMemory },
-                                    LinuxError.NOTCONN => .{ .err = RecvError.NotConnected },
-                                    LinuxError.NOTSOCK => .{ .err = RecvError.NotASocket },
-                                    else => .{ .err = RecvError.Unexpected },
+                                const length = std.posix.recv(
+                                    inner.socket,
+                                    inner.buffer,
+                                    0,
+                                ) catch |e| {
+                                    const err = switch (e) {
+                                        std.posix.RecvFromError.WouldBlock => unreachable,
+                                        std.posix.RecvFromError.SystemResources => RecvError.OutOfMemory,
+                                        std.posix.RecvFromError.SocketNotConnected => RecvError.NotConnected,
+                                        std.posix.RecvFromError.ConnectionRefused => RecvError.ConnectionRefused,
+                                        else => RecvError.Unexpected,
+                                    };
+
+                                    break :result .{ .err = err };
                                 };
+
+                                if (length == 0) break :result .{ .err = RecvError.Closed };
+                                break :result .{ .actual = length };
                             };
 
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
-                            const rc = std.os.linux.sendto(
-                                inner.socket,
-                                inner.buffer.ptr,
-                                inner.buffer.len,
-                                0,
-                                null,
-                                0,
-                            );
 
                             const result: SendResult = result: {
-                                const e: LinuxError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    LinuxError.SUCCESS => .{ .actual = @intCast(rc) },
-                                    LinuxError.AGAIN => {
-                                        job_complete = false;
-                                        continue;
-                                    },
-                                    LinuxError.ACCES => .{ .err = SendError.AccessDenied },
-                                    LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
-                                    LinuxError.BADF => .{ .err = SendError.InvalidFd },
-                                    LinuxError.CONNRESET => .{ .err = SendError.ConnectionReset },
-                                    LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
-                                    LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
-                                    LinuxError.INTR => .{ .err = SendError.Interrupted },
-                                    LinuxError.INVAL => .{ .err = SendError.InvalidArguments },
-                                    LinuxError.ISCONN => .{ .err = SendError.AlreadyConnected },
-                                    LinuxError.MSGSIZE => .{ .err = SendError.InvalidSize },
-                                    LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = SendError.OutOfMemory },
-                                    LinuxError.NOTCONN => .{ .err = SendError.NotConnected },
-                                    LinuxError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
-                                    LinuxError.PIPE => .{ .err = SendError.BrokenPipe },
-                                    else => .{ .err = SendError.Unexpected },
+                                const length = std.posix.send(
+                                    inner.socket,
+                                    inner.buffer,
+                                    0,
+                                ) catch |e| {
+                                    const err = switch (e) {
+                                        std.posix.SendError.WouldBlock => unreachable,
+                                        std.posix.SendError.AccessDenied => SendError.AccessDenied,
+                                        std.posix.SendError.SystemResources => SendError.OutOfMemory,
+                                        std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
+                                        std.posix.SendError.BrokenPipe => SendError.BrokenPipe,
+                                        std.posix.SendError.FastOpenAlreadyInProgress => SendError.OpenInProgress,
+                                        else => SendError.Unexpected,
+                                    };
+
+                                    break :result .{ .err = err };
                                 };
+
+                                break :result .{ .actual = length };
                             };
 
                             break :blk .{ .send = result };

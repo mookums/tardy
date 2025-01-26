@@ -69,9 +69,5 @@ pub fn main() !void {
                 try rt.spawn(.{ rt, tcp_server }, echo_frame, 1024 * 16);
             }
         }.start,
-        {},
-        struct {
-            fn end(_: *Runtime, _: void) !void {}
-        }.end,
     );
 }
