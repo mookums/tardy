@@ -127,16 +127,6 @@ pub const AsyncPoll = struct {
         };
     }
 
-    fn queue_wake(self: *AsyncPoll) !void {
-        if (comptime builtin.os.tag == .windows) {
-            try self.fd_list.append(.{ .fd = @ptrCast(self.wake_pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
-            try self.fd_job_map.put(@ptrCast(self.wake_pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
-        } else {
-            try self.fd_list.append(.{ .fd = self.wake_pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
-            try self.fd_job_map.put(self.wake_pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
-        }
-    }
-
     fn queue_timer(self: *AsyncPoll, task: usize, timespec: Timespec) !void {
         const current: usize = @intCast(std.time.milliTimestamp());
         const seconds_to_ms: usize = @intCast(timespec.seconds * 1000);
@@ -221,9 +211,7 @@ pub const AsyncPoll = struct {
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) {
-            i += try std.posix.write(poll.wake_pipe[1], bytes[i..]);
-        }
+        while (i < bytes.len) i += try std.posix.write(poll.wake_pipe[1], bytes[i..]);
     }
 
     pub fn submit(_: *AsyncIO) !void {}
@@ -235,9 +223,9 @@ pub const AsyncPoll = struct {
         poll_loop: while (reaped == 0 and wait) {
             var timeout_task: ?usize = null;
             const timeout: i32 = blk: {
+                const current: usize = @intCast(std.time.milliTimestamp());
                 while (true) {
                     if (poll.timers.peek()) |peeked| {
-                        const current: usize = @intCast(std.time.milliTimestamp());
                         if (peeked.milliseconds < current) {
                             if (self.completions.len - reaped == 0) break :poll_loop;
                             const timer = poll.timers.remove();
@@ -278,40 +266,41 @@ pub const AsyncPoll = struct {
             // but if there are no fds, we shouldn't be waiting :)
             assert(poll_result != 0 and wait);
 
-            var i: usize = 0;
-            while (i < poll.fd_list.items.len) {
-                var increment = true;
-                defer {
-                    if (increment) i += 1;
-                }
-
+            var i: usize = poll.fd_list.items.len;
+            while (i > 0) {
+                i -= 1;
                 const pollfd = poll.fd_list.items[i];
                 if (pollfd.revents == 0) continue;
                 if (self.completions.len - reaped == 0) break;
 
-                const job = poll.fd_job_map.getPtr(pollfd.fd) orelse {
+                var job = poll.fd_job_map.get(pollfd.fd) orelse {
                     @panic("failed to get job from fd!");
                 };
 
-                defer {
-                    poll_result -= 1;
-                    _ = poll.fd_list.swapRemove(i);
-                    assert(poll.fd_job_map.remove(pollfd.fd));
-                    increment = false;
-                }
+                poll_result -= 1;
+                _ = poll.fd_list.swapRemove(i);
+                assert(poll.fd_job_map.remove(pollfd.fd));
 
                 log.debug("revents={x}", .{pollfd.revents});
                 const result: Result = result: {
                     switch (job.type) {
-                        // TODO: fix wake on Poll.
-                        // It ends up doing some weird index stuff.
                         .wake => {
                             assert(pollfd.revents & std.posix.POLL.IN != 0);
+
                             var buf: [8]u8 = undefined;
                             _ = std.posix.read(poll.wake_pipe[0], &buf) catch unreachable;
-                            break :result .none;
+
+                            // requeue the wake request
+                            if (comptime builtin.os.tag == .windows) {
+                                try poll.fd_list.append(.{ .fd = @ptrCast(poll.wake_pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
+                                try poll.fd_job_map.put(@ptrCast(poll.wake_pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
+                            } else {
+                                try poll.fd_list.append(.{ .fd = poll.wake_pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
+                                try poll.fd_job_map.put(poll.wake_pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
+                            }
+
+                            break :result .wake;
                         },
-                        .timer => break :result .none,
                         .accept => |*inner| {
                             assert(pollfd.revents & std.posix.POLL.IN != 0);
 
@@ -407,6 +396,7 @@ pub const AsyncPoll = struct {
 
                             break :result .{ .send = .{ .actual = count } };
                         },
+                        .timer,
                         .open,
                         .delete,
                         .mkdir,

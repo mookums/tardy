@@ -5,6 +5,7 @@ const Atomic = std.atomic.Value;
 pub const AtomicDynamicBitSet = struct {
     words: []Atomic(usize),
     lock: std.Thread.RwLock,
+    /// Not safe to access. Use `get_bit_length`.
     bit_length: usize,
 
     pub fn init(allocator: std.mem.Allocator, size: usize, default: bool) !AtomicDynamicBitSet {
