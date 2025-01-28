@@ -13,6 +13,7 @@ const Path = @import("../../fs/lib.zig").Path;
 const AsyncIO = @import("../lib.zig").AsyncIO;
 const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
 
+const Cross = @import("../../cross/lib.zig");
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 const Socket = @import("../../net/lib.zig").Socket;
@@ -81,7 +82,6 @@ pub const AsyncIoUring = struct {
     // Currently, the batch size is predetermined.
     // You basically define how large you want your batches to be.
     cqes: []std.os.linux.io_uring_cqe,
-
     jobs: Pool(JobBundle),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
@@ -159,9 +159,11 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
+        std.posix.close(self.wake_event_fd);
+        self.wake_event_fd = Cross.fd.INVALID_FD;
+
         self.inner.deinit();
         self.jobs.deinit();
-        std.posix.close(self.wake_event_fd);
         allocator.free(self.wake_event_buffer);
         allocator.free(self.cqes);
         allocator.destroy(self.inner);
@@ -169,7 +171,6 @@ pub const AsyncIoUring = struct {
 
     fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-
         self.mutex.lock();
         defer self.mutex.unlock();
         uring.inner_deinit(allocator);
@@ -484,6 +485,8 @@ pub const AsyncIoUring = struct {
     }
 
     inline fn queue_wake(self: *AsyncIoUring) !void {
+        if (self.wake_event_fd == Cross.fd.INVALID_FD) return;
+
         const index = try self.jobs.borrow();
         errdefer self.jobs.release(index);
 
@@ -505,10 +508,11 @@ pub const AsyncIoUring = struct {
     fn wake(self: *AsyncIO) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const bytes: []const u8 = "00000000";
-        var i: usize = 0;
 
         self.mutex.lock();
         defer self.mutex.unlock();
+        if (uring.wake_event_fd == Cross.fd.INVALID_FD) return;
+        var i: usize = 0;
         while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
     }
 
