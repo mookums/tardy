@@ -165,7 +165,6 @@ pub const Runtime = struct {
             const completions = try self.aio.reap(wait_for_io);
             for (completions) |completion| {
                 if (completion.result == .wake) {
-                    assert(force_woken == false);
                     force_woken = true;
                     log.debug("{d} - waking up", .{self.id});
                     if (!self.running) return;
