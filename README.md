@@ -1,11 +1,21 @@
+
 # Tardy
 
 Tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
 Most of the code for this project originated in [zzz](https://github.com/mookums/zzz), a performance oriented networking framework.
 
-- **Performant**: Tardy utilizes the latest Asynchronous APIs while minimizing allocations.
-- **Portable**: Tardy natively supports Linux, Mac and Windows. Easy to port through the custom Async I/O system.
-- **Scalable**: Tardy uses very little memory initially and can be tuned using various configuration options.
+- Tardy utilizes the latest Asynchronous APIs while minimizing allocations.
+- Tardy natively supports Linux, Mac, BSD, and Windows.
+- Tardy is configurable, allowing you to optimize the runtime for your specific use-case.
+
+[![Static Badge](https://img.shields.io/badge/license-MPL2-blue)](https://www.mozilla.org/en-US/MPL/2.0/) [![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/FP9Xb7WGPK)
+
+## ?
+Tardy is a thread-local asynchronous runtime for Zig, providing the core implementation for asynchronous libraries and services.
+- Per-thread Runtime isolation for minimal contention
+- Native async I/O (io_uring, epoll, kqueue, poll)
+    - `File` and `Dir` for Filesystem Operations
+    - `Socket` for Network Operatons
 
 ## Installing
 Latest Zig Stable: `0.13.0`
@@ -33,11 +43,11 @@ exe.root_module.addImport(tardy);
     - `io_uring` for Linux (>= 5.1.0).
     - `epoll` for Linux (>= 2.5.45).
     - `kqueue` for BSD & Mac.
-    - `busy_loop` for Linux, Mac and Windows.
+    - `poll` for POSIX-compliant systems.
 - Single and Multi-threaded Support
-- Callbacks on Async I/O events (through `runtime.[net/fs]`)
-- Green Threads (through `runtime.spawn`)
-- Channels for Asynchronous Communcation across Tasks
+- Stackful Coroutines (Frames)
+- Asynchronous Primitives (such as `File`, `Dir` and `Socket`).
+- Channels for Asynchronous Communcation across Tasks and Threads
 
 ## Ecosystem
 - [zzz](https://github.com/mookums/zzz): a framework for writing performant and reliable networked services.
