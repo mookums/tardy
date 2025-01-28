@@ -8,7 +8,8 @@ Most of the code for this project originated in [zzz](https://github.com/mookums
 - Tardy natively supports Linux, Mac, BSD, and Windows.
 - Tardy is configurable, allowing you to optimize the runtime for your specific use-case.
 
-[![Static Badge](https://img.shields.io/badge/license-MPL2-blue)](https://www.mozilla.org/en-US/MPL/2.0/) [![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/FP9Xb7WGPK)
+[![Static Badge](https://img.shields.io/badge/license-MPL2-blue)](https://www.mozilla.org/en-US/MPL/2.0/)
+[![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/FP9Xb7WGPK)
 
 ## ?
 Tardy is a thread-local asynchronous runtime for Zig, providing the core implementation for asynchronous libraries and services.
