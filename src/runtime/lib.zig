@@ -69,8 +69,9 @@ pub const Runtime = struct {
 
     /// Trigger a waiting Task.
     pub fn trigger(self: *Runtime, index: usize) !void {
+        log.debug("{d} - triggering {d}", .{ self.id, index });
         try self.scheduler.trigger(index);
-        if (self.asleep()) try self.wake();
+        try self.wake();
     }
 
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
@@ -100,21 +101,22 @@ pub const Runtime = struct {
                 // remember: task is invalid IF it resizes.
                 // so we only hit that condition sometimes in here.
                 const index = self.current_task.?;
-                const inner_task = self.scheduler.tasks.get_ptr(index);
-
                 // If the frame is done, clean it up.
-                try self.scheduler.release(inner_task.index);
-
+                try self.scheduler.release(index);
                 // frees the heap-allocated stack.
                 //
                 // this should be evaluted as it does have a perf impact but
                 // if frames are long lived (as they should be) and most data is
                 // stack allocated within that context, i think it should be ok?
                 frame.deinit(self.allocator);
+
+                // if we have no more tasks, we are done and can set our running status to false.
+                if (self.scheduler.tasks.empty()) self.running = false;
             },
             .errored => {
+                const index = self.current_task.?;
                 log.warn("cleaning up failed frame...", .{});
-                try self.scheduler.release(task.index);
+                try self.scheduler.release(index);
                 frame.deinit(self.allocator);
             },
         }
@@ -141,23 +143,25 @@ pub const Runtime = struct {
                             index,
                             @tagName(task.state),
                         });
+
+                        self.scheduler.triggers.unset(index);
                         try self.scheduler.set_runnable(index);
                     },
-                    else => continue,
+                    .wait_for_io => continue,
+                    .dead => unreachable,
                 }
             }
 
-            self.scheduler.triggers.unset_all();
             if (!self.running) break;
+            // If we have no tasks, we might as well exit.
+            if (self.scheduler.tasks.empty()) break;
 
             // I/O Section
             try self.aio.submit();
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
-            //
-            // Also don't wait for I/O if we have no tasks ready.
-            const wait_for_io = self.scheduler.runnable == 0 and !self.scheduler.tasks.empty();
+            const wait_for_io = self.scheduler.runnable == 0;
             log.debug("{d} - Wait for I/O: {}", .{ self.id, wait_for_io });
 
             const completions = try self.aio.reap(wait_for_io);
@@ -165,6 +169,7 @@ pub const Runtime = struct {
                 if (completion.result == .wake) {
                     assert(force_woken == false);
                     force_woken = true;
+                    log.debug("{d} - waking up", .{self.id});
                     if (!self.running) return;
                     continue;
                 }

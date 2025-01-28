@@ -10,39 +10,32 @@ const Spsc = @import("tardy").Spsc;
 
 pub const std_options = .{ .log_level = .err };
 
-const MAX_COUNT = 10;
+const MAX_COUNT = 100;
 
 fn producer_frame(rt: *Runtime, producer: Spsc(usize).Producer) !void {
+    defer producer.close();
+
     var count: usize = 0;
-
-    while (count <= MAX_COUNT) {
-        producer.send(count) catch |e| switch (e) {
-            error.NotReady => {
-                log.debug("not ready!", .{});
-                continue;
-            },
-            else => return e,
-        };
-        count += 1;
-
+    while (count <= MAX_COUNT) : (count += 1) {
+        try producer.send(count);
+        try producer.send(count);
+        try producer.send(count);
+        try producer.send(count);
         try Timer.delay(rt, .{ .nanos = std.time.ns_per_ms * 10 });
     }
+
+    log.debug("producer frame done running!", .{});
 }
 
 fn consumer_frame(_: *Runtime, consumer: Spsc(usize).Consumer) !void {
-    var count: usize = 0;
+    defer consumer.close();
 
-    while (count < MAX_COUNT) {
-        count = consumer.recv() catch |e| switch (e) {
-            error.ChannelClosed => return,
-            error.NotReady => {
-                log.debug("not ready!", .{});
-                continue;
-            },
-            else => return e,
-        };
-        log.err("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
+    while (true) {
+        const recvd = consumer.recv() catch break;
+        std.debug.print("{d} - tardy example | {d}\n", .{ std.time.milliTimestamp(), recvd });
     }
+
+    log.debug("consumer frame done running!", .{});
 }
 
 pub fn main() !void {

@@ -81,6 +81,7 @@ pub const Scheduler = struct {
         if (index > self.triggers.get_bit_length()) {
             try self.triggers.resize(self.allocator, self.tasks.items.len, false);
         }
+
         self.triggers.set(index);
     }
 

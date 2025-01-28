@@ -17,7 +17,9 @@ pub const AtomicDynamicBitSet = struct {
         return .{ .words = words, .lock = .{}, .bit_length = size };
     }
 
-    pub fn deinit(self: *const AtomicDynamicBitSet, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator) void {
+        self.lock.lock();
+        defer self.lock.unlock();
         allocator.free(self.words);
     }
 
@@ -42,6 +44,13 @@ pub const AtomicDynamicBitSet = struct {
         }
     }
 
+    pub fn is_empty(self: *AtomicDynamicBitSet) bool {
+        self.lock.lockShared();
+        defer self.lock.unlockShared();
+        for (self.words) |*word| if (word.load(.acquire) != 0) return false;
+        return true;
+    }
+
     pub fn get_bit_length(self: *AtomicDynamicBitSet) usize {
         self.lock.lockShared();
         defer self.lock.unlockShared();
@@ -49,37 +58,37 @@ pub const AtomicDynamicBitSet = struct {
     }
 
     pub fn set(self: *AtomicDynamicBitSet, index: usize) void {
-        assert(self.bit_length >= index);
         self.lock.lockShared();
         defer self.lock.unlockShared();
+        assert(self.bit_length >= index);
 
         const word = index / @bitSizeOf(usize);
         assert(word < self.words.len);
         const mask: usize = @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
-        _ = self.words[word].fetchOr(mask, .monotonic);
+        _ = self.words[word].fetchOr(mask, .release);
     }
 
     pub fn is_set(self: *AtomicDynamicBitSet, index: usize) bool {
-        assert(self.bit_length >= index);
         self.lock.lockShared();
         defer self.lock.unlockShared();
+        assert(self.bit_length >= index);
 
         const word = index / @bitSizeOf(usize);
         assert(word < self.words.len);
         const mask: usize = @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
-        return (self.words[word].load(.monotonic) & mask) != 0;
+        return (self.words[word].load(.acquire) & mask) != 0;
     }
 
     pub fn unset(self: *AtomicDynamicBitSet, index: usize) void {
-        assert(self.bit_length >= index);
         self.lock.lockShared();
         defer self.lock.unlockShared();
+        assert(self.bit_length >= index);
 
         const word = index / @bitSizeOf(usize);
         assert(word < self.words.len);
-        var mask = std.math.maxInt(usize);
-        mask ^= 1 << @mod(index, @bitSizeOf(usize));
-        _ = self.words[word].fetchAnd(mask, .monotonic);
+        var mask: usize = std.math.maxInt(usize);
+        mask ^= @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
+        _ = self.words[word].fetchAnd(mask, .release);
     }
 
     pub fn unset_all(self: *AtomicDynamicBitSet) void {

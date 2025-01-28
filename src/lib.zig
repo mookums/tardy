@@ -171,6 +171,21 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                 .all => try std.Thread.getCpuCount(),
             };
 
+            // for post-spawn syncing
+            var spawned_count = Atomic(usize).init(0);
+            const spawning_count = runtime_count - 1;
+
+            var runtime = try self.spawn_runtime(0, .{
+                .parent_async = null,
+                .pooling = self.options.pooling,
+                .size_tasks_initial = self.options.size_tasks_initial,
+                .size_aio_reap_max = self.options.size_aio_reap_max,
+            });
+            defer {
+                while (spawned_count.load(.acquire) != 0) {}
+                runtime.deinit();
+            }
+
             assert(runtime_count > 0);
             log.info("thread count: {d}", .{runtime_count});
 
@@ -183,19 +198,6 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                 for (threads.items) |thread| thread.join();
                 threads.deinit(self.allocator);
             }
-
-            var runtime = try self.spawn_runtime(0, .{
-                .parent_async = null,
-                .pooling = self.options.pooling,
-                .size_tasks_initial = self.options.size_tasks_initial,
-                .size_aio_reap_max = self.options.size_aio_reap_max,
-            });
-            defer runtime.deinit();
-
-            // for post-spawn syncing
-            var spawned_count = Atomic(usize).init(0);
-            const spawning_count = runtime_count - 1;
-
             // for in-spawn id assignment
             var spawn_id = Atomic(usize).init(1);
 
@@ -217,9 +219,13 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                             .size_tasks_initial = options.size_tasks_initial,
                             .size_aio_reap_max = options.size_aio_reap_max,
                         }) catch return;
-                        defer thread_rt.deinit();
+                        defer {
+                            while (count.load(.acquire) != 0) {}
+                            thread_rt.deinit();
+                        }
+                        defer _ = count.fetchSub(1, .acquire);
 
-                        _ = count.fetchAdd(1, .release);
+                        _ = count.fetchAdd(1, .acquire);
                         while (count.load(.acquire) < total_count) {}
 
                         @call(.auto, entry_func, .{ &thread_rt, entry_parameters }) catch |e| {
@@ -227,10 +233,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                             thread_rt.stop();
                         };
 
-                        thread_rt.run() catch |e| {
-                            log.err("{d} - runtime error={}", .{ thread_rt.id, e });
-                            return;
-                        };
+                        thread_rt.run() catch |e| log.err("{d} - runtime error={}", .{ thread_rt.id, e });
                     }
                 }.thread_init, .{
                     self,

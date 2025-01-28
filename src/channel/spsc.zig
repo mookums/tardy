@@ -3,7 +3,10 @@ const log = std.log.scoped(.@"tardy/channels/spsc");
 
 const Frame = @import("../frame/lib.zig").Frame;
 const Ring = @import("../core/ring.zig").Ring;
+const AtomicRing = @import("../core/atomic_ring.zig").AtomicRing;
 const Runtime = @import("../lib.zig").Runtime;
+
+const Atomic = std.atomic.Value;
 
 const State = enum(u8) {
     starting,
@@ -11,17 +14,16 @@ const State = enum(u8) {
     closed,
 };
 
-// A single-producer single-consumer Channel.
 pub fn Spsc(comptime T: type) type {
     return struct {
         const Self = @This();
 
         fn trigger_consumer(self: *Self) !void {
-            if (self.consumer_index) |index| try self.consumer_rt.?.trigger(index);
+            try self.consumer_rt.load(.acquire).?.trigger(self.consumer_index.load(.acquire));
         }
 
         fn trigger_producer(self: *Self) !void {
-            if (self.producer_index) |index| try self.producer_rt.?.trigger(index);
+            try self.producer_rt.load(.acquire).?.trigger(self.producer_index.load(.acquire));
         }
 
         pub const Producer = struct {
@@ -33,27 +35,31 @@ pub fn Spsc(comptime T: type) type {
                     // Both ends must be open.
                     .starting => return error.NotReady,
                     // Channel was cleaned up.
-                    .closed => return error.ChannelClosed,
+                    .closed => return error.Closed,
                     .running => {
-                        self.inner.mutex.lock();
-                        self.inner.producer_index = null;
-
+                        if (!self.inner.consumer_open.load(.acquire)) return error.Closed;
                         self.inner.ring.push(message) catch |e| switch (e) {
                             error.RingFull => {
-                                self.inner.producer_index = self.inner.producer_rt.?.current_task;
+                                self.inner.producer_index.store(
+                                    self.inner.producer_rt.load(.acquire).?.current_task.?,
+                                    .release,
+                                );
+
                                 try self.inner.trigger_consumer();
-                                self.inner.mutex.unlock();
-                                try self.inner.producer_rt.?.scheduler.trigger_await();
+                                try self.inner.producer_rt.load(.acquire).?.scheduler.trigger_await();
                                 continue;
                             },
                         };
 
                         try self.inner.trigger_consumer();
-                        self.inner.mutex.unlock();
-
                         return;
                     },
                 };
+            }
+
+            pub fn close(self: Producer) void {
+                self.inner.producer_open.store(false, .release);
+                self.inner.trigger_consumer() catch unreachable;
             }
         };
 
@@ -66,49 +72,67 @@ pub fn Spsc(comptime T: type) type {
                     // Both ends must be open.
                     .starting => return error.NotReady,
                     // Channel was cleaned up.
-                    .closed => return error.ChannelClosed,
+                    .closed => return error.Closed,
                     .running => {
-                        self.inner.mutex.lock();
-                        self.inner.consumer_index = null;
-
                         const data = self.inner.ring.pop() catch |e| switch (e) {
                             // If we are empty, trigger the producer to run.
                             error.RingEmpty => {
-                                self.inner.consumer_index = self.inner.consumer_rt.?.current_task;
+                                if (!self.inner.producer_open.load(.acquire)) return error.Closed;
+
+                                self.inner.consumer_index.store(
+                                    self.inner.consumer_rt.load(.acquire).?.current_task.?,
+                                    .release,
+                                );
+
                                 try self.inner.trigger_producer();
-                                self.inner.mutex.unlock();
-                                try self.inner.consumer_rt.?.scheduler.trigger_await();
+                                try self.inner.consumer_rt.load(.acquire).?.scheduler.trigger_await();
                                 continue;
                             },
                         };
 
                         try self.inner.trigger_producer();
-                        self.inner.mutex.unlock();
-
                         return data;
                     },
                 };
             }
+
+            pub fn close(self: Consumer) void {
+                self.inner.consumer_open.store(false, .release);
+                self.inner.trigger_producer() catch unreachable;
+            }
         };
 
-        mutex: std.Thread.Mutex = .{},
-        ring: Ring(T),
+        ring: AtomicRing(T),
 
-        producer_rt: ?*Runtime = null,
-        producer_index: ?usize = null,
+        producer_rt: Atomic(?*Runtime),
+        producer_index: Atomic(usize),
+        producer_open: Atomic(bool),
 
-        consumer_rt: ?*Runtime = null,
-        consumer_index: ?usize = null,
-        state: std.atomic.Value(State) = std.atomic.Value(State).init(.starting),
+        consumer_rt: Atomic(?*Runtime),
+        consumer_index: Atomic(usize),
+        consumer_open: Atomic(bool),
+
+        state: std.atomic.Value(State),
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
-                .ring = try Ring(T).init(allocator, size),
-                .state = std.atomic.Value(State).init(.starting),
+                .ring = try AtomicRing(T).init(allocator, size),
+
+                .producer_rt = .{ .raw = null },
+                .producer_index = .{ .raw = 0 },
+                .producer_open = .{ .raw = false },
+
+                .consumer_rt = .{ .raw = null },
+                .consumer_index = .{ .raw = 0 },
+                .consumer_open = .{ .raw = false },
+                .state = .{ .raw = .starting },
             };
         }
 
         pub fn deinit(self: *Self) void {
+            self.producer_open.store(false, .release);
+            self.consumer_open.store(false, .release);
+
             switch (self.state.load(.acquire)) {
                 .closed => unreachable,
                 .starting, .running => self.ring.deinit(),
@@ -116,18 +140,16 @@ pub fn Spsc(comptime T: type) type {
         }
 
         pub fn producer(self: *Self, runtime: *Runtime) Producer {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            self.producer_rt = runtime;
-            if (self.consumer_rt != null) self.state.store(.running, .release);
+            self.producer_rt.store(runtime, .release);
+            self.producer_open.store(true, .release);
+            if (self.consumer_rt.load(.acquire) != null) self.state.store(.running, .release);
             return .{ .inner = self };
         }
 
         pub fn consumer(self: *Self, runtime: *Runtime) Consumer {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            self.consumer_rt = runtime;
-            if (self.producer_rt != null) self.state.store(.running, .release);
+            self.consumer_rt.store(runtime, .release);
+            self.consumer_open.store(true, .release);
+            if (self.producer_rt.load(.acquire) != null) self.state.store(.running, .release);
             return .{ .inner = self };
         }
     };
