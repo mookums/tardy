@@ -177,7 +177,7 @@ pub const AsyncIO = struct {
     runner: *anyopaque,
     attached: bool = false,
     completions: []Completion = undefined,
-    asleep: Atomic(bool) = Atomic(bool).init(false),
+    mutex: std.Thread.Mutex = .{},
 
     // List of Async features that this Async I/O backend has.
     // Stored as a bitmask.
@@ -221,13 +221,11 @@ pub const AsyncIO = struct {
 
     pub fn wake(self: *AsyncIO) !void {
         assert(self.attached);
-        self.asleep.store(false, .release);
         try @call(.auto, self._wake, .{self});
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         assert(self.attached);
-        if (wait) self.asleep.store(true, .release);
         return try @call(.auto, self._reap, .{ self, wait });
     }
 

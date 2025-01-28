@@ -169,6 +169,9 @@ pub const AsyncIoUring = struct {
 
     fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
         uring.inner_deinit(allocator);
     }
 
@@ -503,6 +506,9 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
         while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
     }
 

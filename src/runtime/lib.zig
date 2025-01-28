@@ -58,16 +58,14 @@ pub const Runtime = struct {
         self.aio.deinit(self.allocator);
     }
 
+    /// Wake the given Runtime.
+    /// Safe to call from a different Runtime.
     pub fn wake(self: *Runtime) !void {
         try self.aio.wake();
     }
 
-    /// Is the runtime asleep?
-    pub inline fn asleep(self: *Runtime) bool {
-        return self.aio.asleep.load(.acquire);
-    }
-
-    /// Trigger a waiting Task.
+    /// Trigger a waiting (`.wait_for_trigger`) Task.
+    /// Safe to call from a different Runtime.
     pub fn trigger(self: *Runtime, index: usize) !void {
         log.debug("{d} - triggering {d}", .{ self.id, index });
         try self.scheduler.trigger(index);

@@ -181,10 +181,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                 .size_tasks_initial = self.options.size_tasks_initial,
                 .size_aio_reap_max = self.options.size_aio_reap_max,
             });
-            defer {
-                while (spawned_count.load(.acquire) != 0) {}
-                runtime.deinit();
-            }
+            defer runtime.deinit();
 
             assert(runtime_count > 0);
             log.info("thread count: {d}", .{runtime_count});
@@ -219,11 +216,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
                             .size_tasks_initial = options.size_tasks_initial,
                             .size_aio_reap_max = options.size_aio_reap_max,
                         }) catch return;
-                        defer {
-                            while (count.load(.acquire) != 0) {}
-                            thread_rt.deinit();
-                        }
-                        defer _ = count.fetchSub(1, .acquire);
+                        defer thread_rt.deinit();
 
                         _ = count.fetchAdd(1, .acquire);
                         while (count.load(.acquire) < total_count) {}

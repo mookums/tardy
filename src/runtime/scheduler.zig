@@ -60,7 +60,6 @@ pub const Scheduler = struct {
         self.runnable += 1;
     }
 
-    // This is only safe to call from the Runtime that the Frame is running on.
     pub fn trigger_await(self: *Scheduler) !void {
         const rt: *Runtime = @fieldParentPtr("scheduler", self);
         const index = rt.current_task.?;
@@ -74,9 +73,7 @@ pub const Scheduler = struct {
     }
 
     // NOTE: This can spuriously trigger a Task later in the Run Loop.
-    //
-    // This is because we can't check on the task.state since it isn't protected so we
-    // send a trigger through anyways and check later when we know access will be protected.
+    /// Safe to call from a different Runtime.
     pub fn trigger(self: *Scheduler, index: usize) !void {
         if (index > self.triggers.get_bit_length()) {
             try self.triggers.resize(self.allocator, self.tasks.items.len, false);
