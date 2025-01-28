@@ -20,7 +20,6 @@ fn producer_frame(rt: *Runtime, producer: Spsc(usize).Producer) !void {
         try producer.send(count);
         try producer.send(count);
         try producer.send(count);
-        try producer.send(count);
         try Timer.delay(rt, .{ .nanos = std.time.ns_per_ms * 10 });
     }
 

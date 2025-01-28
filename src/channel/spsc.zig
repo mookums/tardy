@@ -33,7 +33,7 @@ pub fn Spsc(comptime T: type) type {
                 std.log.debug("producer sending...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => return error.NotReady,
+                    .starting => try self.inner.producer_rt.load(.acquire).?.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
@@ -70,7 +70,7 @@ pub fn Spsc(comptime T: type) type {
                 log.debug("consumer recving...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => return error.NotReady,
+                    .starting => try self.inner.consumer_rt.load(.acquire).?.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
@@ -133,21 +133,34 @@ pub fn Spsc(comptime T: type) type {
             self.producer_open.store(false, .release);
             self.consumer_open.store(false, .release);
 
-            switch (self.state.load(.acquire)) {
-                .closed => unreachable,
-                .starting, .running => self.ring.deinit(),
+            if (self.state.cmpxchgStrong(.running, .closed, .acq_rel, .acquire)) |_| {
+                return; // Someone else is handling deinit
             }
+
+            self.ring.deinit();
         }
 
         pub fn producer(self: *Self, runtime: *Runtime) Producer {
-            self.producer_rt.store(runtime, .release);
+            if (self.producer_rt.cmpxchgStrong(
+                null,
+                runtime,
+                .acq_rel,
+                .acquire,
+            )) |_| @panic("Only one producer can exist for a Spsc");
+
             self.producer_open.store(true, .release);
             if (self.consumer_rt.load(.acquire) != null) self.state.store(.running, .release);
             return .{ .inner = self };
         }
 
         pub fn consumer(self: *Self, runtime: *Runtime) Consumer {
-            self.consumer_rt.store(runtime, .release);
+            if (self.consumer_rt.cmpxchgStrong(
+                null,
+                runtime,
+                .acq_rel,
+                .acquire,
+            )) |_| @panic("Only one consumer can exist for a Spsc");
+
             self.consumer_open.store(true, .release);
             if (self.producer_rt.load(.acquire) != null) self.state.store(.running, .release);
             return .{ .inner = self };
