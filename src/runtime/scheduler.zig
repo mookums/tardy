@@ -75,11 +75,7 @@ pub const Scheduler = struct {
     // NOTE: This can spuriously trigger a Task later in the Run Loop.
     /// Safe to call from a different Runtime.
     pub fn trigger(self: *Scheduler, index: usize) !void {
-        if (index > self.triggers.get_bit_length()) {
-            try self.triggers.resize(self.allocator, self.tasks.items.len, false);
-        }
-
-        self.triggers.set(index);
+        try self.triggers.set(index);
     }
 
     // This is only safe to call from the Runtime that the Frame is running on.
