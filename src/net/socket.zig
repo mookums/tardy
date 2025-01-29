@@ -13,6 +13,8 @@ const RecvError = @import("../aio/completion.zig").RecvError;
 const SendResult = @import("../aio/completion.zig").SendResult;
 const SendError = @import("../aio/completion.zig").SendError;
 
+const Stream = @import("../stream.zig").Stream;
+
 pub const Socket = struct {
     pub const Kind = enum {
         tcp,
@@ -262,5 +264,25 @@ pub const Socket = struct {
         }
 
         return length;
+    }
+
+    pub fn stream(self: *const Socket) Stream {
+        return Stream{
+            .inner = @constCast(@ptrCast(self)),
+            .vtable = .{
+                .read = struct {
+                    fn read(inner: *anyopaque, rt: *Runtime, buffer: []u8) !usize {
+                        const socket: *Socket = @ptrCast(@alignCast(inner));
+                        return try socket.recv(rt, buffer);
+                    }
+                }.read,
+                .write = struct {
+                    fn write(inner: *anyopaque, rt: *Runtime, buffer: []const u8) !usize {
+                        const socket: *Socket = @ptrCast(@alignCast(inner));
+                        return try socket.send(rt, buffer);
+                    }
+                }.write,
+            },
+        };
     }
 };

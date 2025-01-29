@@ -20,7 +20,7 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
 
     log.debug(
         "{d} - accepted socket [{}]",
-        .{ std.time.milliTimestamp(), socket.addr.in },
+        .{ std.time.milliTimestamp(), socket.addr },
     );
 
     // spawn off a new frame.

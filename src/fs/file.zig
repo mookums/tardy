@@ -23,6 +23,8 @@ const WriteError = @import("../aio/completion.zig").WriteError;
 const Cross = @import("../cross/lib.zig");
 const wrap = @import("../utils.zig").wrap;
 
+const Stream = @import("../stream.zig").Stream;
+
 const StdFile = std.fs.File;
 const StdDir = std.fs.Dir;
 
@@ -61,6 +63,17 @@ pub const File = packed struct {
     /// Get `stderr` as a File.
     pub fn std_err() File {
         return .{ .handle = Cross.get_std_err() };
+    }
+
+    pub fn close(self: File, rt: *Runtime) !void {
+        if (rt.aio.features.has_capability(.close))
+            try rt.scheduler.io_await(.{ .close = self.handle })
+        else
+            std.posix.close(self.handle);
+    }
+
+    pub fn close_blocking(self: File) void {
+        std.posix.close(self.handle);
     }
 
     pub fn create(rt: *Runtime, path: Path, flags: CreateFlags) !File {
@@ -362,14 +375,23 @@ pub const File = packed struct {
         }
     }
 
-    pub fn close(self: File, rt: *Runtime) !void {
-        if (rt.aio.features.has_capability(.close))
-            try rt.scheduler.io_await(.{ .close = self.handle })
-        else
-            std.posix.close(self.handle);
-    }
-
-    pub fn close_blocking(self: File) void {
-        std.posix.close(self.handle);
+    pub fn stream(self: *const File) Stream {
+        return Stream{
+            .inner = @constCast(@ptrCast(self)),
+            .vtable = .{
+                .read = struct {
+                    fn read(inner: *anyopaque, rt: *Runtime, buffer: []u8) !usize {
+                        const file: *File = @ptrCast(@alignCast(inner));
+                        return try file.read(rt, buffer, null);
+                    }
+                }.read,
+                .write = struct {
+                    fn write(inner: *anyopaque, rt: *Runtime, buffer: []const u8) !usize {
+                        const file: *File = @ptrCast(@alignCast(inner));
+                        return try file.write(rt, buffer, null);
+                    }
+                }.write,
+            },
+        };
     }
 };

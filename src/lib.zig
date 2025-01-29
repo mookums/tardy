@@ -19,6 +19,7 @@ pub const Path = @import("fs/lib.zig").Path;
 pub const Stat = @import("fs/lib.zig").Stat;
 
 pub const Socket = @import("net/lib.zig").Socket;
+pub const Stream = @import("stream.zig").Stream;
 
 // Results
 pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
