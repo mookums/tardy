@@ -283,7 +283,6 @@ pub const File = packed struct {
         } else {
             const std_file = self.to_std();
 
-            // TODO: Proper error handling.
             const count = blk: {
                 if (offset) |o| {
                     while (true) {
@@ -292,6 +291,11 @@ pub const File = packed struct {
                                 Frame.yield();
                                 continue;
                             },
+                            StdFile.PReadError.Unseekable => unreachable,
+                            StdFile.PReadError.AccessDenied => ReadError.AccessDenied,
+                            StdFile.PReadError.NotOpenForReading => ReadError.InvalidFd,
+                            StdFile.PReadError.InputOutput => ReadError.IoError,
+                            StdFile.PReadError.IsDir => ReadError.IsDirectory,
                             else => ReadError.Unexpected,
                         };
                     }
@@ -302,6 +306,10 @@ pub const File = packed struct {
                                 Frame.yield();
                                 continue;
                             },
+                            StdFile.ReadError.AccessDenied => ReadError.AccessDenied,
+                            StdFile.ReadError.NotOpenForReading => ReadError.InvalidFd,
+                            StdFile.ReadError.InputOutput => ReadError.IoError,
+                            StdFile.ReadError.IsDir => ReadError.IsDirectory,
                             else => ReadError.Unexpected,
                         };
                     }
@@ -351,7 +359,15 @@ pub const File = packed struct {
                             Frame.yield();
                             continue;
                         },
+                        StdFile.PWriteError.Unseekable => unreachable,
+                        StdFile.PWriteError.DiskQuota => WriteError.DiskQuotaExceeded,
+                        StdFile.PWriteError.FileTooBig => WriteError.FileTooBig,
+                        StdFile.PWriteError.InvalidArgument => WriteError.InvalidArguments,
+                        StdFile.PWriteError.InputOutput => WriteError.IoError,
                         StdFile.PWriteError.NoSpaceLeft => WriteError.NoSpace,
+                        StdFile.PWriteError.AccessDenied => WriteError.AccessDenied,
+                        StdFile.PWriteError.NotOpenForWriting => WriteError.InvalidFd,
+                        StdFile.PWriteError.BrokenPipe => WriteError.BrokenPipe,
                         else => WriteError.Unexpected,
                     };
                 };
@@ -362,7 +378,14 @@ pub const File = packed struct {
                             Frame.yield();
                             continue;
                         },
+                        StdFile.WriteError.DiskQuota => WriteError.DiskQuotaExceeded,
+                        StdFile.WriteError.FileTooBig => WriteError.FileTooBig,
+                        StdFile.WriteError.InvalidArgument => WriteError.InvalidArguments,
+                        StdFile.WriteError.InputOutput => WriteError.IoError,
                         StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
+                        StdFile.WriteError.AccessDenied => WriteError.AccessDenied,
+                        StdFile.WriteError.NotOpenForWriting => WriteError.InvalidFd,
+                        StdFile.WriteError.BrokenPipe => WriteError.BrokenPipe,
                         else => WriteError.Unexpected,
                     };
                 };
