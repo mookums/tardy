@@ -51,7 +51,6 @@ pub fn Spsc(comptime T: type) type {
                             },
                         };
 
-                        try self.inner.trigger_consumer();
                         return;
                     },
                 };
@@ -90,7 +89,6 @@ pub fn Spsc(comptime T: type) type {
                             },
                         };
 
-                        try self.inner.trigger_producer();
                         return data;
                     },
                 };

@@ -13,6 +13,7 @@ pub const std_options = .{ .log_level = .err };
 const MAX_COUNT = 100;
 
 fn producer_frame(rt: *Runtime, producer: Spsc(usize).Producer) !void {
+    _ = rt;
     defer producer.close();
 
     var count: usize = 0;
@@ -20,7 +21,7 @@ fn producer_frame(rt: *Runtime, producer: Spsc(usize).Producer) !void {
         try producer.send(count);
         try producer.send(count);
         try producer.send(count);
-        try Timer.delay(rt, .{ .nanos = std.time.ns_per_ms * 10 });
+        //try Timer.delay(rt, .{ .nanos = std.time.ns_per_ms * 10 });
     }
 
     log.debug("producer frame done running!", .{});
