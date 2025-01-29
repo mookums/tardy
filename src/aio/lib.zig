@@ -258,7 +258,7 @@ pub const AioOpenFlags = struct {
     /// Fail if the file already exists.
     exclusive: bool = false,
     /// Open the file for non-blocking I/O.
-    non_block: bool = false,
+    non_block: bool = true,
     /// Ensure data is physically written to disk immediately.
     sync: bool = false,
     /// Ensure that the file is a directory.

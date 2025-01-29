@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
+const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
 
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
@@ -67,11 +68,13 @@ pub const Socket = struct {
             .unix => 0,
         };
 
-        const socket = try std.posix.socket(
-            addr.any.family,
-            sock_type | std.posix.SOCK.CLOEXEC,
-            protocol,
-        );
+        const flags = blk: {
+            const base_flags: u32 = sock_type | std.posix.SOCK.CLOEXEC;
+            if (comptime builtin.os.tag != .windows) break :blk base_flags;
+            break :blk base_flags | std.posix.SOCK.NONBLOCK;
+        };
+
+        const socket = try std.posix.socket(addr.any.family, flags, protocol);
 
         if (kind != .unix) {
             if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
@@ -142,21 +145,27 @@ pub const Socket = struct {
             var addr: std.net.Address = undefined;
             var addr_len = addr.getOsSockLen();
 
-            const socket = std.posix.accept(
-                self.handle,
-                &addr.any,
-                &addr_len,
-                0,
-            ) catch |e| return switch (e) {
-                std.posix.AcceptError.ConnectionAborted,
-                std.posix.AcceptError.ConnectionResetByPeer,
-                => AcceptError.ConnectionAborted,
-                std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
-                std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
-                std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
-                else => AcceptError.Unexpected,
+            const socket: std.posix.socket_t = blk: while (true) {
+                break :blk std.posix.accept(
+                    self.handle,
+                    &addr.any,
+                    &addr_len,
+                    0,
+                ) catch |e| return switch (e) {
+                    std.posix.AcceptError.WouldBlock => {
+                        Frame.yield();
+                        continue;
+                    },
+                    std.posix.AcceptError.ConnectionAborted,
+                    std.posix.AcceptError.ConnectionResetByPeer,
+                    => AcceptError.ConnectionAborted,
+                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
+                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
+                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
+                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                    else => AcceptError.Unexpected,
+                };
             };
 
             return .{
@@ -181,13 +190,19 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.connect.unwrap();
         } else {
-            std.posix.connect(
-                self.handle,
-                &self.addr.any,
-                self.addr.getOsSockLen(),
-            ) catch |e| return switch (e) {
-                else => ConnectError.Unexpected,
-            };
+            while (true) {
+                break std.posix.connect(
+                    self.handle,
+                    &self.addr.any,
+                    self.addr.getOsSockLen(),
+                ) catch |e| return switch (e) {
+                    std.posix.ConnectError.WouldBlock => {
+                        Frame.yield();
+                        continue;
+                    },
+                    else => ConnectError.Unexpected,
+                };
+            }
 
             return self;
         }
@@ -206,8 +221,14 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.recv.unwrap();
         } else {
-            const count = std.posix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
-                else => RecvError.Unexpected,
+            const count: usize = blk: while (true) {
+                break :blk std.posix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
+                    std.posix.RecvFromError.WouldBlock => {
+                        Frame.yield();
+                        continue;
+                    },
+                    else => RecvError.Unexpected,
+                };
             };
 
             if (count == 0) return RecvError.Closed;
@@ -243,9 +264,15 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.send.unwrap();
         } else {
-            const count = std.posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
-                std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
-                else => SendError.Unexpected,
+            const count: usize = blk: while (true) {
+                break :blk std.posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                    std.posix.SendError.WouldBlock => {
+                        Frame.yield();
+                        continue;
+                    },
+                    std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
+                    else => SendError.Unexpected,
+                };
             };
 
             return count;

@@ -50,6 +50,18 @@ pub const Dir = packed struct {
         return .{ .handle = std.fs.cwd().fd };
     }
 
+    /// Close the underlying Handle of this Dir.
+    pub fn close(self: Dir, rt: *Runtime) !void {
+        if (rt.aio.features.has_capability(.close))
+            try rt.scheduler.io_await(.{ .close = self.handle })
+        else
+            std.posix.close(self.handle);
+    }
+
+    pub fn close_blocking(self: Dir) void {
+        std.posix.close(self.handle);
+    }
+
     /// Open a Directory.
     pub fn open(rt: *Runtime, path: Path) !Dir {
         const flags: AioOpenFlags = .{
@@ -242,17 +254,5 @@ pub const Dir = packed struct {
 
         try base_dir.close(rt);
         try self.delete_dir(rt, subpath);
-    }
-
-    /// Close the underlying Handle of this Dir.
-    pub fn close(self: Dir, rt: *Runtime) !void {
-        if (rt.aio.features.has_capability(.close))
-            try rt.scheduler.io_await(.{ .close = self.handle })
-        else
-            std.posix.close(self.handle);
-    }
-
-    pub fn close_blocking(self: Dir) void {
-        std.posix.close(self.handle);
     }
 };

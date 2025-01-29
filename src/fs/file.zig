@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const log = std.log.scoped(.@"tardy/fs/file");
 
+const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
@@ -108,51 +109,63 @@ pub const File = packed struct {
             switch (path) {
                 .rel => |inner| {
                     const dir: StdDir = .{ .fd = inner.dir };
-                    const opened = dir.createFileZ(inner.path, std_flags) catch |e| return switch (e) {
-                        StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
-                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                        StdFile.OpenError.DeviceBusy => OpenError.Busy,
-                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                        StdFile.OpenError.PipeBusy => OpenError.Busy,
-                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
-                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                    const opened: StdFile = blk: while (true) {
+                        break :blk dir.createFileZ(inner.path, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
                     };
+                    try Cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
                 .abs => |inner| {
-                    const opened = std.fs.createFileAbsoluteZ(inner, std_flags) catch |e| return switch (e) {
-                        StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
-                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                        StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
-                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
-                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                    const opened: StdFile = blk: while (true) {
+                        break :blk std.fs.createFileAbsoluteZ(inner, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
                     };
+                    try Cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -190,51 +203,63 @@ pub const File = packed struct {
             switch (path) {
                 .rel => |inner| {
                     const dir: StdDir = .{ .fd = inner.dir };
-                    const opened = dir.openFileZ(inner.path, std_flags) catch |e| return switch (e) {
-                        StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
-                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                        StdFile.OpenError.DeviceBusy => OpenError.Busy,
-                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                        StdFile.OpenError.PipeBusy => OpenError.Busy,
-                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
-                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                    const opened: StdFile = blk: while (true) {
+                        break :blk dir.openFileZ(inner.path, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
                     };
+                    try Cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
                 .abs => |inner| {
-                    const opened = std.fs.openFileAbsoluteZ(inner, std_flags) catch |e| return switch (e) {
-                        StdFile.OpenError.WouldBlock => @panic("WouldBlock"),
-                        StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                        StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                        StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
-                        StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                        StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                        StdFile.OpenError.SharingViolation => OpenError.FileLocked,
-                        StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                        StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                        StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                        StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                        StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                        StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                        StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                        StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                    const opened: StdFile = blk: while (true) {
+                        break :blk std.fs.openFileAbsoluteZ(inner, std_flags) catch |e| return switch (e) {
+                            StdFile.OpenError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
+                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
+                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
+                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
+                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
+                            StdFile.OpenError.SharingViolation => OpenError.FileLocked,
+                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
+                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
+                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
+                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
+                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
+                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
+                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
+                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            else => OpenError.Unexpected,
+                        };
                     };
+                    try Cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -261,13 +286,25 @@ pub const File = packed struct {
             // TODO: Proper error handling.
             const count = blk: {
                 if (offset) |o| {
-                    break :blk std.fs.File.pread(std_file, buffer, o) catch |e| return switch (e) {
-                        else => ReadError.Unexpected,
-                    };
+                    while (true) {
+                        break :blk std.fs.File.pread(std_file, buffer, o) catch |e| return switch (e) {
+                            StdFile.PReadError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            else => ReadError.Unexpected,
+                        };
+                    }
                 } else {
-                    break :blk std.fs.File.read(std_file, buffer) catch |e| return switch (e) {
-                        else => ReadError.Unexpected,
-                    };
+                    while (true) {
+                        break :blk std.fs.File.read(std_file, buffer) catch |e| return switch (e) {
+                            StdFile.ReadError.WouldBlock => {
+                                Frame.yield();
+                                continue;
+                            },
+                            else => ReadError.Unexpected,
+                        };
+                    }
                 }
             };
 
@@ -308,14 +345,26 @@ pub const File = packed struct {
 
             // TODO: Proper error handling.
             if (offset) |o| {
-                return std.fs.File.pwrite(std_file, buffer, o) catch |e| switch (e) {
-                    StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
-                    else => WriteError.Unexpected,
+                return blk: while (true) {
+                    break :blk std.fs.File.pwrite(std_file, buffer, o) catch |e| switch (e) {
+                        StdFile.PWriteError.WouldBlock => {
+                            Frame.yield();
+                            continue;
+                        },
+                        StdFile.PWriteError.NoSpaceLeft => WriteError.NoSpace,
+                        else => WriteError.Unexpected,
+                    };
                 };
             } else {
-                return std.fs.File.write(std_file, buffer) catch |e| switch (e) {
-                    StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
-                    else => WriteError.Unexpected,
+                return blk: while (true) {
+                    break :blk std.fs.File.write(std_file, buffer) catch |e| switch (e) {
+                        StdFile.WriteError.WouldBlock => {
+                            Frame.yield();
+                            continue;
+                        },
+                        StdFile.WriteError.NoSpaceLeft => WriteError.NoSpace,
+                        else => WriteError.Unexpected,
+                    };
                 };
             }
         }
