@@ -174,29 +174,24 @@ pub const AsyncSubmission = union(AsyncOp) {
 };
 
 pub const AsyncIO = struct {
+    const VTable = struct {
+        queue_job: *const fn (*anyopaque, usize, AsyncSubmission) anyerror!void,
+        deinit: *const fn (*anyopaque, std.mem.Allocator) void,
+        wake: *const fn (*anyopaque) anyerror!void,
+        reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
+        submit: *const fn (*anyopaque) anyerror!void,
+    };
+
     runner: *anyopaque,
+    vtable: VTable,
+    features: AsyncFeatures = .{ .bitmask = 0 },
+
     attached: bool = false,
     completions: []Completion = undefined,
     mutex: std.Thread.Mutex = .{},
 
     // List of Async features that this Async I/O backend has.
     // Stored as a bitmask.
-    features: AsyncFeatures = .{ .bitmask = 0 },
-
-    _queue_job: *const fn (
-        self: *AsyncIO,
-        index: usize,
-        job: AsyncSubmission,
-    ) anyerror!void,
-
-    _deinit: *const fn (
-        self: *AsyncIO,
-        allocator: std.mem.Allocator,
-    ) void,
-
-    _wake: *const fn (self: *AsyncIO) anyerror!void,
-    _reap: *const fn (self: *AsyncIO, wait: bool) anyerror![]Completion,
-    _submit: *const fn (self: *AsyncIO) anyerror!void,
 
     /// This provides the completions that the backend will utilize when
     /// submitting and reaping. This MUST be called before any other
@@ -206,32 +201,33 @@ pub const AsyncIO = struct {
         self.attached = true;
     }
 
-    pub fn deinit(
-        self: *AsyncIO,
-        allocator: std.mem.Allocator,
-    ) void {
-        @call(.auto, self._deinit, .{ self, allocator });
+    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.vtable.deinit(self.runner, allocator);
     }
 
     pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
         assert(self.attached);
         log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
-        try @call(.auto, self._queue_job, .{ self, task, job });
+        try self.vtable.queue_job(self.runner, task, job);
     }
 
     pub fn wake(self: *AsyncIO) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         assert(self.attached);
-        try @call(.auto, self._wake, .{self});
+        try self.vtable.wake(self.runner);
     }
 
     pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
         assert(self.attached);
-        return try @call(.auto, self._reap, .{ self, wait });
+        return try self.vtable.reap(self.runner, self.completions, wait);
     }
 
     pub fn submit(self: *AsyncIO) !void {
         assert(self.attached);
-        try @call(.auto, self._submit, .{self});
+        try self.vtable.submit(self.runner);
     }
 };
 

@@ -160,8 +160,6 @@ pub const AsyncIoUring = struct {
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
         std.posix.close(self.wake_event_fd);
-        self.wake_event_fd = Cross.fd.INVALID_FD;
-
         self.inner.deinit();
         self.jobs.deinit();
         allocator.free(self.wake_event_buffer);
@@ -169,19 +167,17 @@ pub const AsyncIoUring = struct {
         allocator.destroy(self.inner);
     }
 
-    fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         uring.inner_deinit(allocator);
     }
 
     fn queue_job(
-        self: *AsyncIO,
+        runner: *anyopaque,
         task: usize,
         job: AsyncSubmission,
     ) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         (switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
             .open => |inner| queue_open(uring, task, inner.path, inner.flags),
@@ -196,8 +192,8 @@ pub const AsyncIoUring = struct {
             .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
         }) catch |e| if (e == error.SubmissionQueueFull) {
-            try self.submit();
-            try queue_job(self, task, job);
+            try submit(runner);
+            try queue_job(runner, task, job);
         } else return e;
     }
 
@@ -505,24 +501,20 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    fn wake(self: *AsyncIO) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+    fn wake(runner: *anyopaque) !void {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (uring.wake_event_fd == Cross.fd.INVALID_FD) return;
         var i: usize = 0;
         while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
     }
 
-    fn submit(self: *AsyncIO) !void {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+    fn submit(runner: *anyopaque) !void {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         _ = try uring.inner.submit();
     }
 
-    fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const uring: *AsyncIoUring = @ptrCast(@alignCast(self.runner));
+    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+        const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
 
@@ -841,24 +833,26 @@ pub const AsyncIoUring = struct {
                 }
             };
 
-            self.completions[i] = Completion{
+            completions[i] = Completion{
                 .result = result,
                 .task = job.task,
             };
         }
 
-        return self.completions[0..count];
+        return completions[0..count];
     }
 
     pub fn to_async(self: *AsyncIoUring) AsyncIO {
         return AsyncIO{
             .runner = self,
-            ._deinit = deinit,
-            ._queue_job = queue_job,
-            ._wake = wake,
-            ._submit = submit,
-            ._reap = reap,
             .features = AsyncFeatures.all(),
+            .vtable = .{
+                .queue_job = queue_job,
+                .deinit = deinit,
+                .wake = wake,
+                .submit = submit,
+                .reap = reap,
+            },
         };
     }
 };

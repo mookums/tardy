@@ -83,13 +83,13 @@ pub const AsyncKqueue = struct {
         self.jobs.deinit();
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+    pub fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
         kqueue.inner_deinit(allocator);
     }
 
-    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) !void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
 
         (switch (job) {
             .timer => |inner| queue_timer(kqueue, task, inner),
@@ -99,8 +99,8 @@ pub const AsyncKqueue = struct {
             .send => |inner| queue_send(kqueue, task, inner.socket, inner.buffer),
             .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
         }) catch |e| if (e == error.ChangeQueueFull) {
-            try self.submit();
-            try queue_job(self, task, job);
+            try submit(runner);
+            try queue_job(runner, task, job);
         } else return e;
     }
 
@@ -274,8 +274,8 @@ pub const AsyncKqueue = struct {
         } else return error.ChangeQueueFull;
     }
 
-    pub fn wake(self: *AsyncIO) !void {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+    pub fn wake(runner: *anyopaque) !void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
 
         const event: std.posix.Kevent = .{
             .ident = WAKE_IDENT,
@@ -290,18 +290,18 @@ pub const AsyncKqueue = struct {
         _ = try std.posix.kevent(kqueue.kqueue_fd, &.{event}, &.{}, null);
     }
 
-    pub fn submit(self: *AsyncIO) !void {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+    pub fn submit(runner: *anyopaque) !void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
         _ = try std.posix.kevent(kqueue.kqueue_fd, kqueue.changes[0..kqueue.change_count], &.{}, null);
         kqueue.change_count = 0;
     }
 
-    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(self.runner));
+    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
         while (reaped == 0 and wait) {
-            const remaining = self.completions.len - reaped;
+            const remaining = completions.len - reaped;
             if (remaining == 0) break;
 
             const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
@@ -486,7 +486,7 @@ pub const AsyncKqueue = struct {
                     }
                 };
 
-                self.completions[reaped] = .{
+                completions[reaped] = .{
                     .result = result,
                     .task = job.task,
                 };
@@ -495,17 +495,12 @@ pub const AsyncKqueue = struct {
             }
         }
 
-        return self.completions[0..reaped];
+        return completions[0..reaped];
     }
 
     pub fn to_async(self: *AsyncKqueue) AsyncIO {
         return AsyncIO{
             .runner = self,
-            ._deinit = deinit,
-            ._queue_job = queue_job,
-            ._wake = wake,
-            ._submit = submit,
-            ._reap = reap,
             .features = AsyncFeatures.init(&.{
                 .timer,
                 .accept,
@@ -513,6 +508,13 @@ pub const AsyncKqueue = struct {
                 .recv,
                 .send,
             }),
+            .vtable = .{
+                .queue_job = queue_job,
+                .deinit = deinit,
+                .wake = wake,
+                .submit = submit,
+                .reap = reap,
+            },
         };
     }
 };

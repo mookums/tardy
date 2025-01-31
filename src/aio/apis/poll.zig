@@ -109,15 +109,13 @@ pub const AsyncPoll = struct {
         for (self.wake_pipe) |fd| std.posix.close(fd);
     }
 
-    fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const poll: *AsyncPoll = @ptrCast(@alignCast(self.runner));
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+        const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
         poll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
-        const poll: *AsyncPoll = @ptrCast(@alignCast(self.runner));
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) !void {
+        const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
             .timer => |inner| queue_timer(poll, task, inner),
@@ -208,21 +206,18 @@ pub const AsyncPoll = struct {
         });
     }
 
-    pub fn wake(self: *AsyncIO) !void {
-        const poll: *AsyncPoll = @ptrCast(@alignCast(self.runner));
+    pub fn wake(runner: *anyopaque) !void {
+        const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
         while (i < bytes.len) i += try std.posix.write(poll.wake_pipe[1], bytes[i..]);
     }
 
-    pub fn submit(_: *AsyncIO) !void {}
+    pub fn submit(_: *anyopaque) !void {}
 
-    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const poll: *AsyncPoll = @ptrCast(@alignCast(self.runner));
+    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+        const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
         poll_loop: while (reaped == 0 and wait) {
@@ -232,15 +227,15 @@ pub const AsyncPoll = struct {
                 while (true) {
                     if (poll.timers.peek()) |peeked| {
                         if (peeked.milliseconds < current) {
-                            if (self.completions.len - reaped == 0) break :poll_loop;
+                            if (completions.len - reaped == 0) break :poll_loop;
                             const timer = poll.timers.remove();
-                            self.completions[reaped] = .{
+                            completions[reaped] = .{
                                 .result = .none,
                                 .task = timer.task,
                             };
                             reaped += 1;
                         } else {
-                            if (self.completions.len - reaped == 0) break :poll_loop;
+                            if (completions.len - reaped == 0) break :poll_loop;
                             const timer = poll.timers.remove();
                             timeout_task = timer.task;
                             break :blk @intCast(timer.milliseconds - current);
@@ -256,7 +251,7 @@ pub const AsyncPoll = struct {
 
             log.debug("poll result={d}", .{poll_result});
             if (timeout_task) |task| {
-                self.completions[reaped] = .{
+                completions[reaped] = .{
                     .result = .none,
                     .task = task,
                 };
@@ -276,7 +271,7 @@ pub const AsyncPoll = struct {
                 i -= 1;
                 const pollfd = poll.fd_list.items[i];
                 if (pollfd.revents == 0) continue;
-                if (self.completions.len - reaped == 0) break;
+                if (completions.len - reaped == 0) break;
 
                 var job = poll.fd_job_map.get(pollfd.fd) orelse {
                     @panic("failed to get job from fd!");
@@ -413,7 +408,7 @@ pub const AsyncPoll = struct {
                     }
                 };
 
-                self.completions[reaped] = .{
+                completions[reaped] = .{
                     .result = result,
                     .task = job.task,
                 };
@@ -421,17 +416,12 @@ pub const AsyncPoll = struct {
             }
         }
 
-        return self.completions[0..reaped];
+        return completions[0..reaped];
     }
 
     pub fn to_async(self: *AsyncPoll) AsyncIO {
         return AsyncIO{
             .runner = self,
-            ._queue_job = queue_job,
-            ._deinit = deinit,
-            ._wake = wake,
-            ._submit = submit,
-            ._reap = reap,
             .features = AsyncFeatures.init(&.{
                 .timer,
                 .accept,
@@ -439,6 +429,13 @@ pub const AsyncPoll = struct {
                 .recv,
                 .send,
             }),
+            .vtable = .{
+                .queue_job = queue_job,
+                .deinit = deinit,
+                .wake = wake,
+                .submit = submit,
+                .reap = reap,
+            },
         };
     }
 };

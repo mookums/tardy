@@ -36,7 +36,6 @@ fn add_example(
         .target = target,
         .optimize = optimize,
         .strip = false,
-        .sanitize_thread = true,
     });
 
     if (target.result.os.tag == .windows) {
@@ -71,7 +70,6 @@ fn add_test(
         .target = target,
         .optimize = optimize,
         .strip = false,
-        .sanitize_thread = true,
     });
 
     if (target.result.os.tag == .windows) {

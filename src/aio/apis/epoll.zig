@@ -84,13 +84,13 @@ pub const AsyncEpoll = struct {
         std.posix.close(self.wake_event_fd);
     }
 
-    fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
-        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
         epoll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
-        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) !void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
             .timer => |inner| queue_timer(epoll, task, inner),
@@ -259,8 +259,8 @@ pub const AsyncEpoll = struct {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
     }
 
-    pub fn wake(self: *AsyncIO) !void {
-        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+    pub fn wake(runner: *anyopaque) !void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
@@ -269,14 +269,14 @@ pub const AsyncEpoll = struct {
         }
     }
 
-    pub fn submit(_: *AsyncIO) !void {}
+    pub fn submit(_: *anyopaque) !void {}
 
-    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
-        const epoll: *AsyncEpoll = @ptrCast(@alignCast(self.runner));
+    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
         while (reaped == 0 and wait) {
-            const remaining = self.completions.len - reaped;
+            const remaining = completions.len - reaped;
             if (remaining == 0) break;
 
             const timeout: i32 = if (!wait) 0 else -1;
@@ -437,7 +437,7 @@ pub const AsyncEpoll = struct {
                     }
                 };
 
-                self.completions[reaped] = .{
+                completions[reaped] = .{
                     .result = result,
                     .task = job.task,
                 };
@@ -445,17 +445,12 @@ pub const AsyncEpoll = struct {
             }
         }
 
-        return self.completions[0..reaped];
+        return completions[0..reaped];
     }
 
     pub fn to_async(self: *AsyncEpoll) AsyncIO {
         return AsyncIO{
             .runner = self,
-            ._queue_job = queue_job,
-            ._deinit = deinit,
-            ._wake = wake,
-            ._submit = submit,
-            ._reap = reap,
             .features = AsyncFeatures.init(&.{
                 .timer,
                 .accept,
@@ -463,6 +458,13 @@ pub const AsyncEpoll = struct {
                 .recv,
                 .send,
             }),
+            .vtable = .{
+                .queue_job = queue_job,
+                .deinit = deinit,
+                .wake = wake,
+                .submit = submit,
+                .reap = reap,
+            },
         };
     }
 };
