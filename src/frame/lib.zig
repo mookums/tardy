@@ -139,7 +139,7 @@ const x64SysV = struct {
     extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
 
     comptime {
-        asm (@embedFile("asm/x86_64_sysv.s"));
+        asm (@embedFile("asm/x86_64_sysv.asm"));
     }
 };
 
@@ -150,7 +150,7 @@ const x64Windows = struct {
     extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
 
     comptime {
-        asm (@embedFile("asm/x86_64_win.s"));
+        asm (@embedFile("asm/x86_64_win.asm"));
     }
 };
 
@@ -161,6 +161,6 @@ const aarch64General = struct {
     extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
 
     comptime {
-        asm (@embedFile("asm/aarch64_gen.s"));
+        asm (@embedFile("asm/aarch64_gen.asm"));
     }
 };
