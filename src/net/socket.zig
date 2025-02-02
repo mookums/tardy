@@ -270,7 +270,9 @@ pub const Socket = struct {
                         Frame.yield();
                         continue;
                     },
-                    std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
+                    std.posix.SendError.ConnectionResetByPeer,
+                    std.posix.SendError.BrokenPipe,
+                    => SendError.Closed,
                     else => SendError.Unexpected,
                 };
             };

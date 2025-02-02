@@ -346,29 +346,32 @@ pub const AsyncKqueue = struct {
                                 @ptrCast(&inner.addr_len),
                             );
 
+                            if (rc >= 0) break :blk .{ .accept = .{
+                                .actual = .{
+                                    .handle = @intCast(rc),
+                                    .addr = inner.addr,
+                                    .kind = inner.kind,
+                                },
+                            } };
+
                             const result: AcceptResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{
-                                        .actual = .{
-                                            .handle = @intCast(rc),
-                                            .addr = inner.addr,
-                                            .kind = inner.kind,
-                                        },
-                                    },
-                                    PosixError.AGAIN => .{ .err = AcceptError.WouldBlock },
-                                    PosixError.BADF => .{ .err = AcceptError.InvalidFd },
-                                    PosixError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
-                                    PosixError.FAULT => .{ .err = AcceptError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = AcceptError.Interrupted },
-                                    PosixError.INVAL => .{ .err = AcceptError.NotListening },
-                                    PosixError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                                    PosixError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
-                                    PosixError.NOBUFS, PosixError.NOMEM => .{ .err = AcceptError.OutOfMemory },
-                                    PosixError.NOTSOCK => .{ .err = AcceptError.NotASocket },
-                                    PosixError.OPNOTSUPP => .{ .err = AcceptError.OperationNotSupported },
-                                    else => .{ .err = AcceptError.Unexpected },
+                                const err = switch (e) {
+                                    PosixError.AGAIN => AcceptError.WouldBlock,
+                                    PosixError.BADF => AcceptError.InvalidFd,
+                                    PosixError.CONNABORTED => AcceptError.ConnectionAborted,
+                                    PosixError.FAULT => AcceptError.InvalidAddress,
+                                    PosixError.INTR => AcceptError.Interrupted,
+                                    PosixError.INVAL => AcceptError.NotListening,
+                                    PosixError.MFILE => AcceptError.ProcessFdQuotaExceeded,
+                                    PosixError.NFILE => AcceptError.SystemFdQuotaExceeded,
+                                    PosixError.NOBUFS, PosixError.NOMEM => AcceptError.OutOfMemory,
+                                    PosixError.NOTSOCK => AcceptError.NotASocket,
+                                    PosixError.OPNOTSUPP => AcceptError.OperationNotSupported,
+                                    else => AcceptError.Unexpected,
                                 };
+
+                                break :result .{ .err = err };
                             };
 
                             break :blk .{ .accept = result };
@@ -381,34 +384,38 @@ pub const AsyncKqueue = struct {
                                 inner.addr.getOsSockLen(),
                             );
 
+                            if (rc > 0) break :blk .{ .connect = .{
+                                .actual = .{
+                                    .handle = inner.socket,
+                                    .addr = inner.addr,
+                                    .kind = inner.kind,
+                                },
+                            } };
+
                             const result: ConnectResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{
-                                        .actual = .{
-                                            .handle = inner.socket,
-                                            .addr = inner.addr,
-                                            .kind = inner.kind,
-                                        },
-                                    },
-                                    PosixError.AGAIN, PosixError.ALREADY, PosixError.INPROGRESS => .{
-                                        .err = ConnectError.WouldBlock,
-                                    },
-                                    PosixError.ACCES, PosixError.PERM => .{ .err = ConnectError.AccessDenied },
-                                    PosixError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
-                                    PosixError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
-                                    PosixError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
-                                    PosixError.BADF => .{ .err = ConnectError.InvalidFd },
-                                    PosixError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
-                                    PosixError.FAULT => .{ .err = ConnectError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = ConnectError.Interrupted },
-                                    PosixError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
-                                    PosixError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
-                                    PosixError.NOTSOCK => .{ .err = ConnectError.NotASocket },
-                                    PosixError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                    PosixError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
-                                    else => .{ .err = ConnectError.Unexpected },
+                                const err = switch (e) {
+                                    PosixError.AGAIN,
+                                    PosixError.ALREADY,
+                                    PosixError.INPROGRESS,
+                                    => ConnectError.WouldBlock,
+                                    PosixError.ACCES, PosixError.PERM => ConnectError.AccessDenied,
+                                    PosixError.ADDRINUSE => ConnectError.AddressInUse,
+                                    PosixError.ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
+                                    PosixError.AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
+                                    PosixError.BADF => ConnectError.InvalidFd,
+                                    PosixError.CONNREFUSED => ConnectError.ConnectionRefused,
+                                    PosixError.FAULT => ConnectError.InvalidAddress,
+                                    PosixError.INTR => ConnectError.Interrupted,
+                                    PosixError.ISCONN => ConnectError.AlreadyConnected,
+                                    PosixError.NETUNREACH => ConnectError.NetworkUnreachable,
+                                    PosixError.NOTSOCK => ConnectError.NotASocket,
+                                    PosixError.PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
+                                    PosixError.TIMEDOUT => ConnectError.TimedOut,
+                                    else => ConnectError.Unexpected,
                                 };
+
+                                break :result .{ .err = err };
                             };
 
                             break :blk .{ .connect = result };
@@ -424,24 +431,25 @@ pub const AsyncKqueue = struct {
                                 null,
                             );
 
+                            if (rc > 0) break :blk .{ .recv = .{ .actual = @intCast(rc) } };
+                            if (rc == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
+
                             const result: RecvResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => switch (rc) {
-                                        0 => .{ .err = RecvError.Closed },
-                                        else => .{ .actual = @intCast(rc) },
-                                    },
-                                    PosixError.AGAIN => .{ .err = RecvError.WouldBlock },
-                                    PosixError.BADF => .{ .err = RecvError.InvalidFd },
-                                    PosixError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                                    PosixError.FAULT => .{ .err = RecvError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = RecvError.Interrupted },
-                                    PosixError.INVAL => .{ .err = RecvError.InvalidArguments },
-                                    PosixError.NOMEM => .{ .err = RecvError.OutOfMemory },
-                                    PosixError.NOTCONN => .{ .err = RecvError.NotConnected },
-                                    PosixError.NOTSOCK => .{ .err = RecvError.NotASocket },
-                                    else => .{ .err = RecvError.Unexpected },
+                                const err = switch (e) {
+                                    PosixError.AGAIN => RecvError.WouldBlock,
+                                    PosixError.BADF => RecvError.InvalidFd,
+                                    PosixError.CONNREFUSED => RecvError.ConnectionRefused,
+                                    PosixError.FAULT => RecvError.InvalidAddress,
+                                    PosixError.INTR => RecvError.Interrupted,
+                                    PosixError.INVAL => RecvError.InvalidArguments,
+                                    PosixError.NOMEM => RecvError.OutOfMemory,
+                                    PosixError.NOTCONN => RecvError.NotConnected,
+                                    PosixError.NOTSOCK => RecvError.NotASocket,
+                                    else => RecvError.Unexpected,
                                 };
+
+                                break :result .{ .err = err };
                             };
 
                             break :blk .{ .recv = result };
@@ -449,28 +457,29 @@ pub const AsyncKqueue = struct {
                         .send => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
                             const rc = std.posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
+                            if (rc >= 0) break :blk .{ .send = .{ .actual = @intCast(rc) } };
 
                             const result: SendResult = result: {
                                 const e: PosixError = std.posix.errno(rc);
-                                break :result switch (e) {
-                                    PosixError.SUCCESS => .{ .actual = @intCast(rc) },
-                                    PosixError.AGAIN => .{ .err = SendError.WouldBlock },
-                                    PosixError.ACCES => .{ .err = SendError.AccessDenied },
-                                    PosixError.ALREADY => .{ .err = SendError.OpenInProgress },
-                                    PosixError.BADF => .{ .err = SendError.InvalidFd },
-                                    PosixError.CONNRESET => .{ .err = SendError.Closed },
-                                    PosixError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
-                                    PosixError.FAULT => .{ .err = SendError.InvalidAddress },
-                                    PosixError.INTR => .{ .err = SendError.Interrupted },
-                                    PosixError.INVAL => .{ .err = SendError.InvalidArguments },
-                                    PosixError.ISCONN => .{ .err = SendError.AlreadyConnected },
-                                    PosixError.MSGSIZE => .{ .err = SendError.InvalidSize },
-                                    PosixError.NOBUFS, PosixError.NOMEM => .{ .err = SendError.OutOfMemory },
-                                    PosixError.NOTCONN => .{ .err = SendError.NotConnected },
-                                    PosixError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
-                                    PosixError.PIPE => .{ .err = SendError.BrokenPipe },
-                                    else => .{ .err = SendError.Unexpected },
+                                const err = switch (e) {
+                                    PosixError.AGAIN => SendError.WouldBlock,
+                                    PosixError.ACCES => SendError.AccessDenied,
+                                    PosixError.ALREADY => SendError.OpenInProgress,
+                                    PosixError.BADF => SendError.InvalidFd,
+                                    PosixError.CONNRESET, PosixError.PIPE => SendError.Closed,
+                                    PosixError.DESTADDRREQ => SendError.NoDestinationAddress,
+                                    PosixError.FAULT => SendError.InvalidAddress,
+                                    PosixError.INTR => SendError.Interrupted,
+                                    PosixError.INVAL => SendError.InvalidArguments,
+                                    PosixError.ISCONN => SendError.AlreadyConnected,
+                                    PosixError.MSGSIZE => SendError.InvalidSize,
+                                    PosixError.NOBUFS, PosixError.NOMEM => SendError.OutOfMemory,
+                                    PosixError.NOTCONN => SendError.NotConnected,
+                                    PosixError.OPNOTSUPP => SendError.OperationNotSupported,
+                                    else => SendError.Unexpected,
                                 };
+
+                                break :result .{ .err = err };
                             };
 
                             break :blk .{ .send = result };

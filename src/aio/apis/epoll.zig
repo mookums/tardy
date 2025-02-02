@@ -412,8 +412,9 @@ pub const AsyncEpoll = struct {
                                         std.posix.SendError.WouldBlock => unreachable,
                                         std.posix.SendError.AccessDenied => SendError.AccessDenied,
                                         std.posix.SendError.SystemResources => SendError.OutOfMemory,
-                                        std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
-                                        std.posix.SendError.BrokenPipe => SendError.BrokenPipe,
+                                        std.posix.SendError.ConnectionResetByPeer,
+                                        std.posix.SendError.BrokenPipe,
+                                        => SendError.Closed,
                                         std.posix.SendError.FastOpenAlreadyInProgress => SendError.OpenInProgress,
                                         else => SendError.Unexpected,
                                     };

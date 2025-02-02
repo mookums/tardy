@@ -637,7 +637,7 @@ pub const AsyncIoUring = struct {
                                 LinuxError.AGAIN => .{ .err = SendError.WouldBlock },
                                 LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
                                 LinuxError.BADF => .{ .err = SendError.InvalidFd },
-                                LinuxError.CONNRESET => .{ .err = SendError.Closed },
+                                LinuxError.CONNRESET, LinuxError.PIPE => .{ .err = SendError.Closed },
                                 LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
                                 LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
                                 LinuxError.INTR => .{ .err = SendError.Interrupted },
@@ -647,7 +647,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = SendError.OutOfMemory },
                                 LinuxError.NOTCONN => .{ .err = SendError.NotConnected },
                                 LinuxError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
-                                LinuxError.PIPE => .{ .err = SendError.BrokenPipe },
                                 else => .{ .err = SendError.Unexpected },
                             };
                         };

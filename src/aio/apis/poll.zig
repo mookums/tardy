@@ -387,7 +387,9 @@ pub const AsyncPoll = struct {
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
-                                    std.posix.SendError.ConnectionResetByPeer => SendError.Closed,
+                                    std.posix.SendError.ConnectionResetByPeer,
+                                    std.posix.SendError.BrokenPipe,
+                                    => SendError.Closed,
                                     else => SendError.Unexpected,
                                 };
 
