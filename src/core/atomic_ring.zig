@@ -3,42 +3,28 @@ const assert = std.debug.assert;
 
 const Atomic = std.atomic.Value;
 
-pub fn AtomicRing(comptime T: type) type {
+pub fn SpscAtomicRing(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        const Status = enum(u8) {
-            empty,
-            reading,
-            writing,
-            taken,
-        };
-
-        const Slot = struct {
-            status: Atomic(Status),
-            item: T,
-        };
-
         allocator: std.mem.Allocator,
-        items: []Slot,
+        items: []T,
 
-        read_index: Atomic(usize),
-        write_index: Atomic(usize),
-        count: Atomic(usize),
+        write_index: Atomic(usize) align(std.atomic.cache_line),
+        read_index: Atomic(usize) align(std.atomic.cache_line),
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
-            assert(size >= 1);
+            assert(size >= 2);
             assert(std.math.isPowerOfTwo(size));
 
-            const items = try allocator.alloc(Slot, size);
-            for (items) |*item| item.status = .{ .raw = .empty };
+            const items = try allocator.alloc(T, size);
+            errdefer allocator.free(items);
 
             return .{
                 .allocator = allocator,
                 .items = items,
-                .read_index = .{ .raw = 0 },
                 .write_index = .{ .raw = 0 },
-                .count = .{ .raw = 0 },
+                .read_index = .{ .raw = 0 },
             };
         }
 
@@ -47,65 +33,33 @@ pub fn AtomicRing(comptime T: type) type {
         }
 
         pub fn push(self: *Self, item: T) !void {
-            while (true) {
-                const curr_count = self.count.load(.acquire);
-                assert(curr_count <= self.items.len);
-                if (curr_count == self.items.len) return error.RingFull;
-
-                if (self.count.cmpxchgWeak(curr_count, curr_count + 1, .acq_rel, .acquire)) |_| {
-                    continue;
-                }
-
-                const write_pos = self.write_index.fetchAdd(1, .acquire) % self.items.len;
-                const slot = &self.items[write_pos];
-                const status = slot.status.cmpxchgWeak(.empty, .writing, .acq_rel, .acquire);
-
-                if (status) |_| {
-                    _ = self.count.fetchSub(1, .release);
-                    continue;
-                } else {
-                    slot.item = item;
-                    slot.status.store(.taken, .release);
-                    return;
-                }
-            }
+            const write = self.write_index.load(.acquire);
+            const next: usize = (write + 1) % self.items.len;
+            if (next == self.read_index.load(.acquire)) return error.RingFull;
+            self.items[write] = item;
+            self.write_index.store((write + 1) % self.items.len, .release);
         }
 
         pub fn pop(self: *Self) !T {
-            while (true) {
-                const curr_count = self.count.load(.acquire);
-                if (curr_count == 0) return error.RingEmpty;
-
-                if (self.count.cmpxchgWeak(curr_count, curr_count - 1, .acq_rel, .acquire)) |_| {
-                    continue;
-                }
-
-                const read_pos = self.read_index.fetchAdd(1, .acquire) % self.items.len;
-                const slot = &self.items[read_pos];
-                const status = slot.status.cmpxchgWeak(.taken, .reading, .acq_rel, .acquire);
-
-                if (status) |_| {
-                    _ = self.count.fetchAdd(1, .release);
-                    continue;
-                } else {
-                    const item = slot.item;
-                    slot.status.store(.empty, .release);
-                    return item;
-                }
-            }
+            const read = self.read_index.load(.acquire);
+            if (read == self.write_index.load(.acquire)) return error.RingEmpty;
+            const item = self.items[read];
+            self.read_index.store((read + 1) % self.items.len, .release);
+            return item;
         }
     };
 }
 
 const testing = std.testing;
 
-test "AtomicRing: Fill and Empty" {
+test "SpscAtomicRing: Fill and Empty" {
     const size: u32 = 128;
-    var ring = try AtomicRing(usize).init(testing.allocator, size);
+    var ring = try SpscAtomicRing(usize).init(testing.allocator, size);
     defer ring.deinit();
 
-    for (0..size) |i| try ring.push(i);
+    try testing.expectError(error.RingEmpty, ring.pop());
+    for (0..size - 1) |i| try ring.push(i);
     try testing.expectError(error.RingFull, ring.push(1));
-    for (0..size) |i| try testing.expectEqual(i, try ring.pop());
+    for (0..size - 1) |i| try testing.expectEqual(i, try ring.pop());
     try testing.expectError(error.RingEmpty, ring.pop());
 }

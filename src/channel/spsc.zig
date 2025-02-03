@@ -3,7 +3,7 @@ const log = std.log.scoped(.@"tardy/channels/spsc");
 
 const Frame = @import("../frame/lib.zig").Frame;
 const Ring = @import("../core/ring.zig").Ring;
-const AtomicRing = @import("../core/atomic_ring.zig").AtomicRing;
+const SpscAtomicRing = @import("../core/atomic_ring.zig").SpscAtomicRing;
 const Runtime = @import("../lib.zig").Runtime;
 
 const Atomic = std.atomic.Value;
@@ -28,25 +28,22 @@ pub fn Spsc(comptime T: type) type {
 
         pub const Producer = struct {
             inner: *Self,
+            rt: *Runtime,
 
             pub fn send(self: Producer, message: T) !void {
                 std.log.debug("producer sending...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => try self.inner.producer_rt.load(.acquire).?.scheduler.trigger_await(),
+                    .starting => try self.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
                         if (!self.inner.consumer_open.load(.acquire)) return error.Closed;
                         self.inner.ring.push(message) catch |e| switch (e) {
                             error.RingFull => {
-                                self.inner.producer_index.store(
-                                    self.inner.producer_rt.load(.acquire).?.current_task.?,
-                                    .release,
-                                );
-
+                                self.inner.producer_index.store(self.rt.current_task.?, .release);
                                 try self.inner.trigger_consumer();
-                                try self.inner.producer_rt.load(.acquire).?.scheduler.trigger_await();
+                                try self.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
@@ -64,12 +61,13 @@ pub fn Spsc(comptime T: type) type {
 
         pub const Consumer = struct {
             inner: *Self,
+            rt: *Runtime,
 
             pub fn recv(self: Consumer) !T {
                 log.debug("consumer recving...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => try self.inner.consumer_rt.load(.acquire).?.scheduler.trigger_await(),
+                    .starting => try self.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
@@ -77,14 +75,9 @@ pub fn Spsc(comptime T: type) type {
                             // If we are empty, trigger the producer to run.
                             error.RingEmpty => {
                                 if (!self.inner.producer_open.load(.acquire)) return error.Closed;
-
-                                self.inner.consumer_index.store(
-                                    self.inner.consumer_rt.load(.acquire).?.current_task.?,
-                                    .release,
-                                );
-
+                                self.inner.consumer_index.store(self.rt.current_task.?, .release);
                                 try self.inner.trigger_producer();
-                                try self.inner.consumer_rt.load(.acquire).?.scheduler.trigger_await();
+                                try self.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
@@ -100,21 +93,21 @@ pub fn Spsc(comptime T: type) type {
             }
         };
 
-        ring: AtomicRing(T),
+        ring: SpscAtomicRing(T),
 
-        producer_rt: Atomic(?*Runtime),
-        producer_index: Atomic(usize),
-        producer_open: Atomic(bool),
+        producer_rt: Atomic(?*Runtime) align(std.atomic.cache_line),
+        producer_index: Atomic(usize) align(std.atomic.cache_line),
+        producer_open: Atomic(bool) align(std.atomic.cache_line),
 
-        consumer_rt: Atomic(?*Runtime),
-        consumer_index: Atomic(usize),
-        consumer_open: Atomic(bool),
+        consumer_rt: Atomic(?*Runtime) align(std.atomic.cache_line),
+        consumer_index: Atomic(usize) align(std.atomic.cache_line),
+        consumer_open: Atomic(bool) align(std.atomic.cache_line),
 
-        state: std.atomic.Value(State),
+        state: std.atomic.Value(State) align(std.atomic.cache_line),
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
-                .ring = try AtomicRing(T).init(allocator, size),
+                .ring = try SpscAtomicRing(T).init(allocator, size),
 
                 .producer_rt = .{ .raw = null },
                 .producer_index = .{ .raw = 0 },
@@ -148,7 +141,7 @@ pub fn Spsc(comptime T: type) type {
 
             self.producer_open.store(true, .release);
             if (self.consumer_rt.load(.acquire) != null) self.state.store(.running, .release);
-            return .{ .inner = self };
+            return .{ .inner = self, .rt = runtime };
         }
 
         pub fn consumer(self: *Self, runtime: *Runtime) Consumer {
@@ -161,7 +154,7 @@ pub fn Spsc(comptime T: type) type {
 
             self.consumer_open.store(true, .release);
             if (self.producer_rt.load(.acquire) != null) self.state.store(.running, .release);
-            return .{ .inner = self };
+            return .{ .inner = self, .rt = runtime };
         }
     };
 }
