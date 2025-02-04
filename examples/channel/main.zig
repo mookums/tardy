@@ -49,7 +49,7 @@ pub fn main() !void {
     });
     defer tardy.deinit();
 
-    var channel = try Spsc(usize).init(allocator, 1);
+    var channel = try Spsc(usize).init(allocator, 2);
     defer channel.deinit();
 
     try tardy.entry(
