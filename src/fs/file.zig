@@ -23,6 +23,7 @@ const WriteError = @import("../aio/completion.zig").WriteError;
 
 const Cross = @import("../cross/lib.zig");
 const wrap = @import("../utils.zig").wrap;
+const unwrap = @import("../utils.zig").unwrap;
 
 const Stream = @import("../stream.zig").Stream;
 
@@ -445,6 +446,31 @@ pub const File = packed struct {
                 },
             };
         }
+    }
+
+    const ReadWriteContext = struct { file: File, rt: *Runtime };
+
+    const Writer = std.io.GenericWriter(ReadWriteContext, anyerror, struct {
+        fn write(ctx: ReadWriteContext, bytes: []const u8) !usize {
+            return try ctx.file.write(ctx.rt, bytes, null);
+        }
+    }.write);
+
+    const Reader = std.io.GenericReader(ReadWriteContext, anyerror, struct {
+        fn read(ctx: ReadWriteContext, buffer: []u8) !usize {
+            return ctx.file.read(ctx.rt, buffer, null) catch |e| switch (e) {
+                error.EndOfFile => 0,
+                else => return e,
+            };
+        }
+    }.read);
+
+    pub fn writer(self: File, rt: *Runtime) Writer {
+        return Writer{ .context = .{ .file = self, .rt = rt } };
+    }
+
+    pub fn reader(self: File, rt: *Runtime) Reader {
+        return Reader{ .context = .{ .file = self, .rt = rt } };
     }
 
     pub fn stream(self: *const File) Stream {
