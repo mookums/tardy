@@ -295,6 +295,28 @@ pub const Socket = struct {
         return length;
     }
 
+    const ReadWriteContext = struct { socket: Socket, rt: *Runtime };
+
+    const Writer = std.io.GenericWriter(ReadWriteContext, anyerror, struct {
+        fn write(ctx: ReadWriteContext, bytes: []const u8) !usize {
+            return try ctx.socket.send(ctx.rt, bytes);
+        }
+    }.write);
+
+    const Reader = std.io.GenericReader(ReadWriteContext, anyerror, struct {
+        fn read(ctx: ReadWriteContext, buffer: []u8) !usize {
+            return try ctx.socket.recv(ctx.rt, buffer);
+        }
+    }.read);
+
+    pub fn writer(self: Socket, rt: *Runtime) Writer {
+        return Writer{ .context = .{ .socket = self, .rt = rt } };
+    }
+
+    pub fn reader(self: Socket, rt: *Runtime) Reader {
+        return Reader{ .context = .{ .socket = self, .rt = rt } };
+    }
+
     pub fn stream(self: *const Socket) Stream {
         return Stream{
             .inner = @constCast(@ptrCast(self)),

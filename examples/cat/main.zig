@@ -12,9 +12,7 @@ const File = @import("tardy").File;
 
 pub const std_options = .{ .log_level = .err };
 
-const EntryParams = struct {
-    file_name: [:0]const u8,
-};
+const EntryParams = struct { file_name: [:0]const u8 };
 
 fn main_frame(rt: *Runtime, p: *EntryParams) !void {
     const std_out = File.std_out();
@@ -26,13 +24,16 @@ fn main_frame(rt: *Runtime, p: *EntryParams) !void {
         else => return e,
     };
 
+    const reader = file.reader(rt);
+    const writer = std_out.writer(rt);
+
     var buffer: [1024 * 32]u8 = undefined;
     var done: bool = false;
 
     while (!done) {
-        const length = try file.read_all(rt, &buffer, null);
+        const length = try reader.readAll(&buffer);
         done = length < buffer.len;
-        _ = try std_out.write_all(rt, buffer[0..length], null);
+        try writer.writeAll(buffer[0..length]);
     }
 }
 
