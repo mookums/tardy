@@ -57,6 +57,10 @@ pub const Socket = struct {
             .unix => |path| if (builtin.os.tag == .windows) unreachable else try std.net.Address.initUnix(path),
         };
 
+        return try init_with_address(kind, addr);
+    }
+
+    pub fn init_with_address(kind: Kind, addr: std.net.Address) !Socket {
         const sock_type: u32 = switch (kind) {
             .tcp, .unix => std.posix.SOCK.STREAM,
             .udp => std.posix.SOCK.DGRAM,
