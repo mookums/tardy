@@ -22,9 +22,6 @@ const WriteResult = @import("../aio/completion.zig").WriteResult;
 const WriteError = @import("../aio/completion.zig").WriteError;
 
 const Cross = @import("../cross/lib.zig");
-const wrap = @import("../utils.zig").wrap;
-const unwrap = @import("../utils.zig").unwrap;
-
 const Stream = @import("../stream.zig").Stream;
 
 const StdFile = std.fs.File;

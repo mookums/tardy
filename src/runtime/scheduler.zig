@@ -9,9 +9,6 @@ const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Queue = @import("../core/queue.zig").Queue;
 
-const wrap = @import("../utils.zig").wrap;
-const unwrap = @import("../utils.zig").unwrap;
-
 pub const AsyncSubmission = @import("../aio/lib.zig").AsyncSubmission;
 
 const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBitSet;

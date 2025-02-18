@@ -40,9 +40,6 @@ pub const Pool = @import("core/pool.zig").Pool;
 pub const PoolKind = @import("core/pool.zig").PoolKind;
 pub const Queue = @import("core/queue.zig").Queue;
 
-pub const wrap = @import("utils.zig").wrap;
-pub const unwrap = @import("utils.zig").unwrap;
-
 /// Cross-platform abstractions.
 /// For the `std.posix` interface types.
 pub const Cross = @import("cross/lib.zig");
