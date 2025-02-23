@@ -510,7 +510,13 @@ pub const AsyncIoUring = struct {
 
     fn submit(runner: *anyopaque) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
-        _ = try uring.inner.submit();
+
+        _ = while (true) {
+            break uring.inner.submit() catch |e| switch (e) {
+                error.SignalInterrupt => continue,
+                else => return e,
+            };
+        };
     }
 
     fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
@@ -518,7 +524,14 @@ pub const AsyncIoUring = struct {
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
 
-        const count = try uring.inner.copy_cqes(uring.cqes[0..], uring_nr);
+        const count = while (true) {
+            break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e| {
+                switch (e) {
+                    error.SignalInterrupt => continue,
+                    else => return e,
+                }
+            };
+        };
 
         for (uring.cqes[0..count], 0..) |cqe, i| {
             var job_with_data: JobBundle = uring.jobs.get(cqe.user_data);
@@ -559,10 +572,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.BADF => .{ .err = AcceptError.InvalidFd },
                                 LinuxError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
                                 LinuxError.FAULT => .{ .err = AcceptError.InvalidAddress },
-                                LinuxError.INTR => {
-                                    try uring.queue_accept(job.task, inner.socket, inner.kind);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = AcceptError.NotListening },
                                 LinuxError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
                                 LinuxError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
@@ -595,10 +604,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
                                 LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
                                 LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
-                                LinuxError.INTR => {
-                                    try uring.queue_connect(job.task, inner.socket, inner.addr, inner.kind);
-                                    continue;
-                                },
                                 LinuxError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
                                 LinuxError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
                                 LinuxError.NOTSOCK => .{ .err = ConnectError.NotASocket },
@@ -610,7 +615,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .connect = result };
                     },
-                    .recv => |inner| {
+                    .recv => {
                         if (cqe.res > 0) break :blk .{ .recv = .{ .actual = @intCast(cqe.res) } };
                         if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
@@ -622,10 +627,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.CONNRESET => .{ .err = RecvError.Closed },
                                 LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
                                 LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
-                                LinuxError.INTR => {
-                                    try uring.queue_recv(job.task, inner.socket, inner.buffer);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = RecvError.InvalidArguments },
                                 LinuxError.NOMEM => .{ .err = RecvError.OutOfMemory },
                                 LinuxError.NOTCONN => .{ .err = RecvError.NotConnected },
@@ -636,7 +637,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .recv = result };
                     },
-                    .send => |inner| {
+                    .send => {
                         if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
 
                         const result: SendResult = result: {
@@ -649,10 +650,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.CONNRESET, LinuxError.PIPE => .{ .err = SendError.Closed },
                                 LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
                                 LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
-                                LinuxError.INTR => {
-                                    try uring.queue_send(job.task, inner.socket, inner.buffer);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = SendError.InvalidArguments },
                                 LinuxError.ISCONN => .{ .err = SendError.AlreadyConnected },
                                 LinuxError.MSGSIZE => .{ .err = SendError.InvalidSize },
@@ -665,7 +662,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .send = result };
                     },
-                    .mkdir => |inner| {
+                    .mkdir => {
                         if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
 
                         const result: MkdirResult = result: {
@@ -679,10 +676,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.NOSPC => .{ .err = MkdirError.NoSpace },
                                 LinuxError.NOTDIR => .{ .err = MkdirError.NotADirectory },
                                 LinuxError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
-                                LinuxError.INTR => {
-                                    try uring.queue_mkdir(job.task, inner.path, inner.mode);
-                                    continue;
-                                },
                                 else => .{ .err = MkdirError.Unexpected },
                             };
                         };
@@ -709,10 +702,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.EXIST => .{ .err = OpenError.AlreadyExists },
                                 LinuxError.FAULT => .{ .err = OpenError.InvalidAddress },
                                 LinuxError.FBIG, LinuxError.OVERFLOW => .{ .err = OpenError.FileTooBig },
-                                LinuxError.INTR => {
-                                    try uring.queue_open(job.task, inner.path, inner.flags);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = OpenError.InvalidArguments },
                                 LinuxError.ISDIR => .{ .err = OpenError.IsDirectory },
                                 LinuxError.LOOP => .{ .err = OpenError.Loop },
@@ -734,7 +723,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .open = result };
                     },
-                    .delete => |inner| {
+                    .delete => {
                         if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
 
                         const result: DeleteResult = result: {
@@ -753,10 +742,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.NOTDIR => .{ .err = DeleteError.IsNotDirectory },
                                 LinuxError.ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
                                 LinuxError.BADF => .{ .err = DeleteError.InvalidFd },
-                                LinuxError.INTR => {
-                                    try uring.queue_delete(job.task, inner.path, inner.is_dir);
-                                    continue;
-                                },
                                 // rmdir
                                 LinuxError.INVAL => .{ .err = DeleteError.InvalidArguments },
                                 LinuxError.NOTEMPTY => .{ .err = DeleteError.NotEmpty },
@@ -766,7 +751,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .delete = result };
                     },
-                    .read => |inner| {
+                    .read => {
                         if (cqe.res > 0) break :blk .{ .read = .{ .actual = @intCast(cqe.res) } };
                         if (cqe.res == 0) break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
 
@@ -776,10 +761,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.AGAIN => .{ .err = ReadError.WouldBlock },
                                 LinuxError.BADF => .{ .err = ReadError.InvalidFd },
                                 LinuxError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                LinuxError.INTR => {
-                                    try uring.queue_read(job.task, inner.fd, inner.buffer, inner.offset);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = ReadError.InvalidArguments },
                                 LinuxError.IO => .{ .err = ReadError.IoError },
                                 LinuxError.ISDIR => .{ .err = ReadError.IsDirectory },
@@ -789,7 +770,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .read = result };
                     },
-                    .write => |inner| {
+                    .write => {
                         if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
 
                         const result: WriteResult = result: {
@@ -801,10 +782,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
                                 LinuxError.FAULT => .{ .err = WriteError.InvalidAddress },
                                 LinuxError.FBIG => .{ .err = WriteError.FileTooBig },
-                                LinuxError.INTR => {
-                                    try uring.queue_write(job.task, inner.fd, inner.buffer, inner.offset);
-                                    continue;
-                                },
                                 LinuxError.INVAL => .{ .err = WriteError.InvalidArguments },
                                 LinuxError.IO => .{ .err = WriteError.IoError },
                                 LinuxError.NOSPC => .{ .err = WriteError.NoSpace },
@@ -816,7 +793,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .write = result };
                     },
-                    .stat => |inner| {
+                    .stat => {
                         defer uring.allocator.destroy(job_with_data.statx);
 
                         if (cqe.res == 0) {
@@ -847,10 +824,6 @@ pub const AsyncIoUring = struct {
                                 LinuxError.BADF => .{ .err = StatError.InvalidFd },
                                 LinuxError.FAULT => .{ .err = StatError.InvalidAddress },
                                 LinuxError.INVAL => .{ .err = StatError.InvalidArguments },
-                                LinuxError.INTR => {
-                                    try uring.queue_stat(job.task, inner);
-                                    continue;
-                                },
                                 LinuxError.LOOP => .{ .err = StatError.Loop },
                                 LinuxError.NAMETOOLONG => .{ .err = StatError.NameTooLong },
                                 LinuxError.NOENT => .{ .err = StatError.NotFound },
