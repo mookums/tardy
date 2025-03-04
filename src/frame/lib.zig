@@ -22,7 +22,7 @@ fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
             //const args_ptr: *align(1) Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
             const args_ptr: *Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
             @call(.auto, func, args_ptr.*) catch |e| {
-                log.warn("frame failed | {}", .{e});
+                log.warn("frame failed | {any}", .{e});
                 frame.status = .errored;
                 Frame.yield();
                 unreachable;
