@@ -221,45 +221,34 @@ pub const AsyncPoll = struct {
         var reaped: usize = 0;
 
         poll_loop: while (reaped == 0 and wait) {
-            var timeout_task: ?usize = null;
-            const timeout: i32 = blk: {
-                const current: usize = @intCast(std.time.milliTimestamp());
-                while (true) {
-                    if (poll.timers.peek()) |peeked| {
-                        if (peeked.milliseconds < current) {
-                            if (completions.len - reaped == 0) break :poll_loop;
-                            const timer = poll.timers.remove();
-                            completions[reaped] = .{
-                                .result = .none,
-                                .task = timer.task,
-                            };
-                            reaped += 1;
-                        } else {
-                            if (completions.len - reaped == 0) break :poll_loop;
-                            const timer = poll.timers.remove();
-                            timeout_task = timer.task;
-                            break :blk @intCast(timer.milliseconds - current);
-                        }
-                    } else break :blk if (!wait or reaped > 0) 0 else -1;
-                }
-            };
+            const current: usize = @intCast(std.time.milliTimestamp());
+
+            // Reap all completed Timers
+            while (poll.timers.peek()) |peeked| {
+                if (peeked.milliseconds > current) break;
+                if (completions.len - reaped == 0) break;
+
+                const timer = poll.timers.remove();
+                completions[reaped] = .{
+                    .result = .none,
+                    .task = timer.task,
+                };
+                reaped += 1;
+            }
+
+            var timeout: i32 = if (!wait or reaped > 0) 0 else -1;
+
+            // Select next Timer
+            if (poll.timers.peek()) |peeked| {
+                timeout = @intCast(peeked.milliseconds - current);
+            }
 
             var poll_result = if (comptime builtin.os.tag == .windows)
                 std.os.windows.poll(poll.fd_list.items.ptr, @intCast(poll.fd_list.items.len), timeout)
             else
                 try std.posix.poll(poll.fd_list.items, timeout);
 
-            log.debug("poll result={d}", .{poll_result});
-            if (timeout_task) |task| {
-                completions[reaped] = .{
-                    .result = .none,
-                    .task = task,
-                };
-                reaped += 1;
-
-                // poll result can only return 0 IF it is a timer event.
-                if (poll_result == 0) continue :poll_loop;
-            }
+            if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
             // poll result cant be 0 if you're waiting.
             // it can be if there are no fds :shrug:
