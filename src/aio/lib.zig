@@ -54,17 +54,15 @@ pub const AsyncType = union(AsyncKind) {
 pub fn auto_async_match() AsyncType {
     switch (comptime builtin.target.os.tag) {
         .linux => {
-            const version = comptime builtin.target.os.getVersionRange().linux;
-
-            if (version.isAtLeast(.{ .major = 5, .minor = 1, .patch = 0 }) orelse false) {
-                return AsyncType.io_uring;
+            if (comptime builtin.target.os.isAtLeast(.linux, .{ .major = 5, .minor = 1, .patch = 0 })) |res| {
+                if (res) return AsyncType.io_uring;
             }
 
             return AsyncType.epoll;
         },
         .windows => return AsyncType.poll,
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncType.kqueue,
-        .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncType.kqueue,
+        .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncType.kqueue,
         .solaris, .illumos => return AsyncType.poll,
         else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }

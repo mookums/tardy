@@ -22,7 +22,7 @@
       in
       {
         devShells.default = iguanaLib.mkShell {
-          zigVersion = "0.13.0";
+          zigVersion = "master";
           withZls = true;
 
           extraPackages = with pkgs; [
