@@ -2,6 +2,8 @@ const std = @import("std");
 
 const Runtime = @import("../runtime/lib.zig").Runtime;
 
+const Pool = @import("../lib.zig").Pool;
+
 const wrap = @import("../wrapping.zig").wrap;
 const unwrap = @import("../wrapping.zig").unwrap;
 
@@ -16,39 +18,56 @@ pub const EventBus = struct {
     }
 
     pub const Subscription = struct {
+        topic: *Topic,
+        index: usize,
         rt: ?*Runtime,
         task: ?usize,
         queue: std.ArrayListUnmanaged(usize),
+        lock: std.Thread.Mutex = .{},
 
-        pub fn init(allocator: std.mem.Allocator) !Subscription {
+        pub fn init(allocator: std.mem.Allocator, topic: *Topic, index: usize) !Subscription {
             const queue = try std.ArrayListUnmanaged(usize).initCapacity(allocator, 0);
-            return .{ .rt = null, .task = null, .queue = queue };
+            return .{ .topic = topic, .index = index, .rt = null, .task = null, .queue = queue };
+        }
+
+        pub fn unsubscribe(self: *Subscription) !void {
+            self.topic.subscribers.release(self.index);
         }
 
         pub fn send(self: *Subscription, allocator: std.mem.Allocator, comptime T: type, item: T) !void {
+            self.lock.lock();
+            defer self.lock.unlock();
+
             try self.queue.append(allocator, wrap(usize, item));
             if (self.rt != null and self.task != null) try self.rt.?.trigger(self.task.?);
         }
 
-        pub fn recv(self: *Subscription, rt: *Runtime, comptime T: type) !T {
-            while (self.queue.items.len == 0) {
-                self.rt = rt;
-                self.task = rt.current_task.?;
-                try self.rt.?.scheduler.trigger_await();
+        pub fn recv(self: *const Subscription, rt: *Runtime, comptime T: type) !T {
+            const item_ptr = self.topic.subscribers.get_ptr(self.index);
+
+            item_ptr.lock.lock();
+            defer item_ptr.lock.unlock();
+
+            while (item_ptr.queue.items.len == 0) {
+                item_ptr.rt = rt;
+                item_ptr.task = rt.current_task.?;
+                item_ptr.lock.unlock();
+                try item_ptr.rt.?.scheduler.trigger_await();
+                item_ptr.lock.lock();
             }
 
-            self.rt = null;
-            self.task = null;
-            return unwrap(T, self.queue.orderedRemove(0));
+            item_ptr.rt = null;
+            item_ptr.task = null;
+            return unwrap(T, item_ptr.queue.orderedRemove(0));
         }
     };
 
     pub const Topic = struct {
-        subscribers: std.ArrayListUnmanaged(*Subscription),
+        subscribers: Pool(Subscription),
         lock: std.Thread.Mutex = .{},
 
         pub fn init(allocator: std.mem.Allocator) !Topic {
-            const subscribers = try std.ArrayListUnmanaged(*Subscription).initCapacity(allocator, 0);
+            const subscribers = try Pool(Subscription).init(allocator, 1, .grow);
             return .{ .subscribers = subscribers };
         }
 
@@ -56,21 +75,22 @@ pub const EventBus = struct {
             self.lock.lock();
             defer self.lock.unlock();
 
-            for (self.subscribers.items) |s| try s.send(allocator, T, item);
+            var iter = self.subscribers.iterator();
+            while (iter.next_ptr()) |s| try s.send(allocator, T, item);
         }
 
-        pub fn subscribe(self: *Topic, allocator: std.mem.Allocator) !*Subscription {
+        pub fn subscribe(self: *Topic, allocator: std.mem.Allocator) !Subscription {
             self.lock.lock();
             defer self.lock.unlock();
 
-            const subscription = try allocator.create(Subscription);
-            subscription.* = try Subscription.init(allocator);
-            try self.subscribers.append(allocator, subscription);
-            return subscription;
+            const index = try self.subscribers.borrow();
+            const item_ptr = self.subscribers.get_ptr(index);
+            item_ptr.* = try Subscription.init(allocator, self, index);
+            return item_ptr.*;
         }
     };
 
-    pub fn subscribe(self: *EventBus, topic_enum: anytype) !*Subscription {
+    pub fn subscribe(self: *EventBus, topic_enum: anytype) !Subscription {
         const info = @typeInfo(@TypeOf(topic_enum));
         if (info != .Enum and info != .EnumLiteral) @compileError("topic must be an enum type!");
 
