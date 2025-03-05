@@ -30,8 +30,9 @@ pub const EventBus = struct {
             return .{ .topic = topic, .index = index, .rt = null, .task = null, .queue = queue };
         }
 
-        pub fn unsubscribe(self: *Subscription) !void {
-            self.topic.subscribers.release(self.index);
+        pub fn unsubscribe(self: *Subscription) void {
+            // TODO: clean up the topic if it has no subscribers, it shouldn't leak.
+            self.topic.unsubscribe(self.index);
         }
 
         pub fn send(self: *Subscription, allocator: std.mem.Allocator, comptime T: type, item: T) !void {
@@ -71,6 +72,10 @@ pub const EventBus = struct {
             return .{ .subscribers = subscribers };
         }
 
+        pub fn deinit(self: Topic) void {
+            self.subscribers.deinit();
+        }
+
         pub fn push(self: *Topic, allocator: std.mem.Allocator, comptime T: type, item: T) !void {
             self.lock.lock();
             defer self.lock.unlock();
@@ -88,28 +93,36 @@ pub const EventBus = struct {
             item_ptr.* = try Subscription.init(allocator, self, index);
             return item_ptr.*;
         }
+
+        pub fn unsubscribe(self: *Topic, index: usize) void {
+            self.subscribers.release(index);
+        }
     };
 
-    pub fn subscribe(self: *EventBus, topic_enum: anytype) !Subscription {
-        const info = @typeInfo(@TypeOf(topic_enum));
-        if (info != .Enum and info != .EnumLiteral) @compileError("topic must be an enum type!");
+    pub fn subscribe(self: *EventBus, topic: anytype) !Subscription {
+        const topic_name: []const u8 = switch (@typeInfo(@TypeOf(topic))) {
+            .Enum, .EnumLiteral => @tagName(topic),
+            else => topic,
+        };
 
         self.lock.lock();
         defer self.lock.unlock();
 
-        var entry = try self.topics.getOrPut(self.allocator, @tagName(topic_enum));
+        var entry = try self.topics.getOrPut(self.allocator, topic_name);
         if (!entry.found_existing) entry.value_ptr.* = try Topic.init(self.allocator);
         return try entry.value_ptr.subscribe(self.allocator);
     }
 
-    pub fn push(self: *EventBus, topic_enum: anytype, comptime T: type, item: T) !void {
-        const info = @typeInfo(@TypeOf(topic_enum));
-        if (info != .Enum and info != .EnumLiteral) @compileError("topic must be an enum type!");
+    pub fn push(self: *EventBus, topic: anytype, comptime T: type, item: T) !void {
+        const topic_name: []const u8 = switch (@typeInfo(@TypeOf(topic))) {
+            .Enum, .EnumLiteral => @tagName(topic),
+            else => topic,
+        };
 
         self.lock.lock();
         defer self.lock.unlock();
 
-        const entry = try self.topics.getOrPut(self.allocator, @tagName(topic_enum));
+        const entry = try self.topics.getOrPut(self.allocator, topic_name);
         if (!entry.found_existing) entry.value_ptr.* = try Topic.init(self.allocator);
         try entry.value_ptr.push(self.allocator, T, item);
     }

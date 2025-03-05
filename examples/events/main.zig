@@ -9,7 +9,7 @@ const Tardy = @import("tardy").Tardy(.auto);
 pub const std_options = .{ .log_level = .debug };
 
 fn first_frame(rt: *Runtime) !void {
-    const sub = try rt.events.subscribe(.abc);
+    const sub = try rt.events.subscribe("abc");
     std.log.debug("subscribed to topic...", .{});
     const value = try sub.recv(rt, u32);
     std.log.debug("sub 1 received value {d} from event topic", .{value});
