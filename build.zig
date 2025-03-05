@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
     add_example(b, "rmdir", target, optimize, tardy);
     add_example(b, "stat", target, optimize, tardy);
     add_example(b, "channel", target, optimize, tardy);
+    add_example(b, "events", target, optimize, tardy);
     add_example(b, "stream", target, optimize, tardy);
 
     const tests = b.addTest(.{

@@ -21,6 +21,8 @@ pub const Stat = @import("fs/lib.zig").Stat;
 pub const Socket = @import("net/lib.zig").Socket;
 pub const Stream = @import("stream.zig").Stream;
 
+pub const EventBus = @import("event/lib.zig").EventBus;
+
 // Results
 pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
 pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
@@ -104,6 +106,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
         allocator: std.mem.Allocator,
         options: TardyOptions,
         mutex: std.Thread.Mutex = .{},
+        events: EventBus,
 
         pub fn init(allocator: std.mem.Allocator, options: TardyOptions) !Self {
             log.debug("aio backend: {s}", .{@tagName(aio_type)});
@@ -112,12 +115,14 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                 .allocator = allocator,
                 .options = options,
                 .aios = try std.ArrayListUnmanaged(*AioInnerType).initCapacity(allocator, 0),
+                .events = try EventBus.init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
             for (self.aios.items) |aio| self.allocator.destroy(aio);
             self.aios.deinit(self.allocator);
+            //self.events.deinit():
         }
 
         /// This will spawn a new Runtime.
@@ -143,7 +148,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
             };
             errdefer aio.deinit(self.allocator);
 
-            return try Runtime.init(self.allocator, aio, .{
+            return try Runtime.init(self.allocator, aio, &self.events, .{
                 .id = id,
                 .pooling = self.options.pooling,
                 .size_tasks_initial = self.options.size_tasks_initial,

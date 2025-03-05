@@ -69,7 +69,10 @@ pub const Scheduler = struct {
         Frame.yield();
     }
 
-    // NOTE: This can spuriously trigger a Task later in the Run Loop.
+    /// YOU SHOULD GENERALLY NOT CALL THIS ONE. IT WILL NOT PROPERLY HANDLE
+    /// THE WAKING NATURE OF THE TRIGGER. USE THE RUNTIME ONE.
+    ///
+    /// NOTE: This can spuriously trigger a Task later in the Run Loop.
     /// Safe to call from a different Runtime.
     pub fn trigger(self: *Scheduler, index: usize) !void {
         try self.triggers.set(index);

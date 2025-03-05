@@ -13,6 +13,8 @@ const Task = @import("task.zig").Task;
 const Storage = @import("storage.zig").Storage;
 const Timespec = @import("../lib.zig").Timespec;
 
+const EventBus = @import("../event/lib.zig").EventBus;
+
 const RuntimeOptions = struct {
     id: usize,
     pooling: PoolKind,
@@ -27,13 +29,15 @@ pub const Runtime = struct {
     storage: Storage,
     scheduler: Scheduler,
     aio: Async,
+    /// A crossthread Event Bus for triggering Events.
+    events: *EventBus,
     id: usize,
     running: bool,
 
     // The currently running Task's index.
     current_task: ?usize = null,
 
-    pub fn init(allocator: std.mem.Allocator, aio: Async, options: RuntimeOptions) !Runtime {
+    pub fn init(allocator: std.mem.Allocator, aio: Async, events: *EventBus, options: RuntimeOptions) !Runtime {
         const scheduler = try Scheduler.init(
             allocator,
             options.size_tasks_initial,
@@ -46,6 +50,7 @@ pub const Runtime = struct {
             .storage = storage,
             .scheduler = scheduler,
             .aio = aio,
+            .events = events,
             .id = options.id,
             .current_task = null,
             .running = false,
