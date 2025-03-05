@@ -44,7 +44,7 @@ pub const EventBus = struct {
         }
 
         pub fn recv(self: *const Subscription, rt: *Runtime, comptime T: type) !T {
-            const item_ptr = self.topic.subscribers.get_ptr(self.index);
+            var item_ptr = self.topic.subscribers.get_ptr(self.index);
 
             item_ptr.lock.lock();
             defer item_ptr.lock.unlock();
@@ -53,7 +53,10 @@ pub const EventBus = struct {
                 item_ptr.rt = rt;
                 item_ptr.task = rt.current_task.?;
                 item_ptr.lock.unlock();
+
                 try item_ptr.rt.?.scheduler.trigger_await();
+                // get a new pointer as  the old one might be invalid.
+                item_ptr = self.topic.subscribers.get_ptr(self.index);
                 item_ptr.lock.lock();
             }
 
