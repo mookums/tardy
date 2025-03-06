@@ -25,7 +25,7 @@ const SharedParams = @import("lib.zig").SharedParams;
 const First = @import("first.zig");
 const Second = @import("second.zig");
 
-pub const std_options: std.Options = .{ .log_level = .info };
+pub const std_options: std.Options = .{ .log_level = .debug };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -74,22 +74,51 @@ pub fn main() !void {
     log.debug("{s}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .single,
+        .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
     });
     defer tardy.deinit();
 
+    const EntryParams = struct {
+        runtime: ?*Runtime,
+        shared: *const SharedParams,
+    };
+
+    var params: EntryParams = .{ .runtime = null, .shared = &shared };
+
     try tardy.entry(
-        &shared,
+        &params,
         struct {
-            fn start(rt: *Runtime, p: *const SharedParams) !void {
-                try rt.spawn(.{ rt, p }, First.start_frame, First.STACK_SIZE);
-                try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE);
+            fn start(rt: *Runtime, p: *EntryParams) !void {
+                switch (rt.id) {
+                    0 => {
+                        p.runtime = rt;
+                        try rt.spawn(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE);
+                        try rt.spawn(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE);
+                    },
+                    1 => try rt.spawn(.{ rt, &p.runtime }, timeout_task, 1024 * 1024 * 8),
+                    else => unreachable,
+                }
             }
         }.start,
     );
 
     std.debug.print("seed={d} passed\n", .{seed});
+}
+
+fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
+    const TIMEOUT_LENGTH_S = std.time.s_per_min;
+
+    // Checks every second to see if the other Runtime is done.
+    for (0..TIMEOUT_LENGTH_S) |_| {
+        try Timer.delay(rt, .{ .seconds = 1 });
+        if (other.*) |o| if (!o.running) break;
+    }
+
+    // If it isn't, it'll panic and stop the CI.
+    if (other.*) |o| {
+        if (o.running) @panic("e2e test failed! | timed out");
+    } else @panic("e2e test failed | test runtime didn't start");
 }
