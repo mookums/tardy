@@ -28,7 +28,7 @@ pub const Runtime = struct {
     scheduler: Scheduler,
     aio: Async,
     id: usize,
-    running: bool = true,
+    running: bool,
 
     // The currently running Task's index.
     current_task: ?usize = null,
@@ -48,6 +48,7 @@ pub const Runtime = struct {
             .aio = aio,
             .id = options.id,
             .current_task = null,
+            .running = false,
         };
     }
 
@@ -61,15 +62,26 @@ pub const Runtime = struct {
     /// Wake the given Runtime.
     /// Safe to call from a different Runtime.
     pub fn wake(self: *Runtime) !void {
-        try self.aio.wake();
+        if (self.running) try self.aio.wake();
     }
 
     /// Trigger a waiting (`.wait_for_trigger`) Task.
     /// Safe to call from a different Runtime.
     pub fn trigger(self: *Runtime, index: usize) !void {
-        log.debug("{d} - triggering {d}", .{ self.id, index });
-        try self.scheduler.trigger(index);
-        try self.wake();
+        if (self.running) {
+            log.debug("{d} - triggering {d}", .{ self.id, index });
+            try self.scheduler.trigger(index);
+            try self.wake();
+        }
+    }
+
+    /// Stop the given Runtime.
+    /// Safe to call from a different Runtime.
+    pub fn stop(self: *Runtime) void {
+        if (self.running) {
+            self.running = false;
+            self.aio.wake() catch unreachable;
+        }
     }
 
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
@@ -80,11 +92,6 @@ pub const Runtime = struct {
         stack_size: usize,
     ) !void {
         try self.scheduler.spawn(frame_ctx, frame_fn, stack_size);
-    }
-
-    pub fn stop(self: *Runtime) void {
-        self.running = false;
-        self.wake() catch unreachable;
     }
 
     fn run_task(self: *Runtime, task: *Task) !void {
@@ -121,6 +128,9 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime) !void {
+        defer self.running = false;
+        self.running = true;
+
         while (true) {
             var force_woken = false;
 

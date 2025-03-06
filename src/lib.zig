@@ -225,6 +225,12 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                         };
 
                         thread_rt.run() catch |e| log.err("{d} - runtime error={}", .{ thread_rt.id, e });
+
+                        // wait for the rest to stop before cleaning ourselves up.
+                        // this is because the runtime is allocate on our stack and others might be checking
+                        // our running status or attempting to wake us.
+                        _ = count.fetchSub(1, .acquire);
+                        while (count.load(.acquire) > 0) std.time.sleep(std.time.ns_per_s);
                     }
                 }.thread_init, .{
                     self,
