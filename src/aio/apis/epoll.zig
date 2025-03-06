@@ -106,16 +106,16 @@ pub const AsyncEpoll = struct {
         const index = try self.jobs.borrow_hint(task);
         const item = self.jobs.get_ptr(index);
 
-        const timer_fd_usize = std.os.linux.timerfd_create(std.os.linux.CLOCK.MONOTONIC, .{ .NONBLOCK = true });
+        const timer_fd_usize = std.os.linux.timerfd_create(std.os.linux.timerfd_clockid_t.MONOTONIC, .{ .NONBLOCK = true });
         const timer_fd: i32 = @intCast(timer_fd_usize);
         const ktimerspec: std.os.linux.itimerspec = .{
             .it_value = .{
-                .tv_sec = @intCast(timespec.seconds),
-                .tv_nsec = @intCast(timespec.nanos),
+                .sec = @intCast(timespec.seconds),
+                .nsec = @intCast(timespec.nanos),
             },
             .it_interval = .{
-                .tv_sec = 0,
-                .tv_nsec = 0,
+                .sec = 0,
+                .nsec = 0,
             },
         };
 

@@ -1,7 +1,8 @@
 .{
-    .name = "tardy",
+    .name = .tardy,
+    .fingerprint = 0x36d7fa718788f5b0,
     .version = "0.3.0",
-    .minimum_zig_version = "0.13.0",
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{},
 
     .paths = .{

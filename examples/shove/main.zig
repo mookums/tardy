@@ -13,9 +13,7 @@ const OpenFileResult = @import("tardy").OpenFileResult;
 const ReadResult = @import("tardy").ReadResult;
 const WriteResult = @import("tardy").WriteResult;
 
-pub const std_options = .{
-    .log_level = .debug,
-};
+pub const log_level: std.log.Level = .err;
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
     const file = try Dir.cwd().create_file(rt, name, .{});
