@@ -250,11 +250,6 @@ pub const AsyncPoll = struct {
 
             if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
-            // poll result cant be 0 if you're waiting.
-            // it can be if there are no fds :shrug:
-            // but if there are no fds, we shouldn't be waiting :)
-            assert(poll_result != 0 and wait);
-
             var i: usize = poll.fd_list.items.len;
             while (i > 0) {
                 i -= 1;
