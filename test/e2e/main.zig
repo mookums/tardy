@@ -45,18 +45,12 @@ pub fn main() !void {
         defer allocator.free(bytes);
 
         var iter = std.mem.splitScalar(u8, bytes, '\n');
-        const pre_new = iter.next() orelse {
-            return log.err("seed not passed in: ./e2e [seed]", .{});
-        };
+        const not_passed_in = "seed not passed in: ./e2e [seed]";
+        const pre_new = iter.next() orelse @panic(not_passed_in);
         const length = pre_new.len;
 
-        if (length <= 1) {
-            return log.err("seed not passed in: ./e2e [seed]", .{});
-        }
-
-        if (length >= maybe_seed_buffer.len) {
-            return log.err("seed too long to be a u64", .{});
-        }
+        if (length <= 1) @panic(not_passed_in);
+        if (length >= maybe_seed_buffer.len) @panic("seed too long to be a u64");
 
         assert(length < maybe_seed_buffer.len);
         std.mem.copyForwards(u8, &maybe_seed_buffer, pre_new);
@@ -64,10 +58,7 @@ pub fn main() !void {
         break :blk maybe_seed_buffer[0..length :0];
     };
 
-    const seed = std.fmt.parseUnsigned(u64, seed_string, 10) catch {
-        log.err("seed passed in is not u64", .{});
-        return;
-    };
+    const seed = std.fmt.parseUnsigned(u64, seed_string, 10) catch @panic("seed passed in is not u64");
     var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();
 
