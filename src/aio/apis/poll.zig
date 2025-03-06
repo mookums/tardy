@@ -257,10 +257,11 @@ pub const AsyncPoll = struct {
                 if (pollfd.revents == 0) continue;
                 if (completions.len - reaped == 0) break;
 
-                var job = poll.fd_job_map.get(pollfd.fd) orelse {
+                var job: Job = poll.fd_job_map.get(pollfd.fd) orelse {
                     @panic("failed to get job from fd!");
                 };
 
+                // TODO: add job_complete that allows us to leave jobs that return WouldBlock
                 poll_result -= 1;
                 _ = poll.fd_list.swapRemove(i);
                 assert(poll.fd_job_map.remove(pollfd.fd));
@@ -295,6 +296,10 @@ pub const AsyncPoll = struct {
                                 0,
                             ) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.AcceptError.WouldBlock => {
+                                        try poll.queue_accept(job.task, inner.socket, inner.kind);
+                                        continue;
+                                    },
                                     std.posix.AcceptError.ConnectionAborted,
                                     std.posix.AcceptError.ConnectionResetByPeer,
                                     => AcceptError.ConnectionAborted,
@@ -328,6 +333,10 @@ pub const AsyncPoll = struct {
                                 inner.addr.getOsSockLen(),
                             ) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.ConnectError.WouldBlock => {
+                                        try poll.queue_connect(job.task, inner.socket, inner.addr, inner.kind);
+                                        continue;
+                                    },
                                     else => ConnectError.Unexpected,
                                 };
 
@@ -352,6 +361,10 @@ pub const AsyncPoll = struct {
                             assert(pollfd.revents & std.posix.POLL.IN != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.RecvFromError.WouldBlock => {
+                                        try poll.queue_recv(job.task, inner.socket, inner.buffer);
+                                        continue;
+                                    },
                                     std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
                                     else => RecvError.Unexpected,
                                 };
@@ -371,6 +384,10 @@ pub const AsyncPoll = struct {
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
+                                    std.posix.SendError.WouldBlock => {
+                                        try poll.queue_send(job.task, inner.socket, inner.buffer);
+                                        continue;
+                                    },
                                     std.posix.SendError.ConnectionResetByPeer,
                                     std.posix.SendError.BrokenPipe,
                                     => SendError.Closed,

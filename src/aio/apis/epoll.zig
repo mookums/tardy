@@ -331,7 +331,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.AcceptError.WouldBlock => unreachable,
+                                        std.posix.AcceptError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         else => AcceptError.Unexpected,
                                     };
 
@@ -357,7 +360,10 @@ pub const AsyncEpoll = struct {
                                     inner.addr.getOsSockLen(),
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.ConnectError.WouldBlock => unreachable,
+                                        std.posix.ConnectError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         else => ConnectError.Unexpected,
                                     };
 
@@ -383,7 +389,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.RecvFromError.WouldBlock => unreachable,
+                                        std.posix.RecvFromError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         std.posix.RecvFromError.SystemResources => RecvError.OutOfMemory,
                                         std.posix.RecvFromError.SocketNotConnected => RecvError.NotConnected,
                                         std.posix.RecvFromError.ConnectionRefused => RecvError.ConnectionRefused,
@@ -409,7 +418,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.SendError.WouldBlock => unreachable,
+                                        std.posix.SendError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         std.posix.SendError.AccessDenied => SendError.AccessDenied,
                                         std.posix.SendError.SystemResources => SendError.OutOfMemory,
                                         std.posix.SendError.ConnectionResetByPeer,
