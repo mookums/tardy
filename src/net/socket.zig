@@ -74,7 +74,7 @@ pub const Socket = struct {
 
         const flags = blk: {
             const base_flags: u32 = sock_type | std.posix.SOCK.CLOEXEC;
-            if (comptime builtin.os.tag != .windows) break :blk base_flags;
+            if (comptime builtin.os.tag == .windows) break :blk base_flags;
             break :blk base_flags | std.posix.SOCK.NONBLOCK;
         };
 
