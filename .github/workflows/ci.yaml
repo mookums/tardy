@@ -75,5 +75,5 @@ jobs:
         id: random
         shell: pwsh
         run: echo "RANDOM_INT=$([long]::Parse([math]::Floor([decimal](Get-Random -Minimum 1 -Maximum 9223372036854775807)).ToString()))" >> $env:GITHUB_ENV
-      #- name: Run E2E tests with poll
-      #  run: zig build -Dasync=poll test_e2e -- ${{ env.RANDOM_INT }}
+      - name: Run E2E tests with poll
+        run: zig build -Dasync=poll test_e2e -- ${{ env.RANDOM_INT }}
