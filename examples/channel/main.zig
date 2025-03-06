@@ -8,7 +8,7 @@ const Tardy = @import("tardy").Tardy(.auto);
 
 const Spsc = @import("tardy").Spsc;
 
-pub const std_options = .{ .log_level = .err };
+pub const std_options: std.Options = .{ .log_level = .err };
 
 const MAX_COUNT = 100;
 

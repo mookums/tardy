@@ -92,7 +92,7 @@ pub const Scheduler = struct {
 
     pub fn spawn(self: *Scheduler, frame_ctx: anytype, comptime frame_fn: anytype, stack_size: usize) !void {
         const index = blk: {
-            if (self.released.popOrNull()) |index| {
+            if (self.released.pop()) |index| {
                 break :blk self.tasks.borrow_assume_unset(index);
             } else {
                 break :blk try self.tasks.borrow();

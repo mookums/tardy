@@ -10,7 +10,7 @@ const Cross = @import("tardy").Cross;
 const Dir = @import("tardy").Dir;
 const File = @import("tardy").File;
 
-pub const std_options = .{ .log_level = .err };
+pub const std_options: std.Options = .{ .log_level = .err };
 
 const EntryParams = struct { file_name: [:0]const u8 };
 

@@ -58,8 +58,8 @@ pub const AsyncKqueue = struct {
 
         const event: std.posix.Kevent = .{
             .ident = WAKE_IDENT,
-            .filter = std.posix.system.EVFILT_USER,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_CLEAR,
+            .filter = std.posix.system.EVFILT.USER,
+            .flags = std.posix.system.EV.ADD | std.posix.system.EV.CLEAR,
             .fflags = 0,
             .data = 0,
             .udata = 0,
@@ -126,8 +126,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = index,
-                .filter = std.posix.system.EVFILT_TIMER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .filter = std.posix.system.EVFILT.TIMER,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = milliseconds,
                 .udata = index,
@@ -158,8 +158,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT_READ,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .filter = std.posix.system.EVFILT.READ,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -195,8 +195,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT_WRITE,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .filter = std.posix.system.EVFILT.WRITE,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -230,8 +230,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT_READ,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .filter = std.posix.system.EVFILT.READ,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -265,8 +265,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT_WRITE,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
+                .filter = std.posix.system.EVFILT.WRITE,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -279,9 +279,9 @@ pub const AsyncKqueue = struct {
 
         const event: std.posix.Kevent = .{
             .ident = WAKE_IDENT,
-            .filter = std.posix.system.EVFILT_USER,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ONESHOT,
-            .fflags = std.posix.system.NOTE_TRIGGER,
+            .filter = std.posix.system.EVFILT.USER,
+            .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+            .fflags = std.posix.system.NOTE.TRIGGER,
             .data = 0,
             .udata = 0,
         };
@@ -304,7 +304,7 @@ pub const AsyncKqueue = struct {
             const remaining = completions.len - reaped;
             if (remaining == 0) break;
 
-            const timeout_spec: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
+            const timeout_spec: std.posix.timespec = .{ .sec = 0, .nsec = 0 };
             const timeout: ?*const std.posix.timespec = if (!wait or reaped > 0) &timeout_spec else null;
             log.debug("remaining count={d}", .{remaining});
 
@@ -328,18 +328,18 @@ pub const AsyncKqueue = struct {
                 const result: Result = blk: {
                     switch (job.type) {
                         .wake => {
-                            assert(event.filter == std.posix.system.EVFILT_USER);
+                            assert(event.filter == std.posix.system.EVFILT.USER);
                             assert(event.ident == WAKE_IDENT);
                             job_complete = false;
                             break :blk .wake;
                         },
                         .timer => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_TIMER);
+                            assert(event.filter == std.posix.system.EVFILT.TIMER);
                             assert(inner == .none);
                             break :blk .none;
                         },
                         .accept => |*inner| {
-                            assert(event.filter == std.posix.system.EVFILT_READ);
+                            assert(event.filter == std.posix.system.EVFILT.READ);
                             const rc = std.posix.system.accept(
                                 inner.socket,
                                 &inner.addr.any,
@@ -377,7 +377,7 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .accept = result };
                         },
                         .connect => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_WRITE);
+                            assert(event.filter == std.posix.system.EVFILT.WRITE);
                             const rc = std.posix.system.connect(
                                 inner.socket,
                                 &inner.addr.any,
@@ -421,7 +421,7 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_READ);
+                            assert(event.filter == std.posix.system.EVFILT.READ);
                             const rc = std.posix.system.recvfrom(
                                 inner.socket,
                                 inner.buffer.ptr,
@@ -455,7 +455,7 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT_WRITE);
+                            assert(event.filter == std.posix.system.EVFILT.WRITE);
                             const rc = std.posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
                             if (rc >= 0) break :blk .{ .send = .{ .actual = @intCast(rc) } };
 
