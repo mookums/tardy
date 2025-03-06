@@ -1,26 +1,26 @@
-# Tardy
 
-Tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
+# tardy
+
+tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
 Most of the code for this project originated in [zzz](https://github.com/tardy-org/zzz), a performance oriented networking framework.
 
-- Tardy utilizes the latest Asynchronous APIs while minimizing allocations.
-- Tardy natively supports Linux, Mac, BSD, and Windows.
-- Tardy is configurable, allowing you to optimize the runtime for your specific use-case.
+- tardy utilizes the latest Asynchronous APIs while minimizing allocations.
+- tardy natively supports Linux, Mac, BSD, and Windows.
+- tardy is configurable, allowing you to optimize the runtime for your specific use-case.
 
-[![Static Badge](https://img.shields.io/badge/license-MPL2-blue)](https://www.mozilla.org/en-US/MPL/2.0/)
 [![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/FP9Xb7WGPK)
 
-## ?
-Tardy is a thread-local asynchronous runtime for Zig, providing the core implementation for asynchronous libraries and services.
+## Summary
+tardy is a thread-local, I/O driven runtime for Zig, providing the core implementation for asynchronous libraries and services.
 - Per-thread Runtime isolation for minimal contention
-- Native async I/O (io_uring, epoll, kqueue, poll)
-    - `File` and `Dir` for Filesystem Operations
-    - `Socket` for Network Operatons
+- Native async I/O (io_uring, epoll, kqueue, poll, etc.)
+- Asynchronous `Socket`s and `File`s.
+- Coroutines (internally called Frames).
 
 ## Installing
 Latest Zig Stable: `0.13.0`
 
-Latest Tardy Release: `0.2.0`
+Latest tardy Release: `0.2.0`
 ```
 zig fetch --save git+https://github.com/tardy-org/tardy#v0.2.0
 ```
@@ -35,22 +35,116 @@ const tardy = b.dependency("tardy", .{
 exe.root_module.addImport(tardy);
 ```
 
-> [!IMPORTANT]
-> Tardy is currently **alpha** software. It's fast and it works but is still experimental!
+## Example
+A basic multi-threaded TCP echo server.
 
-## Features
-- Modular Asynchronous Implementation
-    - `io_uring` for Linux (>= 5.1.0).
-    - `epoll` for Linux (>= 2.5.45).
-    - `kqueue` for BSD & Mac.
-    - `poll` for POSIX-compliant systems.
-- Single and Multi-threaded Support
-- Stackful Coroutines (Frames)
-- Asynchronous Primitives (such as `File`, `Dir` and `Socket`).
-- Channels for Asynchronous Communcation across Tasks and Threads
+```zig
+const std = @import("std");
+const log = std.log.scoped(.@"tardy/example/echo");
+
+const Pool = @import("tardy").Pool;
+const Runtime = @import("tardy").Runtime;
+const Task = @import("tardy").Task;
+const Tardy = @import("tardy").Tardy(.auto);
+const Cross = @import("tardy").Cross;
+
+const Socket = @import("tardy").Socket;
+const Timer = @import("tardy").Timer;
+
+const AcceptResult = @import("tardy").AcceptResult;
+const RecvResult = @import("tardy").RecvResult;
+const SendResult = @import("tardy").SendResult;
+
+fn echo_frame(rt: *Runtime, server: *const Socket) !void {
+    const socket = try server.accept(rt);
+    defer socket.close_blocking();
+
+    // you can use the standard Zig Reader/Writer if you want!
+    const reader = socket.reader(rt);
+    const writer = socket.writer(rt);
+
+    log.debug(
+        "{d} - accepted socket [{}]",
+        .{ std.time.milliTimestamp(), socket.addr },
+    );
+
+    try rt.spawn(.{ rt, server }, echo_frame, 1024 * 16);
+
+    var buffer: [1024]u8 = undefined;
+    while (true) {
+        const recv_length = reader.read(&buffer) catch |e| {
+            log.err("Failed to recv on socket | {}", .{e});
+            return;
+        };
+
+        writer.writeAll(buffer[0..recv_length]) catch |e| {
+            log.err("Failed to send on socket | {}", .{e});
+            return;
+        };
+
+        log.debug("Echoed: {s}", .{buffer[0..recv_length]});
+    }
+}
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    // tardy by default is 
+    // - multithreaded
+    // - unbounded in terms of spawnable tasks
+    var tardy = try Tardy.init(allocator, .{});
+    defer tardy.deinit();
+
+    const server = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = 9862 } });
+    try server.bind();
+    try server.listen(256);
+
+    try tardy.entry(
+        &server,
+        struct {
+            fn start(rt: *Runtime, tcp_server: *const Socket) !void {
+                try rt.spawn(.{ rt, tcp_server }, echo_frame, 1024 * 1024 * 4);
+            }
+        }.start,
+    );
+}
+```
+
+There exist a lot more examples, highlighting a variety of use cases and features [here](https://github.com/tardy-org/tardy/tree/main/examples). For an example of tardy in use, you can check out any of the projects in the [ecosystem](#ecosystem).
 
 ## Ecosystem
 - [zzz](https://github.com/tardy-org/zzz): a framework for writing performant and reliable networked services.
 
 ## Contribution
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Tardy by you, shall be licensed as MPL2.0, without any additional terms or conditions.
+We use Nix Flakes for managing the development environment. Nix Flakes provide a reproducible, declarative approach to managing dependencies and development tools.
+
+### Prerequisites
+ - Install [Nix](https://nixos.org/download/)
+```bash 
+sh <(curl -L https://nixos.org/nix/install) --daemon
+```
+ - Enable [Flake support](https://nixos.wiki/wiki/Flakes) in your Nix config (`~/.config/nix/nix.conf`): `experimental-features = nix-command flakes`
+
+### Getting Started
+1. Clone this repository:
+```bash
+git clone https://github.com/tardy-org/tardy.git
+cd tardy
+```
+
+2. Enter the development environment:
+```bash
+nix develop
+```
+
+This will provide you with a shell that contains all of the necessary tools and dependencies for development.
+
+Once you are inside of the development shell, you can update the development dependencies by:
+1. Modifying the `flake.nix`
+2. Running `nix flake update`
+3. Committing both the `flake.nix` and the `flake.lock`
+
+### License
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in tardy by you, shall be licensed as MPL2.0, without any additional terms or conditions.
