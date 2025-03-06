@@ -7,8 +7,8 @@ const Result = @import("../completion.zig").Result;
 const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 
-const AsyncIO = @import("../lib.zig").AsyncIO;
-const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
+const Async = @import("../lib.zig").Async;
+const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 const Queue = @import("../../core/queue.zig").Queue;
@@ -38,7 +38,7 @@ pub const AsyncEpoll = struct {
 
     jobs: Pool(Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncEpoll {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
         const epoll_fd = try std.posix.epoll_create1(0);
         assert(epoll_fd > -1);
@@ -449,8 +449,8 @@ pub const AsyncEpoll = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncEpoll) AsyncIO {
-        return AsyncIO{
+    pub fn to_async(self: *AsyncEpoll) Async {
+        return Async{
             .runner = self,
             .features = AsyncFeatures.init(&.{
                 .timer,

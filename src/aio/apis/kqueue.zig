@@ -6,8 +6,8 @@ const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
 const Timespec = @import("../../lib.zig").Timespec;
 
-const AsyncIO = @import("../lib.zig").AsyncIO;
-const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
+const Async = @import("../lib.zig").Async;
+const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 
@@ -39,7 +39,7 @@ pub const AsyncKqueue = struct {
 
     jobs: Pool(Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncKqueue {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncKqueue {
         const kqueue_fd = try std.posix.kqueue();
         assert(kqueue_fd > -1);
         errdefer std.posix.close(kqueue_fd);
@@ -507,8 +507,8 @@ pub const AsyncKqueue = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncKqueue) AsyncIO {
-        return AsyncIO{
+    pub fn to_async(self: *AsyncKqueue) Async {
+        return Async{
             .runner = self,
             .features = AsyncFeatures.init(&.{
                 .timer,

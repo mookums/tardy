@@ -2,11 +2,21 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = @import("lib.zig").log;
 
-const Atomic = std.atomic.Value;
-
 const Runtime = @import("tardy").Runtime;
 const Task = @import("tardy").Task;
-const Tardy = @import("tardy").Tardy(.auto);
+const Timer = @import("tardy").Timer;
+
+const options = @import("options");
+const AsyncType = @import("tardy").AsyncType;
+const backend: AsyncType = switch (options.async_option) {
+    .auto => .auto,
+    .kqueue => .kqueue,
+    .io_uring => .io_uring,
+    .epoll => .epoll,
+    .poll => .poll,
+    .custom => unreachable,
+};
+const Tardy = @import("tardy").Tardy(backend);
 
 const Dir = @import("tardy").Dir;
 
@@ -15,7 +25,7 @@ const SharedParams = @import("lib.zig").SharedParams;
 const First = @import("first.zig");
 const Second = @import("second.zig");
 
-pub const std_options = .{ .log_level = .debug };
+pub const std_options: std.Options = .{ .log_level = .info };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -67,13 +77,13 @@ pub fn main() !void {
         p.seed = seed;
 
         p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 64);
-        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial);
+        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial * 2);
         break :blk p;
     };
     log.debug("{s}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
     var tardy = try Tardy.init(allocator, .{
-        .threading = .{ .multi = 1 },
+        .threading = .single,
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
@@ -84,12 +94,8 @@ pub fn main() !void {
         &shared,
         struct {
             fn start(rt: *Runtime, p: *const SharedParams) !void {
-                switch (rt.id) {
-                    0 => try rt.spawn(.{ rt, p }, First.start_frame, First.STACK_SIZE),
-                    // This is troublesome.
-                    //1 => try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE),
-                    else => unreachable,
-                }
+                try rt.spawn(.{ rt, p }, First.start_frame, First.STACK_SIZE);
+                try rt.spawn(.{ rt, p }, Second.start_frame, Second.STACK_SIZE);
             }
         }.start,
     );

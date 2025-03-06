@@ -146,7 +146,6 @@ pub const FileChain = struct {
             }
         }
 
-        log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("deleting the e2e tree...", .{});
             try Dir.cwd().delete_tree(rt, seed_string);

@@ -140,7 +140,6 @@ pub const TcpServerChain = struct {
         }
         counter.* -= 1;
 
-        log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("closing main accept socket", .{});
             try server_socket.close(rt);
@@ -193,7 +192,6 @@ pub const TcpClientChain = struct {
         }
         counter.* -= 1;
 
-        log.warn("counter={d}", .{counter.*});
         if (counter.* == 0) {
             log.debug("tcp client chain done!", .{});
         }

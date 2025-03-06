@@ -23,6 +23,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     try socket.listen(4096);
 
     const chain = try TcpServerChain.generate_random_chain(rt.allocator, shared_params.seed);
+    log.info("creating tcp chain... ({d})", .{chain.len});
     defer rt.allocator.free(chain);
 
     const server_chain_ptr = try rt.allocator.create(TcpServerChain);

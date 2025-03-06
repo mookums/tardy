@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.@"tardy/runtime");
 
 const Frame = @import("../frame/lib.zig").Frame;
-const AsyncIO = @import("../aio/lib.zig").AsyncIO;
+const Async = @import("../aio/lib.zig").Async;
 const Scheduler = @import("./scheduler.zig").Scheduler;
 
 const PoolKind = @import("../core/pool.zig").PoolKind;
@@ -26,14 +26,14 @@ pub const Runtime = struct {
     allocator: std.mem.Allocator,
     storage: Storage,
     scheduler: Scheduler,
-    aio: AsyncIO,
+    aio: Async,
     id: usize,
     running: bool = true,
 
     // The currently running Task's index.
     current_task: ?usize = null,
 
-    pub fn init(allocator: std.mem.Allocator, aio: AsyncIO, options: RuntimeOptions) !Runtime {
+    pub fn init(allocator: std.mem.Allocator, aio: Async, options: RuntimeOptions) !Runtime {
         const scheduler = try Scheduler.init(
             allocator,
             options.size_tasks_initial,

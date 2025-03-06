@@ -1,0 +1,83 @@
+name: ci 
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-examples:
+    name: Build Examples
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Build all examples 
+        run: zig build
+
+  run-tests:
+    name: Run Tests
+    needs: build-examples
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Build all examples 
+        run: zig build test --summary all
+
+  run-e2e-tests:
+    name: Run e2e tests
+    needs: run-tests
+    strategy:
+      matrix:
+        include:
+          # Linux with io_uring, epoll and poll
+          - os: ubuntu-latest
+            async: io_uring
+          - os: ubuntu-latest
+            async: epoll
+          - os: ubuntu-latest
+            async: poll
+          # macOS with kqueue + poll
+          - os: macos-latest
+            async: kqueue
+          - os: macos-latest
+            async: poll
+          # Windows with poll
+          - os: windows-latest
+            async: poll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Generate random 64-bit integer
+        id: random
+        shell: bash
+        run: echo "RANDOM_INT=$(shuf -i 1-9223372036854775807 -n 1)" >> $GITHUB_ENV
+        if: runner.os != 'Windows'
+      - name: Generate random 64-bit integer (Windows)
+        id: random-windows
+        shell: pwsh
+        run: echo "RANDOM_INT=$([long]::Parse([math]::Floor([decimal](Get-Random -Minimum 1 -Maximum 9223372036854775807)).ToString()))" >> $env:GITHUB_ENV
+        if: runner.os == 'Windows'
+      - name: Run E2E tests with ${{ matrix.async }}
+        run: zig build -Dasync=${{ matrix.async }} test_e2e -- ${{ env.RANDOM_INT }}

@@ -12,7 +12,16 @@ const Atomic = std.atomic.Value;
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Socket = @import("../net/lib.zig").Socket;
 
-pub const AsyncIOType = union(enum) {
+pub const AsyncKind = enum {
+    auto,
+    io_uring,
+    epoll,
+    kqueue,
+    poll,
+    custom,
+};
+
+pub const AsyncType = union(AsyncKind) {
     /// Attempts to automatically match
     /// the best backend.
     ///
@@ -42,26 +51,26 @@ pub const AsyncIOType = union(enum) {
     custom: type,
 };
 
-pub fn auto_async_match() AsyncIOType {
+pub fn auto_async_match() AsyncType {
     switch (comptime builtin.target.os.tag) {
         .linux => {
             const version = comptime builtin.target.os.getVersionRange().linux;
 
             if (version.isAtLeast(.{ .major = 5, .minor = 1, .patch = 0 }) orelse false) {
-                return AsyncIOType.io_uring;
+                return AsyncType.io_uring;
             }
 
-            return AsyncIOType.epoll;
+            return AsyncType.epoll;
         },
-        .windows => return AsyncIOType.poll,
-        .ios, .macos, .watchos, .tvos, .visionos => return AsyncIOType.kqueue,
-        .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncIOType.kqueue,
-        .solaris, .illumos => return AsyncIOType.poll,
+        .windows => return AsyncType.poll,
+        .ios, .macos, .watchos, .tvos, .visionos => return AsyncType.kqueue,
+        .kfreebsd, .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncType.kqueue,
+        .solaris, .illumos => return AsyncType.poll,
         else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }
 }
 
-pub fn async_to_type(comptime aio: AsyncIOType) type {
+pub fn async_to_type(comptime aio: AsyncType) type {
     return comptime switch (aio) {
         .io_uring => @import("../aio/apis/io_uring.zig").AsyncIoUring,
         .epoll => @import("../aio/apis/epoll.zig").AsyncEpoll,
@@ -78,10 +87,10 @@ pub fn async_to_type(comptime aio: AsyncIOType) type {
     };
 }
 
-pub const AsyncIOOptions = struct {
+pub const AsyncOptions = struct {
     /// The parent AsyncIO that this should
     /// inherit parameters from.
-    parent_async: ?*const AsyncIO = null,
+    parent_async: ?*const Async = null,
     // Pooling
     pooling: PoolKind,
     size_tasks_initial: usize,
@@ -132,7 +141,7 @@ pub const AsyncSubmission = union(AsyncOp) {
     timer: Timespec,
     open: struct {
         path: Path,
-        flags: AioOpenFlags,
+        flags: AsyncOpenFlags,
     },
     delete: struct {
         path: Path,
@@ -173,7 +182,7 @@ pub const AsyncSubmission = union(AsyncOp) {
     },
 };
 
-pub const AsyncIO = struct {
+pub const Async = struct {
     const VTable = struct {
         queue_job: *const fn (*anyopaque, usize, AsyncSubmission) anyerror!void,
         deinit: *const fn (*anyopaque, std.mem.Allocator) void,
@@ -196,36 +205,36 @@ pub const AsyncIO = struct {
     /// This provides the completions that the backend will utilize when
     /// submitting and reaping. This MUST be called before any other
     /// methods on this AsyncIO instance.
-    pub fn attach(self: *AsyncIO, completions: []Completion) void {
+    pub fn attach(self: *Async, completions: []Completion) void {
         self.completions = completions;
         self.attached = true;
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Async, allocator: std.mem.Allocator) void {
         self.mutex.lock();
         defer self.mutex.unlock();
         self.vtable.deinit(self.runner, allocator);
     }
 
-    pub fn queue_job(self: *AsyncIO, task: usize, job: AsyncSubmission) !void {
+    pub fn queue_job(self: *Async, task: usize, job: AsyncSubmission) !void {
         assert(self.attached);
         log.debug("queuing up job={s} at index={d}", .{ @tagName(job), task });
         try self.vtable.queue_job(self.runner, task, job);
     }
 
-    pub fn wake(self: *AsyncIO) !void {
+    pub fn wake(self: *Async) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         assert(self.attached);
         try self.vtable.wake(self.runner);
     }
 
-    pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
+    pub fn reap(self: *Async, wait: bool) ![]Completion {
         assert(self.attached);
         return try self.vtable.reap(self.runner, self.completions, wait);
     }
 
-    pub fn submit(self: *AsyncIO) !void {
+    pub fn submit(self: *Async) !void {
         assert(self.attached);
         try self.vtable.submit(self.runner);
     }
@@ -240,7 +249,7 @@ pub const FileMode = enum {
 /// These are the OpenFlags used internally.
 /// This allows us to abstract out various different FS calls
 /// that are all backed by the same underlying call.
-pub const AioOpenFlags = struct {
+pub const AsyncOpenFlags = struct {
     mode: FileMode = .read,
     /// Permissions used for creating files.
     perms: ?isize = null,

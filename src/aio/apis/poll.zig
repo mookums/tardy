@@ -8,8 +8,8 @@ const Result = @import("../completion.zig").Result;
 const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 
-const AsyncIO = @import("../lib.zig").AsyncIO;
-const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
+const Async = @import("../lib.zig").Async;
+const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const Job = @import("../job.zig").Job;
 const Pool = @import("../../core/pool.zig").Pool;
 
@@ -45,7 +45,7 @@ pub const AsyncPoll = struct {
     fd_job_map: std.AutoHashMap(std.posix.fd_t, Job),
     timers: TimerQueue,
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncPoll {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncPoll {
         const size = options.size_tasks_initial + 1;
 
         // 0 is read, 1 is write.
@@ -410,8 +410,8 @@ pub const AsyncPoll = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncPoll) AsyncIO {
-        return AsyncIO{
+    pub fn to_async(self: *AsyncPoll) Async {
+        return Async{
             .runner = self,
             .features = AsyncFeatures.init(&.{
                 .timer,

@@ -3,7 +3,7 @@ const std = @import("std");
 const Timespec = @import("../lib.zig").Timespec;
 const Path = @import("../fs/lib.zig").Path;
 const Socket = @import("../net/lib.zig").Socket;
-const AioOpenFlags = @import("lib.zig").AioOpenFlags;
+const AsyncOpenFlags = @import("lib.zig").AsyncOpenFlags;
 
 pub const Job = struct {
     type: union(enum) {
@@ -35,7 +35,7 @@ const TimerJob = union(enum) {
 const OpenJob = struct {
     path: Path,
     kind: enum { file, dir },
-    flags: AioOpenFlags,
+    flags: AsyncOpenFlags,
 };
 
 const MkdirJob = struct {

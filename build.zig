@@ -1,11 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const zig_version = std.SemanticVersion{
-    .major = 0,
-    .minor = 13,
-    .patch = 0,
-};
+const zig_version = std.SemanticVersion{ .major = 0, .minor = 13, .patch = 0 };
 
 comptime {
     // Compare versions while allowing different pre/patch metadata.
@@ -39,6 +35,17 @@ pub fn build(b: *std.Build) void {
     add_example(b, "stat", target, optimize, tardy);
     add_example(b, "channel", target, optimize, tardy);
     add_example(b, "stream", target, optimize, tardy);
+
+    const tests = b.addTest(.{
+        .name = "tests",
+        .root_source_file = b.path("./src/tests.zig"),
+    });
+
+    const run_test = b.addRunArtifact(tests);
+    run_test.step.dependOn(&tests.step);
+
+    const test_step = b.step("test", "Run general unit tests");
+    test_step.dependOn(&run_test.step);
 
     add_test(b, "e2e", target, optimize, tardy);
 }
@@ -77,6 +84,8 @@ fn add_example(
     run_step.dependOn(&run_artifact.step);
 }
 
+const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
+
 fn add_test(
     b: *std.Build,
     name: []const u8,
@@ -92,9 +101,12 @@ fn add_test(
         .strip = false,
     });
 
-    if (target.result.os.tag == .windows) {
-        exe.linkLibC();
-    }
+    if (target.result.os.tag == .windows) exe.linkLibC();
+
+    const async_option = b.option(AsyncKind, "async", "What async backend you want to compile support for") orelse .auto;
+    const options = b.addOptions();
+    options.addOption(AsyncKind, "async_option", async_option);
+    exe.root_module.addOptions("options", options);
 
     exe.root_module.addImport("tardy", tardy_module);
     const install_artifact = b.addInstallArtifact(exe, .{});
@@ -106,11 +118,9 @@ fn add_test(
     const run_artifact = b.addRunArtifact(exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
-    if (b.args) |args| {
-        run_artifact.addArgs(args);
-    }
+    if (b.args) |args| run_artifact.addArgs(args);
 
-    const run_step = b.step(b.fmt("run_{s}", .{name}), b.fmt("Run tardy test ({s})", .{name}));
+    const run_step = b.step(b.fmt("test_{s}", .{name}), b.fmt("Run tardy test ({s})", .{name}));
     run_step.dependOn(&install_artifact.step);
     run_step.dependOn(&run_artifact.step);
 }

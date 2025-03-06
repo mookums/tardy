@@ -46,9 +46,9 @@ pub const Cross = @import("cross/lib.zig");
 
 pub const auto_async_match = @import("aio/lib.zig").auto_async_match;
 const async_to_type = @import("aio/lib.zig").async_to_type;
-const AsyncIO = @import("aio/lib.zig").AsyncIO;
-pub const AsyncIOType = @import("aio/lib.zig").AsyncIOType;
-const AsyncIOOptions = @import("aio/lib.zig").AsyncIOOptions;
+const AsyncIO = @import("aio/lib.zig").Async;
+pub const AsyncType = @import("aio/lib.zig").AsyncType;
+const AsyncOptions = @import("aio/lib.zig").AsyncOptions;
 const Completion = @import("aio/completion.zig").Completion;
 
 pub const TardyThreading = union(enum) {
@@ -91,8 +91,8 @@ const TardyOptions = struct {
     size_aio_reap_max: usize = 1024,
 };
 
-pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
-    const aio_type: AsyncIOType = comptime if (selected_aio_type == .auto)
+pub fn Tardy(comptime selected_aio_type: AsyncType) type {
+    const aio_type: AsyncType = comptime if (selected_aio_type == .auto)
         auto_async_match()
     else
         selected_aio_type;
@@ -121,7 +121,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncIOType) type {
         }
 
         /// This will spawn a new Runtime.
-        fn spawn_runtime(self: *Self, id: usize, options: AsyncIOOptions) !Runtime {
+        fn spawn_runtime(self: *Self, id: usize, options: AsyncOptions) !Runtime {
             self.mutex.lock();
             defer self.mutex.unlock();
 

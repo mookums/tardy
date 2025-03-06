@@ -9,7 +9,7 @@ const File = @import("lib.zig").File;
 const Stat = @import("lib.zig").Stat;
 
 const FileMode = @import("../aio/lib.zig").FileMode;
-const AioOpenFlags = @import("../aio/lib.zig").AioOpenFlags;
+const AsyncOpenFlags = @import("../aio/lib.zig").AsyncOpenFlags;
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
@@ -64,7 +64,7 @@ pub const Dir = packed struct {
 
     /// Open a Directory.
     pub fn open(rt: *Runtime, path: Path) !Dir {
-        const flags: AioOpenFlags = .{
+        const flags: AsyncOpenFlags = .{
             .mode = .read,
             .create = false,
             .directory = true,

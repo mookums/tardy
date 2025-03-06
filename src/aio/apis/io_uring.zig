@@ -10,8 +10,8 @@ const Stat = @import("../../fs/lib.zig").Stat;
 const Timespec = @import("../../lib.zig").Timespec;
 const Path = @import("../../fs/lib.zig").Path;
 
-const AsyncIO = @import("../lib.zig").AsyncIO;
-const AsyncIOOptions = @import("../lib.zig").AsyncIOOptions;
+const Async = @import("../lib.zig").Async;
+const AsyncOptions = @import("../lib.zig").AsyncOptions;
 
 const Cross = @import("../../cross/lib.zig");
 const Job = @import("../job.zig").Job;
@@ -23,7 +23,7 @@ const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const LinuxError = std.os.linux.E;
 
-const AioOpenFlags = @import("../lib.zig").AioOpenFlags;
+const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
 const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
 const OpenError = @import("../completion.zig").OpenError;
 
@@ -84,7 +84,7 @@ pub const AsyncIoUring = struct {
     cqes: []std.os.linux.io_uring_cqe,
     jobs: Pool(JobBundle),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncIOOptions) !AsyncIoUring {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
@@ -220,7 +220,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
     }
 
-    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AioOpenFlags) !void {
+    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -847,8 +847,8 @@ pub const AsyncIoUring = struct {
         return completions[0..count];
     }
 
-    pub fn to_async(self: *AsyncIoUring) AsyncIO {
-        return AsyncIO{
+    pub fn to_async(self: *AsyncIoUring) Async {
+        return Async{
             .runner = self,
             .features = AsyncFeatures.all(),
             .vtable = .{
