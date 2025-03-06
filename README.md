@@ -1,8 +1,7 @@
-
 # Tardy
 
 Tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
-Most of the code for this project originated in [zzz](https://github.com/mookums/zzz), a performance oriented networking framework.
+Most of the code for this project originated in [zzz](https://github.com/tardy-org/zzz), a performance oriented networking framework.
 
 - Tardy utilizes the latest Asynchronous APIs while minimizing allocations.
 - Tardy natively supports Linux, Mac, BSD, and Windows.
@@ -23,7 +22,7 @@ Latest Zig Stable: `0.13.0`
 
 Latest Tardy Release: `0.2.0`
 ```
-zig fetch --save git+https://github.com/mookums/tardy#v0.2.0
+zig fetch --save git+https://github.com/tardy-org/tardy#v0.2.0
 ```
 
 You can then add the dependency in your `build.zig` file:
@@ -51,7 +50,7 @@ exe.root_module.addImport(tardy);
 - Channels for Asynchronous Communcation across Tasks and Threads
 
 ## Ecosystem
-- [zzz](https://github.com/mookums/zzz): a framework for writing performant and reliable networked services.
+- [zzz](https://github.com/tardy-org/zzz): a framework for writing performant and reliable networked services.
 
 ## Contribution
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Tardy by you, shall be licensed as MPL2.0, without any additional terms or conditions.
