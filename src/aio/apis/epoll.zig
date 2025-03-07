@@ -104,6 +104,8 @@ pub const AsyncEpoll = struct {
 
     fn queue_timer(self: *AsyncEpoll, task: usize, timespec: Timespec) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
 
         const timer_fd_usize = std.os.linux.timerfd_create(std.os.linux.CLOCK.MONOTONIC, .{ .NONBLOCK = true });
@@ -144,6 +146,8 @@ pub const AsyncEpoll = struct {
         kind: Socket.Kind,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
@@ -174,6 +178,8 @@ pub const AsyncEpoll = struct {
         kind: Socket.Kind,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
@@ -187,6 +193,15 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
+        std.posix.connect(
+            socket,
+            &addr.any,
+            addr.getOsSockLen(),
+        ) catch |e| switch (e) {
+            std.posix.ConnectError.WouldBlock => {},
+            else => return e,
+        };
+
         var event: std.os.linux.epoll_event = .{
             .events = std.os.linux.EPOLL.OUT,
             .data = .{ .u64 = index },
@@ -197,6 +212,8 @@ pub const AsyncEpoll = struct {
 
     fn queue_recv(self: *AsyncEpoll, task: usize, socket: std.posix.socket_t, buffer: []u8) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
@@ -219,6 +236,8 @@ pub const AsyncEpoll = struct {
 
     fn queue_send(self: *AsyncEpoll, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
         const index = try self.jobs.borrow_hint(task);
+        errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
         item.* = .{
             .index = index,
@@ -331,7 +350,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.AcceptError.WouldBlock => unreachable,
+                                        std.posix.AcceptError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         else => AcceptError.Unexpected,
                                     };
 
@@ -357,7 +379,10 @@ pub const AsyncEpoll = struct {
                                     inner.addr.getOsSockLen(),
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.ConnectError.WouldBlock => unreachable,
+                                        std.posix.ConnectError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         else => ConnectError.Unexpected,
                                     };
 
@@ -383,7 +408,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.RecvFromError.WouldBlock => unreachable,
+                                        std.posix.RecvFromError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         std.posix.RecvFromError.SystemResources => RecvError.OutOfMemory,
                                         std.posix.RecvFromError.SocketNotConnected => RecvError.NotConnected,
                                         std.posix.RecvFromError.ConnectionRefused => RecvError.ConnectionRefused,
@@ -409,7 +437,10 @@ pub const AsyncEpoll = struct {
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.SendError.WouldBlock => unreachable,
+                                        std.posix.SendError.WouldBlock => {
+                                            job_complete = false;
+                                            continue;
+                                        },
                                         std.posix.SendError.AccessDenied => SendError.AccessDenied,
                                         std.posix.SendError.SystemResources => SendError.OutOfMemory,
                                         std.posix.SendError.ConnectionResetByPeer,

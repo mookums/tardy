@@ -18,9 +18,10 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     const rand = prng.random();
 
     const port: u16 = rand.intRangeLessThan(u16, 30000, @intCast(std.math.maxInt(u16)));
+    log.debug("tcp chain port: {d}", .{port});
     const socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
     try socket.bind();
-    try socket.listen(4096);
+    try socket.listen(128);
 
     const chain = try TcpServerChain.generate_random_chain(rt.allocator, shared_params.seed);
     log.info("creating tcp chain... ({d})", .{chain.len});

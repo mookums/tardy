@@ -72,12 +72,7 @@ pub const Socket = struct {
             .unix => 0,
         };
 
-        const flags = blk: {
-            const base_flags: u32 = sock_type | std.posix.SOCK.CLOEXEC;
-            if (comptime builtin.os.tag != .windows) break :blk base_flags;
-            break :blk base_flags | std.posix.SOCK.NONBLOCK;
-        };
-
+        const flags: u32 = sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
         const socket = try std.posix.socket(addr.any.family, flags, protocol);
 
         if (kind != .unix) {
@@ -154,7 +149,7 @@ pub const Socket = struct {
                     self.handle,
                     &addr.any,
                     &addr_len,
-                    0,
+                    std.posix.SOCK.NONBLOCK,
                 ) catch |e| return switch (e) {
                     std.posix.AcceptError.WouldBlock => {
                         Frame.yield();

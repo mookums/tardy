@@ -39,6 +39,7 @@ const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
 }.compare);
 
 pub const AsyncPoll = struct {
+    allocator: std.mem.Allocator,
     wake_pipe: [2]std.posix.fd_t,
 
     fd_list: std.ArrayList(std.posix.pollfd),
@@ -94,6 +95,7 @@ pub const AsyncPoll = struct {
         errdefer timers.deinit();
 
         return AsyncPoll{
+            .allocator = allocator,
             .wake_pipe = pipe,
             .fd_list = fd_list,
             .fd_job_map = fd_job_map,
@@ -164,6 +166,15 @@ pub const AsyncPoll = struct {
         addr: std.net.Address,
         kind: Socket.Kind,
     ) !void {
+        std.posix.connect(
+            socket,
+            &addr.any,
+            addr.getOsSockLen(),
+        ) catch |e| switch (e) {
+            std.posix.ConnectError.WouldBlock => {},
+            else => return e,
+        };
+
         try self.fd_list.append(.{ .fd = socket, .events = std.posix.POLL.OUT, .revents = 0 });
         try self.fd_job_map.put(socket, .{
             .index = 0,
@@ -243,58 +254,62 @@ pub const AsyncPoll = struct {
                 timeout = @intCast(peeked.milliseconds - current);
             }
 
-            var poll_result = if (comptime builtin.os.tag == .windows)
+            const ReadyOperation = struct {
+                index: usize,
+                fd: std.posix.pollfd,
+                job: Job,
+                remove: bool = true,
+            };
+
+            log.debug("timeout = {d}", .{timeout});
+            const poll_result = if (comptime builtin.os.tag == .windows)
                 std.os.windows.poll(poll.fd_list.items.ptr, @intCast(poll.fd_list.items.len), timeout)
             else
                 try std.posix.poll(poll.fd_list.items, timeout);
 
             if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
-            var i: usize = poll.fd_list.items.len;
-            while (i > 0) {
-                i -= 1;
-                const pollfd = poll.fd_list.items[i];
-                if (pollfd.revents == 0) continue;
-                if (completions.len - reaped == 0) break;
+            var ready_ops = try std.ArrayListUnmanaged(ReadyOperation).initCapacity(poll.allocator, @intCast(poll_result));
+            defer ready_ops.deinit(poll.allocator);
 
-                var job = poll.fd_job_map.get(pollfd.fd) orelse {
-                    @panic("failed to get job from fd!");
-                };
+            for (poll.fd_list.items, 0..) |pfd, i| {
+                if (pfd.revents == 0) continue;
+                if (poll.fd_job_map.get(pfd.fd)) |job| {
+                    ready_ops.appendAssumeCapacity(.{ .index = i, .fd = pfd, .job = job });
+                }
+            }
 
-                poll_result -= 1;
-                _ = poll.fd_list.swapRemove(i);
-                assert(poll.fd_job_map.remove(pollfd.fd));
+            for (ready_ops.items) |*op| {
+                const pollfd = op.fd;
+                const job: *Job = &op.job;
 
                 log.debug("revents={x}", .{pollfd.revents});
                 const result: Result = result: {
                     switch (job.type) {
                         .wake => {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
 
                             var buf: [8]u8 = undefined;
                             _ = std.posix.read(poll.wake_pipe[0], &buf) catch unreachable;
-
-                            // requeue the wake request
-                            if (comptime builtin.os.tag == .windows) {
-                                try poll.fd_list.append(.{ .fd = @ptrCast(poll.wake_pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
-                                try poll.fd_job_map.put(@ptrCast(poll.wake_pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
-                            } else {
-                                try poll.fd_list.append(.{ .fd = poll.wake_pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
-                                try poll.fd_job_map.put(poll.wake_pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
-                            }
+                            op.remove = false;
 
                             break :result .wake;
                         },
                         .accept => |*inner| {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
 
                             const socket = std.posix.accept(
                                 inner.socket,
                                 &inner.addr.any,
                                 @ptrCast(&inner.addr_len),
-                                0,
+                                std.posix.SOCK.NONBLOCK,
                             ) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.AcceptError.WouldBlock => {
+                                        op.remove = false;
+                                        log.debug("accept wouldblock - not removing", .{});
+                                        continue;
+                                    },
                                     std.posix.AcceptError.ConnectionAborted,
                                     std.posix.AcceptError.ConnectionResetByPeer,
                                     => AcceptError.ConnectionAborted,
@@ -322,36 +337,33 @@ pub const AsyncPoll = struct {
                         .connect => |inner| {
                             assert(pollfd.revents & std.posix.POLL.OUT != 0);
 
-                            std.posix.connect(
-                                inner.socket,
-                                &inner.addr.any,
-                                inner.addr.getOsSockLen(),
-                            ) catch |e| {
-                                const err = switch (e) {
-                                    else => ConnectError.Unexpected,
-                                };
-
-                                break :result .{ .connect = .{ .err = err } };
-                            };
-
-                            break :result .{
-                                .connect = .{
-                                    .actual = .{
-                                        .handle = inner.socket,
-                                        .addr = inner.addr,
-                                        .kind = inner.kind,
+                            if (pollfd.revents & std.posix.POLL.ERR != 0) {
+                                break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
+                            } else {
+                                break :result .{
+                                    .connect = .{
+                                        .actual = .{
+                                            .handle = inner.socket,
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
                                     },
-                                },
-                            };
+                                };
+                            }
                         },
                         .recv => |inner| {
                             if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
                                 .recv = .{ .err = RecvError.Closed },
                             };
 
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
+                                    std.posix.RecvFromError.WouldBlock => {
+                                        op.remove = false;
+                                        log.debug("recv wouldblock - not removing", .{});
+                                        continue;
+                                    },
                                     std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
                                     else => RecvError.Unexpected,
                                 };
@@ -371,6 +383,11 @@ pub const AsyncPoll = struct {
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
+                                    std.posix.SendError.WouldBlock => {
+                                        op.remove = false;
+                                        log.debug("send wouldblock - not removing", .{});
+                                        continue;
+                                    },
                                     std.posix.SendError.ConnectionResetByPeer,
                                     std.posix.SendError.BrokenPipe,
                                     => SendError.Closed,
@@ -400,6 +417,16 @@ pub const AsyncPoll = struct {
                 };
                 reaped += 1;
             }
+
+            std.sort.pdq(ReadyOperation, ready_ops.items, {}, struct {
+                fn less_than(_: void, first: ReadyOperation, second: ReadyOperation) bool {
+                    return first.index > second.index;
+                }
+            }.less_than);
+
+            for (ready_ops.items) |op| if (op.remove) {
+                _ = poll.fd_list.orderedRemove(op.index);
+            };
         }
 
         return completions[0..reaped];

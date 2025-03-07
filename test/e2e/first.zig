@@ -13,6 +13,8 @@ pub const STACK_SIZE = 1024 * 1024 * 8;
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
+    errdefer unreachable;
+
     const new_dir = try Dir.cwd().create_dir(rt, shared_params.seed_string);
     log.debug("created new shared dir (seed={d})", .{shared_params.seed});
 
