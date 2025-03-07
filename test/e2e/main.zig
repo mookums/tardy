@@ -96,7 +96,9 @@ pub fn main() !void {
                     0 => {
                         p.runtime = rt;
                         try rt.spawn(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE);
-                        try rt.spawn(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE);
+
+                        // temporarily removed
+                        //try rt.spawn(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE);
                     },
                     1 => try rt.spawn(.{ rt, &p.runtime }, timeout_task, 1024 * 1024 * 8),
                     else => unreachable,
