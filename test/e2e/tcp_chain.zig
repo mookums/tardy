@@ -118,7 +118,9 @@ pub const TcpServerChain = struct {
         errdefer unreachable;
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
-            switch (chain.steps[chain.index]) {
+            const current_step = chain.steps[chain.index];
+            log.debug("server chain step: {s}", .{@tagName(current_step)});
+            switch (current_step) {
                 .accept => {
                     const socket = try server_socket.accept(rt);
                     chain.socket = socket;
@@ -142,7 +144,7 @@ pub const TcpServerChain = struct {
 
         if (counter.* == 0) {
             log.debug("closing main accept socket", .{});
-            try server_socket.close(rt);
+            server_socket.close_blocking();
         }
     }
 };
@@ -173,7 +175,9 @@ pub const TcpClientChain = struct {
         var socket: Socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
-            switch (chain.steps[chain.index]) {
+            const current_step = chain.steps[chain.index];
+            log.debug("client chain step: {s}", .{@tagName(current_step)});
+            switch (current_step) {
                 .connect => _ = try socket.connect(rt),
                 .recv => {
                     const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
@@ -187,7 +191,10 @@ pub const TcpClientChain = struct {
                     for (chain.buffer[0..]) |*item| item.* = 123;
                     _ = try socket.send_all(rt, chain.buffer);
                 },
-                .close => try socket.close(rt),
+                .close => {
+                    log.debug("closing client socket", .{});
+                    socket.close_blocking();
+                },
             }
         }
         counter.* -= 1;
