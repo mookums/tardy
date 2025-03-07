@@ -18,7 +18,8 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     const rand = prng.random();
 
     const port: u16 = rand.intRangeLessThan(u16, 30000, @intCast(std.math.maxInt(u16)));
-    const socket = try Socket.init(.{ .tcp = .{ .host = "0.0.0.0", .port = port } });
+    log.debug("tcp chain port: {d}", .{port});
+    const socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
     try socket.bind();
     try socket.listen(128);
 
