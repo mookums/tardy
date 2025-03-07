@@ -190,6 +190,15 @@ pub const AsyncKqueue = struct {
         };
 
         if (self.change_count < self.changes.len) {
+            std.posix.connect(
+                socket,
+                &addr.any,
+                addr.getOsSockLen(),
+            ) catch |e| switch (e) {
+                std.posix.ConnectError.WouldBlock => {},
+                else => return e,
+            };
+
             const event = &self.changes[self.change_count];
             self.change_count += 1;
 
@@ -378,44 +387,38 @@ pub const AsyncKqueue = struct {
                         },
                         .connect => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
-                            const rc = std.posix.system.connect(
-                                inner.socket,
-                                &inner.addr.any,
-                                inner.addr.getOsSockLen(),
-                            );
 
-                            if (rc > 0) break :blk .{ .connect = .{
-                                .actual = .{
-                                    .handle = inner.socket,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
-                                },
-                            } };
-
-                            const result: ConnectResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
-                                const err = switch (e) {
-                                    PosixError.AGAIN,
-                                    PosixError.ALREADY,
-                                    PosixError.INPROGRESS,
-                                    => ConnectError.WouldBlock,
-                                    PosixError.ACCES, PosixError.PERM => ConnectError.AccessDenied,
-                                    PosixError.ADDRINUSE => ConnectError.AddressInUse,
-                                    PosixError.ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
-                                    PosixError.AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
-                                    PosixError.BADF => ConnectError.InvalidFd,
-                                    PosixError.CONNREFUSED => ConnectError.ConnectionRefused,
-                                    PosixError.FAULT => ConnectError.InvalidAddress,
-                                    PosixError.INTR => ConnectError.Interrupted,
-                                    PosixError.ISCONN => ConnectError.AlreadyConnected,
-                                    PosixError.NETUNREACH => ConnectError.NetworkUnreachable,
-                                    PosixError.NOTSOCK => ConnectError.NotASocket,
-                                    PosixError.PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
-                                    PosixError.TIMEDOUT => ConnectError.TimedOut,
-                                    else => ConnectError.Unexpected,
+                            const result: Result = result: {
+                                if (event.flags & std.posix.system.EV_ERROR != 0) {
+                                    const rc = event.data;
+                                    const err = switch (std.posix.errno(rc)) {
+                                        PosixError.AGAIN,
+                                        PosixError.ALREADY,
+                                        PosixError.INPROGRESS,
+                                        => unreachable,
+                                        PosixError.ACCES, PosixError.PERM => ConnectError.AccessDenied,
+                                        PosixError.ADDRINUSE => ConnectError.AddressInUse,
+                                        PosixError.ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
+                                        PosixError.AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
+                                        PosixError.BADF => ConnectError.InvalidFd,
+                                        PosixError.CONNREFUSED => ConnectError.ConnectionRefused,
+                                        PosixError.FAULT => ConnectError.InvalidAddress,
+                                        PosixError.INTR => ConnectError.Interrupted,
+                                        PosixError.ISCONN => ConnectError.AlreadyConnected,
+                                        PosixError.NETUNREACH => ConnectError.NetworkUnreachable,
+                                        PosixError.NOTSOCK => ConnectError.NotASocket,
+                                        PosixError.PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
+                                        PosixError.TIMEDOUT => ConnectError.TimedOut,
+                                        else => ConnectError.Unexpected,
+                                    };
+                                    break :result .{ .err = err };
+                                } else break :result .{
+                                    .actual = .{
+                                        .handle = inner.socket,
+                                        .addr = inner.addr,
+                                        .kind = inner.kind,
+                                    },
                                 };
-
-                                break :result .{ .err = err };
                             };
 
                             break :blk .{ .connect = result };

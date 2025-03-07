@@ -166,6 +166,15 @@ pub const AsyncPoll = struct {
         addr: std.net.Address,
         kind: Socket.Kind,
     ) !void {
+        std.posix.connect(
+            socket,
+            &addr.any,
+            addr.getOsSockLen(),
+        ) catch |e| switch (e) {
+            std.posix.ConnectError.WouldBlock => {},
+            else => return e,
+        };
+
         try self.fd_list.append(.{ .fd = socket, .events = std.posix.POLL.OUT, .revents = 0 });
         try self.fd_job_map.put(socket, .{
             .index = 0,
@@ -278,28 +287,16 @@ pub const AsyncPoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         .wake => {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
 
                             var buf: [8]u8 = undefined;
                             _ = std.posix.read(poll.wake_pipe[0], &buf) catch unreachable;
-
-                            // requeue the wake request
-                            if (comptime builtin.os.tag == .windows) {
-                                try poll.fd_list.append(
-                                    .{ .fd = @ptrCast(poll.wake_pipe[0]), .events = std.posix.POLL.IN, .revents = 0 },
-                                );
-                                try poll.fd_job_map.put(@ptrCast(poll.wake_pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
-                            } else {
-                                try poll.fd_list.append(
-                                    .{ .fd = poll.wake_pipe[0], .events = std.posix.POLL.IN, .revents = 0 },
-                                );
-                                try poll.fd_job_map.put(poll.wake_pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
-                            }
+                            op.remove = false;
 
                             break :result .wake;
                         },
                         .accept => |*inner| {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
 
                             const socket = std.posix.accept(
                                 inner.socket,
@@ -340,39 +337,26 @@ pub const AsyncPoll = struct {
                         .connect => |inner| {
                             assert(pollfd.revents & std.posix.POLL.OUT != 0);
 
-                            std.posix.connect(
-                                inner.socket,
-                                &inner.addr.any,
-                                inner.addr.getOsSockLen(),
-                            ) catch |e| {
-                                const err = switch (e) {
-                                    std.posix.ConnectError.WouldBlock => {
-                                        op.remove = false;
-                                        log.debug("connect wouldblock - not removing", .{});
-                                        continue;
+                            if (pollfd.revents & std.posix.POLL.ERR != 0) {
+                                break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
+                            } else {
+                                break :result .{
+                                    .connect = .{
+                                        .actual = .{
+                                            .handle = inner.socket,
+                                            .addr = inner.addr,
+                                            .kind = inner.kind,
+                                        },
                                     },
-                                    else => ConnectError.Unexpected,
                                 };
-
-                                break :result .{ .connect = .{ .err = err } };
-                            };
-
-                            break :result .{
-                                .connect = .{
-                                    .actual = .{
-                                        .handle = inner.socket,
-                                        .addr = inner.addr,
-                                        .kind = inner.kind,
-                                    },
-                                },
-                            };
+                            }
                         },
                         .recv => |inner| {
                             if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
                                 .recv = .{ .err = RecvError.Closed },
                             };
 
-                            assert(pollfd.revents & std.posix.POLL.IN != 0);
+                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
                                     std.posix.RecvFromError.WouldBlock => {
