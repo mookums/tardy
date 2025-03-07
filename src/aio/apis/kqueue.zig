@@ -388,7 +388,7 @@ pub const AsyncKqueue = struct {
                         .connect => |inner| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
 
-                            const result: Result = result: {
+                            const result: ConnectResult = result: {
                                 if (event.flags & std.posix.system.EV_ERROR != 0) {
                                     const rc = event.data;
                                     const err = switch (std.posix.errno(rc)) {
