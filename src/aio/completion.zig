@@ -190,7 +190,7 @@ pub const DeleteError = error{
 
 pub const AcceptResult = Resulted(Socket, AcceptError);
 
-pub const ConnectResult = Resulted(Socket, ConnectError);
+pub const ConnectResult = Resulted(void, ConnectError);
 pub const RecvResult = Resulted(usize, RecvError);
 
 pub const SendResult = Resulted(usize, SendError);

@@ -178,7 +178,7 @@ pub const TcpClientChain = struct {
             const current_step = chain.steps[chain.index];
             log.debug("client chain step: {s}", .{@tagName(current_step)});
             switch (current_step) {
-                .connect => _ = try socket.connect(rt),
+                .connect => try socket.connect(rt),
                 .recv => {
                     const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,

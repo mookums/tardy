@@ -175,7 +175,7 @@ pub const Socket = struct {
         }
     }
 
-    pub fn connect(self: Socket, rt: *Runtime) !Socket {
+    pub fn connect(self: Socket, rt: *Runtime) !void {
         if (rt.aio.features.has_capability(.connect)) {
             try rt.scheduler.io_await(.{
                 .connect = .{
@@ -187,7 +187,7 @@ pub const Socket = struct {
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
-            return try task.result.connect.unwrap();
+            try task.result.connect.unwrap();
         } else {
             while (true) {
                 break std.posix.connect(
@@ -202,8 +202,6 @@ pub const Socket = struct {
                     else => ConnectError.Unexpected,
                 };
             }
-
-            return self;
         }
     }
 

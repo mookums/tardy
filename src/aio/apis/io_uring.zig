@@ -584,12 +584,8 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .accept = result };
                     },
-                    .connect => |inner| {
-                        if (cqe.res >= 0) break :blk .{
-                            .connect = .{
-                                .actual = .{ .handle = inner.socket, .addr = inner.addr, .kind = inner.kind },
-                            },
-                        };
+                    .connect => |_| {
+                        if (cqe.res >= 0) break :blk .{ .connect = .actual };
 
                         const result: ConnectResult = result: {
                             const e: LinuxError = @enumFromInt(-cqe.res);

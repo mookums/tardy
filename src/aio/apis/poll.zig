@@ -334,21 +334,13 @@ pub const AsyncPoll = struct {
                                 },
                             };
                         },
-                        .connect => |inner| {
+                        .connect => |_| {
                             assert(pollfd.revents & std.posix.POLL.OUT != 0);
 
                             if (pollfd.revents & std.posix.POLL.ERR != 0) {
                                 break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
                             } else {
-                                break :result .{
-                                    .connect = .{
-                                        .actual = .{
-                                            .handle = inner.socket,
-                                            .addr = inner.addr,
-                                            .kind = inner.kind,
-                                        },
-                                    },
-                                };
+                                break :result .{ .connect = .actual };
                             }
                         },
                         .recv => |inner| {

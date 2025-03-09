@@ -385,7 +385,7 @@ pub const AsyncKqueue = struct {
 
                             break :blk .{ .accept = result };
                         },
-                        .connect => |inner| {
+                        .connect => |_| {
                             assert(event.filter == std.posix.system.EVFILT_WRITE);
 
                             const result: ConnectResult = result: {
@@ -412,13 +412,7 @@ pub const AsyncKqueue = struct {
                                         else => ConnectError.Unexpected,
                                     };
                                     break :result .{ .err = err };
-                                } else break :result .{
-                                    .actual = .{
-                                        .handle = inner.socket,
-                                        .addr = inner.addr,
-                                        .kind = inner.kind,
-                                    },
-                                };
+                                } else break :result .actual;
                             };
 
                             break :blk .{ .connect = result };

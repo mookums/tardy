@@ -369,31 +369,15 @@ pub const AsyncEpoll = struct {
 
                             break :blk .{ .accept = result };
                         },
-                        .connect => |inner| {
+                        .connect => |_| {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
 
                             const result: ConnectResult = result: {
-                                std.posix.connect(
-                                    inner.socket,
-                                    &inner.addr.any,
-                                    inner.addr.getOsSockLen(),
-                                ) catch |e| {
-                                    const err = switch (e) {
-                                        std.posix.ConnectError.WouldBlock => {
-                                            job_complete = false;
-                                            continue;
-                                        },
-                                        else => ConnectError.Unexpected,
-                                    };
-
-                                    break :result .{ .err = err };
-                                };
-
-                                break :result .{ .actual = .{
-                                    .handle = inner.socket,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
-                                } };
+                                if (event.events & std.os.linux.EPOLL.ERR != 0) {
+                                    break :result .{ .err = ConnectError.Unexpected };
+                                } else {
+                                    break :result .actual;
+                                }
                             };
 
                             break :blk .{ .connect = result };
