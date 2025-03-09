@@ -56,18 +56,22 @@ const JobBundle = struct {
 pub const AsyncIoUring = struct {
     const base_flags = blk: {
         var flags = 0;
-        const version = builtin.target.os.getVersionRange().linux;
-
         // If you are building for musl, you won't have access to these flags.
         // This means you will run with no flags for compatibility reasons.
 
         // SINGLE_ISSUER requires 6.0
-        if (version.isAtLeast(.{ .major = 6, .minor = 0, .patch = 0 })) |is_atleast| {
+        if (builtin.target.os.isAtLeast(
+            .linux,
+            .{ .major = 6, .minor = 0, .patch = 0 },
+        )) |is_atleast| {
             if (is_atleast) flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
         }
 
         // COOP_TASKRUN requires 5.19
-        if (version.isAtLeast(.{ .major = 5, .minor = 19, .patch = 0 })) |is_atleast| {
+        if (builtin.target.os.isAtLeast(
+            .linux,
+            .{ .major = 5, .minor = 19, .patch = 0 },
+        )) |is_atleast| {
             if (is_atleast) flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
         }
 
@@ -212,8 +216,8 @@ pub const AsyncIoUring = struct {
         errdefer self.allocator.destroy(timespec_ptr);
 
         timespec_ptr.* = std.os.linux.kernel_timespec{
-            .tv_sec = @intCast(timespec.seconds),
-            .tv_nsec = @intCast(timespec.nanos),
+            .sec = @intCast(timespec.seconds),
+            .nsec = @intCast(timespec.nanos),
         };
         item.timespec = timespec_ptr;
 
@@ -798,16 +802,16 @@ pub const AsyncIoUring = struct {
                                 .size = @intCast(statx.size),
                                 .mode = @intCast(statx.mode),
                                 .accessed = .{
-                                    .seconds = @intCast(statx.atime.tv_sec),
-                                    .nanos = @intCast(statx.atime.tv_nsec),
+                                    .seconds = @intCast(statx.atime.sec),
+                                    .nanos = @intCast(statx.atime.nsec),
                                 },
                                 .modified = .{
-                                    .seconds = @intCast(statx.mtime.tv_sec),
-                                    .nanos = @intCast(statx.mtime.tv_nsec),
+                                    .seconds = @intCast(statx.mtime.sec),
+                                    .nanos = @intCast(statx.mtime.nsec),
                                 },
                                 .changed = .{
-                                    .seconds = @intCast(statx.ctime.tv_sec),
-                                    .nanos = @intCast(statx.ctime.tv_nsec),
+                                    .seconds = @intCast(statx.ctime.sec),
+                                    .nanos = @intCast(statx.ctime.nsec),
                                 },
                             };
                             break :blk .{ .stat = .{ .actual = stat } };
