@@ -116,6 +116,7 @@ There exist a lot more examples, highlighting a variety of use cases and feature
 
 ## Ecosystem
 - [zzz](https://github.com/tardy-org/zzz): a framework for writing performant and reliable networked services.
+- [secsock](https://github.com/tardy-org/secsock): Async TLS for the Tardy Socket.
 
 ## Contribution
 We use Nix Flakes for managing the development environment. Nix Flakes provide a reproducible, declarative approach to managing dependencies and development tools.
