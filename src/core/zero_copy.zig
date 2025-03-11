@@ -54,7 +54,10 @@ pub fn ZeroCopy(comptime T: type) type {
                 const old_slice = self.ptr[0..self.capacity];
                 const new_size = try std.math.ceilPowerOfTwo(usize, self.capacity + size);
 
-                if (self.allocator.resize(self.ptr[0..self.capacity], new_size)) {
+                if (self.allocator.remap(self.ptr[0..self.capacity], new_size)) |new| {
+                    self.ptr = new.ptr;
+                    self.capacity = new.len;
+                } else if (self.allocator.resize(self.ptr[0..self.capacity], new_size)) {
                     self.capacity = new_size;
                 } else {
                     const new_slice = try self.allocator.alloc(T, new_size);

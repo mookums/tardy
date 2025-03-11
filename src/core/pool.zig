@@ -101,7 +101,9 @@ pub fn Pool(comptime T: type) type {
             const old_slice = self.items;
             const new_size = std.math.ceilPowerOfTwoAssert(usize, self.items.len + 1);
 
-            if (self.allocator.resize(self.items, new_size)) {
+            if (self.allocator.remap(self.items, new_size)) |new_slice| {
+                self.items = new_slice;
+            } else if (self.allocator.resize(self.items, new_size)) {
                 self.items = self.items.ptr[0..new_size];
             } else {
                 const new_slice = try self.allocator.alloc(T, new_size);
