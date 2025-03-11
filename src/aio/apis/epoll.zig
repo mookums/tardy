@@ -302,7 +302,7 @@ pub const AsyncEpoll = struct {
             // Handle all of the epoll I/O
             const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
             for (epoll.events[0..epoll_events]) |event| {
-                const job_index = event.data.u64;
+                const job_index: usize = @intCast(event.data.u64);
                 assert(epoll.jobs.dirty.isSet(job_index));
 
                 var job_complete = true;

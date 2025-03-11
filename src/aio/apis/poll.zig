@@ -132,7 +132,7 @@ pub const AsyncPoll = struct {
     fn queue_timer(self: *AsyncPoll, task: usize, timespec: Timespec) !void {
         const current: usize = @intCast(std.time.milliTimestamp());
         const seconds_to_ms: usize = @intCast(timespec.seconds * 1000);
-        const nanos_to_ms: usize = @divFloor(timespec.nanos, std.time.ns_per_ms);
+        const nanos_to_ms: usize = @intCast(@divFloor(timespec.nanos, std.time.ns_per_ms));
         const milliseconds: usize = current + seconds_to_ms + nanos_to_ms;
 
         try self.timers.add(.{ .milliseconds = milliseconds, .task = task });

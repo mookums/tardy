@@ -9,14 +9,14 @@ const Hardware = switch (builtin.cpu.arch) {
         else => x64SysV,
     },
     .aarch64 => aarch64General,
-    else => @panic("Architecture not currently supported!"),
+    else => @compileError("Architecture not currently supported!"),
 };
 
-const FrameEntryFn = *const fn () callconv(.C) noreturn;
+const FrameEntryFn = *const fn () callconv(.c) noreturn;
 fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
     const Args = @TypeOf(args);
     return struct {
-        fn inner() callconv(.C) noreturn {
+        fn inner() callconv(.c) noreturn {
             const frame = active_frame.?;
 
             //const args_ptr: *align(1) Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
@@ -136,7 +136,7 @@ const x64SysV = struct {
     pub const stack_count = 7;
     pub const entry = stack_count - 1;
     pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
+    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
 
     comptime {
         asm (@embedFile("asm/x86_64_sysv.asm"));
@@ -147,7 +147,7 @@ const x64Windows = struct {
     pub const stack_count = 31;
     pub const entry = stack_count - 1;
     pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
+    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
 
     comptime {
         asm (@embedFile("asm/x86_64_win.asm"));
@@ -158,7 +158,7 @@ const aarch64General = struct {
     pub const stack_count = 20;
     pub const entry = 0;
     pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.C) void;
+    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
 
     comptime {
         asm (@embedFile("asm/aarch64_gen.asm"));
