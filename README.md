@@ -1,4 +1,3 @@
-
 # tardy
 
 tardy *(def: delaying or delayed beyond the right or expected time; late.)* is an asynchronous runtime for writing applications and services in Zig.
@@ -18,11 +17,11 @@ tardy is a thread-local, I/O driven runtime for Zig, providing the core implemen
 - Coroutines (internally called Frames).
 
 ## Installing
-Compatible Zig Version: `0.13.0`
+Compatible Zig Version: `0.14.0`
 
-Latest Release: `0.2.1`
+Latest Release: `0.3.0`
 ```
-zig fetch --save git+https://github.com/tardy-org/tardy#v0.2.1
+zig fetch --save git+https://github.com/tardy-org/tardy#v0.3.0
 ```
 
 You can then add the dependency in your `build.zig` file:
