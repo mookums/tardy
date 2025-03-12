@@ -104,7 +104,7 @@ pub const EventBus = struct {
 
     pub fn subscribe(self: *EventBus, topic: anytype) !Subscription {
         const topic_name: []const u8 = switch (@typeInfo(@TypeOf(topic))) {
-            .Enum, .EnumLiteral => @tagName(topic),
+            .@"enum", .enum_literal => @tagName(topic),
             else => topic,
         };
 
@@ -118,7 +118,7 @@ pub const EventBus = struct {
 
     pub fn push(self: *EventBus, topic: anytype, comptime T: type, item: T) !void {
         const topic_name: []const u8 = switch (@typeInfo(@TypeOf(topic))) {
-            .Enum, .EnumLiteral => @tagName(topic),
+            .@"enum", .enum_literal => @tagName(topic),
             else => topic,
         };
 

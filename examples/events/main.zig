@@ -6,7 +6,7 @@ const Task = @import("tardy").Task;
 const Timer = @import("tardy").Timer;
 const Tardy = @import("tardy").Tardy(.auto);
 
-pub const std_options = .{ .log_level = .debug };
+pub const std_options: std.Options = .{ .log_level = .debug };
 
 fn first_frame(rt: *Runtime) !void {
     const sub = try rt.events.subscribe("abc");
