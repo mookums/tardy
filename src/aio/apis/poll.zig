@@ -250,16 +250,7 @@ pub const AsyncPoll = struct {
             var timeout: i32 = if (!wait or reaped > 0) 0 else -1;
 
             // Select next Timer
-            if (poll.timers.peek()) |peeked| {
-                timeout = @intCast(peeked.milliseconds - current);
-            }
-
-            const ReadyOperation = struct {
-                index: usize,
-                fd: std.posix.pollfd,
-                job: Job,
-                remove: bool = true,
-            };
+            if (poll.timers.peek()) |peeked| timeout = @intCast(peeked.milliseconds - current);
 
             log.debug("timeout = {d}", .{timeout});
             const poll_result = if (comptime builtin.os.tag == .windows)
@@ -269,34 +260,37 @@ pub const AsyncPoll = struct {
 
             if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
-            var ready_ops = try std.ArrayListUnmanaged(ReadyOperation).initCapacity(poll.allocator, @intCast(poll_result));
-            defer ready_ops.deinit(poll.allocator);
+            var ready = poll_result;
+            var i = poll.fd_list.items.len;
+            while (i > 0) : (i -= 1) {
+                const index = i - 1;
+                if (reaped >= completions.len) break;
+                if (ready == 0) break;
 
-            for (poll.fd_list.items, 0..) |pfd, i| {
+                const pfd = poll.fd_list.items[index];
+                log.debug("revents={x}", .{pfd.revents});
                 if (pfd.revents == 0) continue;
-                if (poll.fd_job_map.get(pfd.fd)) |job| {
-                    ready_ops.appendAssumeCapacity(.{ .index = i, .fd = pfd, .job = job });
-                }
-            }
+                const job = poll.fd_job_map.getPtr(pfd.fd).?;
 
-            for (ready_ops.items) |*op| {
-                const pollfd = op.fd;
-                const job: *Job = &op.job;
+                var remove: bool = true;
+                defer if (remove) {
+                    _ = poll.fd_list.swapRemove(index);
+                    _ = poll.fd_job_map.remove(pfd.fd);
+                    ready -= 1;
+                };
 
-                log.debug("revents={x}", .{pollfd.revents});
                 const result: Result = result: {
                     switch (job.type) {
                         .wake => {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
+                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
 
                             var buf: [8]u8 = undefined;
                             _ = std.posix.read(poll.wake_pipe[0], &buf) catch unreachable;
-                            op.remove = false;
-
+                            remove = false;
                             break :result .wake;
                         },
                         .accept => |*inner| {
-                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
+                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
 
                             const socket = std.posix.accept(
                                 inner.socket,
@@ -306,8 +300,8 @@ pub const AsyncPoll = struct {
                             ) catch |e| {
                                 const err = switch (e) {
                                     std.posix.AcceptError.WouldBlock => {
-                                        op.remove = false;
                                         log.debug("accept wouldblock - not removing", .{});
+                                        remove = false;
                                         continue;
                                     },
                                     std.posix.AcceptError.ConnectionAborted,
@@ -335,25 +329,25 @@ pub const AsyncPoll = struct {
                             };
                         },
                         .connect => |_| {
-                            assert(pollfd.revents & std.posix.POLL.OUT != 0);
+                            assert(pfd.revents & std.posix.POLL.OUT != 0);
 
-                            if (pollfd.revents & std.posix.POLL.ERR != 0) {
+                            if (pfd.revents & std.posix.POLL.ERR != 0) {
                                 break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
                             } else {
                                 break :result .{ .connect = .actual };
                             }
                         },
                         .recv => |inner| {
-                            if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & std.posix.POLL.HUP != 0) break :result .{
                                 .recv = .{ .err = RecvError.Closed },
                             };
 
-                            assert(pollfd.revents & std.posix.POLL.IN != 0 or pollfd.revents & std.posix.POLL.RDNORM != 0);
+                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
                                     std.posix.RecvFromError.WouldBlock => {
-                                        op.remove = false;
                                         log.debug("recv wouldblock - not removing", .{});
+                                        remove = false;
                                         continue;
                                     },
                                     std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
@@ -367,17 +361,17 @@ pub const AsyncPoll = struct {
                             break :result .{ .recv = .{ .actual = count } };
                         },
                         .send => |inner| {
-                            if (pollfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & std.posix.POLL.HUP != 0) break :result .{
                                 .send = .{ .err = SendError.Closed },
                             };
 
-                            assert(pollfd.revents & std.posix.POLL.OUT != 0);
+                            assert(pfd.revents & std.posix.POLL.OUT != 0);
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
                                     std.posix.SendError.WouldBlock => {
-                                        op.remove = false;
                                         log.debug("send wouldblock - not removing", .{});
+                                        remove = false;
                                         continue;
                                     },
                                     std.posix.SendError.ConnectionResetByPeer,
@@ -403,22 +397,9 @@ pub const AsyncPoll = struct {
                     }
                 };
 
-                completions[reaped] = .{
-                    .result = result,
-                    .task = job.task,
-                };
+                completions[reaped] = .{ .result = result, .task = job.task };
                 reaped += 1;
             }
-
-            std.sort.pdq(ReadyOperation, ready_ops.items, {}, struct {
-                fn less_than(_: void, first: ReadyOperation, second: ReadyOperation) bool {
-                    return first.index > second.index;
-                }
-            }.less_than);
-
-            for (ready_ops.items) |op| if (op.remove) {
-                _ = poll.fd_list.orderedRemove(op.index);
-            };
         }
 
         return completions[0..reaped];
