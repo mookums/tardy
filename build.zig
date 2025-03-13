@@ -50,7 +50,9 @@ const Example = enum {
 pub fn build(b: *std.Build) void {
 
     // Top-level steps you can invoke on the command line.
-    const build_steps = .{};
+    const build_steps = .{
+        .run = b.step("run", "Run a Tardy Program/Example"),
+    };
 
     // Build options passed with `-D` flags.
     const build_options = .{};
