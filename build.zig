@@ -17,6 +17,13 @@ comptime {
 }
 
 pub fn build(b: *std.Build) void {
+
+    // Top-level steps you can invoke on the command line.
+    const build_steps = .{};
+
+    // Build options passed with `-D` flags.
+    const build_options = .{};
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
