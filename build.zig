@@ -151,6 +151,11 @@ fn build_example_exe(
     // build
     steps.install.dependOn(&install_artifact.step);
 
+    // Should not run all examples at the same time
+    if (options.example == .all) {
+        return;
+    }
+
     // run
     const run_artifact = b.addRunArtifact(example_exe);
     run_artifact.step.dependOn(&install_artifact.step);
