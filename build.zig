@@ -116,6 +116,44 @@ fn build_example_module(
     return example_mod;
 }
 
+fn build_example_exe(
+    b: *std.Build,
+    steps: struct {
+        run: *std.Build.Step,
+        install: *std.Build.Step,
+    },
+    options: struct {
+        tardy_mod: *std.Build.Module,
+        example: Example,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
+) void {
+    const example_mod = build_example_module(b, .{
+        .tardy_mod = options.tardy_mod,
+        .optimize = options.optimize,
+        .target = options.target,
+    });
+
+    const example_exe = b.addExecutable(.{
+        .name = options.example.toString(),
+        .root_module = example_mod,
+    });
+
+    const install_artifact = b.addInstallArtifact(example_exe, .{});
+    b.getInstallStep().dependOn(&install_artifact.step);
+
+    // build
+    steps.install.dependOn(&install_artifact.step);
+
+    // run
+    const run_artifact = b.addRunArtifact(example_exe);
+    run_artifact.step.dependOn(&install_artifact.step);
+
+    steps.run.dependOn(&install_artifact.step);
+    steps.run.dependOn(&run_artifact.step);
+}
+
 fn add_example(
     b: *std.Build,
     name: []const u8,
