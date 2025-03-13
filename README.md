@@ -47,7 +47,7 @@ zig build --help
 zig build -Dexample=[nameOfExample]
 ```
 ```sh
-zig run -Dexample=[nameOfExample]
+zig build run -Dexample=[nameOfExample]
 ```
 
 - Build all examples

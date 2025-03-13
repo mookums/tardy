@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // (zig build and zig run -Dexample= )
+    // (zig build and zig build run -Dexample= )
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
 }
 
 // used for building and running examples
-// usage: zig [build/run] -Dexample=[basic/echo/..]
+// usage: zig [build/build run] -Dexample=[basic/echo/..]
 fn build_examples(
     b: *std.Build,
     steps: struct {
