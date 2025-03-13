@@ -71,6 +71,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    build_examples(b, .{
+        .run = build_steps.run,
+        .install = b.getInstallStep(),
+    }, .{
+        .tardy_mod = tardy,
+        .example = build_options.example,
+        .optimize = optimize,
+        .target = target,
+    });
+
     add_example(b, "basic", target, optimize, tardy);
     add_example(b, "echo", target, optimize, tardy);
     add_example(b, "http", target, optimize, tardy);
@@ -93,6 +103,65 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_test.step);
 
     add_test(b, "e2e", target, optimize, tardy);
+}
+
+fn build_examples(
+    b: *std.Build,
+    steps: struct {
+        run: *std.Build.Step,
+        install: *std.Build.Step,
+    },
+    options: struct {
+        tardy_mod: *std.Build.Module,
+        example: Example,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
+) void {
+    if (options.example == .none) {
+        return;
+    }
+
+    if (options.example != .none and options.example != .all) {
+        build_example_exe(
+            b,
+            .{
+                .run = steps.run,
+                .install = steps.install,
+            },
+            .{
+                .tardy_mod = options.tardy_mod,
+                .example = options.example,
+                .optimize = options.optimize,
+                .target = options.target,
+            },
+        );
+
+        return;
+    }
+
+    if (options.example == .all) {
+        inline for (std.meta.fields(Example)) |f| {
+            if (f.value == 1 or f.value == 0) {
+                continue;
+            }
+
+            build_example_exe(
+                b,
+                .{
+                    .run = steps.run,
+                    .install = steps.install,
+                },
+                .{
+                    .tardy_mod = options.tardy_mod,
+                    .example = @as(Example, @enumFromInt(f.value)),
+                    .optimize = options.optimize,
+                    .target = options.target,
+                },
+            );
+        }
+        return;
+    }
 }
 
 fn build_example_module(
