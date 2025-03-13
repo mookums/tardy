@@ -55,7 +55,9 @@ pub fn build(b: *std.Build) void {
     };
 
     // Build options passed with `-D` flags.
-    const build_options = .{};
+    const build_options = .{
+        .example = b.option(Example, "example", "example name") orelse .none,
+    };
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
