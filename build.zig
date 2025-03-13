@@ -72,6 +72,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // (zig build and zig run -Dexample= )
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
@@ -96,6 +97,8 @@ pub fn build(b: *std.Build) void {
     add_test(b, "e2e", target, optimize, tardy);
 }
 
+// used for building and running examples
+// usage: zig [build/run] -Dexample=[basic/echo/..]
 fn build_examples(
     b: *std.Build,
     steps: struct {
@@ -113,6 +116,7 @@ fn build_examples(
         return;
     }
 
+    // build/run specific example
     if (options.example != .none and options.example != .all) {
         build_example_exe(
             b,
@@ -132,8 +136,12 @@ fn build_examples(
         return;
     }
 
+    // build .all example
+    // run wont work for .all example
     if (options.example == .all) {
         inline for (std.meta.fields(Example)) |f| {
+
+            // skip .none and .all for building step
             if (f.value == 1 or f.value == 0) {
                 continue;
             }
@@ -178,6 +186,7 @@ fn build_example_module(
 
     example_mod.addImport("tardy", options.tardy_mod);
 
+    // need libc for windows sockets
     if (options.target.result.os.tag == .windows) {
         example_mod.link_libc = true;
     }
@@ -185,6 +194,7 @@ fn build_example_module(
     return example_mod;
 }
 
+// build/run a specific example
 fn build_example_exe(
     b: *std.Build,
     steps: struct {
@@ -199,6 +209,9 @@ fn build_example_exe(
         optimize: std.builtin.OptimizeMode,
     },
 ) void {
+    assert(options.example != .none);
+    assert(options.example != .all);
+
     const example_mod = build_example_module(b, .{
         .tardy_mod = options.tardy_mod,
         .example = options.example,
@@ -214,7 +227,7 @@ fn build_example_exe(
     const install_artifact = b.addInstallArtifact(example_exe, .{});
     b.getInstallStep().dependOn(&install_artifact.step);
 
-    // build
+    // depend on build/install step
     steps.install.dependOn(&install_artifact.step);
 
     // Should not run all examples at the same time
@@ -222,7 +235,7 @@ fn build_example_exe(
         return;
     }
 
-    // run
+    // depend on run step
     const run_artifact = b.addRunArtifact(example_exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
