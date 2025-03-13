@@ -109,6 +109,10 @@ fn build_example_module(
 
     example_mod.addImport("tardy", options.tardy_mod);
 
+    if (options.target.result.os.tag == .windows) {
+        example_mod.linkLibC();
+    }
+
     return example_mod;
 }
 
