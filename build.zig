@@ -30,7 +30,7 @@ const Example = enum {
     stat,
     stream,
 
-    fn toString(ex: Example) []u8 {
+    fn toString(ex: Example) []const u8 {
         const ex_string = switch (ex) {
             .basic => "basic",
             .cat => "cat",
@@ -41,6 +41,8 @@ const Example = enum {
             .shove => "shove",
             .stat => "stat",
             .stream => "stream",
+
+            else => "",
         };
 
         return ex_string;
@@ -97,12 +99,14 @@ fn build_example_module(
     b: *std.Build,
     options: struct {
         tardy_mod: *std.Build.Module,
+        example: Example,
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
     },
 ) *std.Build.Module {
     // create a private example module
     const example_mod = b.createModule(.{
+        .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{options.example.toString()})),
         .target = options.target,
         .optimize = options.optimize,
     });
@@ -110,7 +114,7 @@ fn build_example_module(
     example_mod.addImport("tardy", options.tardy_mod);
 
     if (options.target.result.os.tag == .windows) {
-        example_mod.linkLibC();
+        example_mod.link_libc = true;
     }
 
     return example_mod;
@@ -131,6 +135,7 @@ fn build_example_exe(
 ) void {
     const example_mod = build_example_module(b, .{
         .tardy_mod = options.tardy_mod,
+        .example = options.example,
         .optimize = options.optimize,
         .target = options.target,
     });
