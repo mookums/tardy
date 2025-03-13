@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 
 const zig_version = std.SemanticVersion{ .major = 0, .minor = 14, .patch = 0 };
 
@@ -81,16 +82,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    add_example(b, "basic", target, optimize, tardy);
-    add_example(b, "echo", target, optimize, tardy);
-    add_example(b, "http", target, optimize, tardy);
-    add_example(b, "cat", target, optimize, tardy);
-    add_example(b, "shove", target, optimize, tardy);
-    add_example(b, "rmdir", target, optimize, tardy);
-    add_example(b, "stat", target, optimize, tardy);
-    add_example(b, "channel", target, optimize, tardy);
-    add_example(b, "stream", target, optimize, tardy);
-
     const tests = b.addTest(.{
         .name = "tests",
         .root_source_file = b.path("./src/tests.zig"),
@@ -134,6 +125,7 @@ fn build_examples(
                 .example = options.example,
                 .optimize = options.optimize,
                 .target = options.target,
+                .allExamples = false,
             },
         );
 
@@ -157,6 +149,7 @@ fn build_examples(
                     .example = @as(Example, @enumFromInt(f.value)),
                     .optimize = options.optimize,
                     .target = options.target,
+                    .allExamples = true,
                 },
             );
         }
@@ -173,6 +166,9 @@ fn build_example_module(
         optimize: std.builtin.OptimizeMode,
     },
 ) *std.Build.Module {
+    assert(options.example != .none);
+    assert(options.example != .all);
+
     // create a private example module
     const example_mod = b.createModule(.{
         .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{options.example.toString()})),
@@ -198,6 +194,7 @@ fn build_example_exe(
     options: struct {
         tardy_mod: *std.Build.Module,
         example: Example,
+        allExamples: bool,
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
     },
@@ -221,7 +218,7 @@ fn build_example_exe(
     steps.install.dependOn(&install_artifact.step);
 
     // Should not run all examples at the same time
-    if (options.example == .all) {
+    if (options.allExamples) {
         return;
     }
 
@@ -231,40 +228,6 @@ fn build_example_exe(
 
     steps.run.dependOn(&install_artifact.step);
     steps.run.dependOn(&run_artifact.step);
-}
-
-fn add_example(
-    b: *std.Build,
-    name: []const u8,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.Mode,
-    tardy_module: *std.Build.Module,
-) void {
-    const example = b.addExecutable(.{
-        .name = b.fmt("{s}", .{name}),
-        .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{name})),
-        .target = target,
-        .optimize = optimize,
-        .strip = false,
-    });
-
-    if (target.result.os.tag == .windows) {
-        example.linkLibC();
-    }
-
-    example.root_module.addImport("tardy", tardy_module);
-    const install_artifact = b.addInstallArtifact(example, .{});
-    b.getInstallStep().dependOn(&install_artifact.step);
-
-    const build_step = b.step(b.fmt("{s}", .{name}), b.fmt("Build tardy example ({s})", .{name}));
-    build_step.dependOn(&install_artifact.step);
-
-    const run_artifact = b.addRunArtifact(example);
-    run_artifact.step.dependOn(&install_artifact.step);
-
-    const run_step = b.step(b.fmt("run_{s}", .{name}), b.fmt("Run tardy example ({s})", .{name}));
-    run_step.dependOn(&install_artifact.step);
-    run_step.dependOn(&run_artifact.step);
 }
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
