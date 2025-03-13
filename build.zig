@@ -16,6 +16,37 @@ comptime {
     }
 }
 
+const Example = enum {
+    none,
+    all,
+
+    basic,
+    cat,
+    channel,
+    echo,
+    http,
+    rmdir,
+    shove,
+    stat,
+    stream,
+
+    fn toString(ex: Example) []u8 {
+        const ex_string = switch (ex) {
+            .basic => "basic",
+            .cat => "cat",
+            .channel => "channel",
+            .echo => "echo",
+            .http => "http",
+            .rmdir => "rmdir",
+            .shove => "shove",
+            .stat => "stat",
+            .stream => "stream",
+        };
+
+        return ex_string;
+    }
+};
+
 pub fn build(b: *std.Build) void {
 
     // Top-level steps you can invoke on the command line.
