@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // create a public tardy module
     const tardy = b.addModule("tardy", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
@@ -90,6 +91,25 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_test.step);
 
     add_test(b, "e2e", target, optimize, tardy);
+}
+
+fn build_example_module(
+    b: *std.Build,
+    options: struct {
+        tardy_mod: *std.Build.Module,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
+) *std.Build.Module {
+    // create a private example module
+    const example_mod = b.createModule(.{
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+
+    example_mod.addImport("tardy", options.tardy_mod);
+
+    return example_mod;
 }
 
 fn add_example(
