@@ -20,7 +20,7 @@ jobs:
         with:
           version: 0.14.0
       - name: Build Examples
-        run: zig build
+        run: zig build -Dexample=all
       - name: Run unit tests
         run: zig build test --summary all
 
