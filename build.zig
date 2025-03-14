@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) void {
     const build_steps = .{
         .run = b.step("run", "Run a Tardy Program/Example"),
         .static = b.step("static", "Build tardy as a static lib"),
+        .@"test" = b.step("test", "Run all tests"), // TODO
+        .test_unit = b.step("test_unit", "Run general unit tests"),
+        // .test_e2e = b.step("test_e2e", "Run e2e tests"), // TODO
     };
 
     // Build options passed with `-D` flags.
@@ -93,18 +96,17 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const tests = b.addTest(.{
-        .name = "tests",
-        .root_source_file = b.path("./src/tests.zig"),
+    // build/run tests
+    build_test(b, .{
+        .test_unit = build_steps.test_unit,
+        .@"test" = build_steps.@"test",
+    }, .{
+        .tardy_mod = tardy,
+        .optimize = optimize,
+        .target = target,
     });
 
-    const run_test = b.addRunArtifact(tests);
-    run_test.step.dependOn(&tests.step);
-
-    const test_step = b.step("test", "Run general unit tests");
-    test_step.dependOn(&run_test.step);
-
-    add_test(b, "e2e", target, optimize, tardy);
+    // add_test(b, "e2e", target, optimize, tardy);
 }
 
 // used for building and running examples
@@ -277,6 +279,35 @@ fn build_static_lib(
     // depend on static step
     const install_artifact = b.addInstallArtifact(static_lib, .{});
     steps.static.dependOn(&install_artifact.step);
+}
+
+fn build_test(
+    b: *std.Build,
+    steps: struct {
+        test_unit: *std.Build.Step,
+        @"test": *std.Build.Step,
+    },
+    options: struct {
+        tardy_mod: *std.Build.Module,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
+) void {
+    // Run general unit tests
+    // usage: zig build test_unit
+    const unit_tests = b.addTest(.{
+        .name = "general unit tests",
+        .root_source_file = b.path("./src/tests.zig"),
+        .optimize = options.optimize,
+        .target = options.target,
+    });
+
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    run_unit_tests.step.dependOn(&unit_tests.step);
+
+    steps.test_unit.dependOn(&run_unit_tests.step);
+
+    // TODO: run all tests / is that possible?
 }
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
