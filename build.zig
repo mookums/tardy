@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
     // Top-level steps you can invoke on the command line.
     const build_steps = .{
         .run = b.step("run", "Run a Tardy Program/Example"),
+        .static = b.step("static", "Build tardy as a static lib"),
     };
 
     // Build options passed with `-D` flags.
@@ -79,6 +80,15 @@ pub fn build(b: *std.Build) void {
     }, .{
         .tardy_mod = tardy,
         .example = build_options.example,
+        .optimize = optimize,
+        .target = target,
+    });
+
+    // build tardy as a static lib
+    build_static_lib(b, .{
+        .static = build_steps.static,
+    }, .{
+        .tardy_mod = tardy,
         .optimize = optimize,
         .target = target,
     });
@@ -240,6 +250,33 @@ fn build_example_exe(
 
     steps.run.dependOn(&install_artifact.step);
     steps.run.dependOn(&run_artifact.step);
+}
+
+fn build_static_lib(
+    b: *std.Build,
+    steps: struct {
+        static: *std.Build.Step,
+    },
+    options: struct {
+        tardy_mod: *std.Build.Module,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
+) void {
+    const static_lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "tardy",
+        .root_module = options.tardy_mod,
+    });
+
+    // need libc for windows sockets
+    if (options.target.result.os.tag == .windows) {
+        static_lib.linkLibC();
+    }
+
+    // depend on static step
+    const install_artifact = b.addInstallArtifact(static_lib, .{});
+    steps.static.dependOn(&install_artifact.step);
 }
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
