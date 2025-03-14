@@ -57,9 +57,9 @@ pub fn build(b: *std.Build) void {
     const build_steps = .{
         .run = b.step("run", "Run a Tardy Program/Example"),
         .static = b.step("static", "Build tardy as a static lib"),
-        .@"test" = b.step("test", "Run all tests"), // TODO
+        .@"test" = b.step("test", "Run all tests"),
         .test_unit = b.step("test_unit", "Run general unit tests"),
-        .test_fmt = b.step("test_fmt", "Run e2e tests"),
+        .test_fmt = b.step("test_fmt", "Run formmatter tests"),
         .test_e2e = b.step("test_e2e", "Run e2e tests"),
     };
 
@@ -325,6 +325,7 @@ fn build_test(
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
     steps.test_fmt.dependOn(&run_fmt.step);
 
+    // run all tests
     // zig build test
     steps.@"test".dependOn(&run_unit_tests.step);
     steps.@"test".dependOn(steps.test_fmt);
@@ -369,14 +370,16 @@ fn build_test_e2e(
         .strip = false,
     });
 
-    // TODO: add description
-
+    // build/install e2e test
     const install_artifact = b.addInstallArtifact(exe, .{});
     steps.test_e2e.dependOn(&install_artifact.step);
 
+    // run e2e test
     const run_artifact = b.addRunArtifact(exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
+    // you need to pass a u64 as an arg
+    // zig build test_e2e -- [u64 num]
     if (b.args) |args| run_artifact.addArgs(args);
 
     steps.test_e2e.dependOn(&install_artifact.step);
