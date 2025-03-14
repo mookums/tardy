@@ -49,6 +49,7 @@ const Example = enum {
         return ex_string;
     }
 };
+const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
 pub fn build(b: *std.Build) void {
 
@@ -58,12 +59,13 @@ pub fn build(b: *std.Build) void {
         .static = b.step("static", "Build tardy as a static lib"),
         .@"test" = b.step("test", "Run all tests"), // TODO
         .test_unit = b.step("test_unit", "Run general unit tests"),
-        // .test_e2e = b.step("test_e2e", "Run e2e tests"), // TODO
+        .test_e2e = b.step("test_e2e", "Run e2e tests"),
     };
 
     // Build options passed with `-D` flags.
     const build_options = .{
         .example = b.option(Example, "example", "example name") orelse .none,
+        .async_backend = b.option(AsyncKind, "async", "async backend to use") orelse .auto,
     };
 
     const target = b.standardTargetOptions(.{});
@@ -106,7 +108,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // add_test(b, "e2e", target, optimize, tardy);
+    // build and run e2e test
+    build_test_e2e(b, .{
+        .test_e2e = build_steps.test_e2e,
+    }, .{
+        .async_backend = build_options.async_backend,
+        .tardy_mod = tardy,
+        .optimize = optimize,
+        .target = target,
+    });
 }
 
 // used for building and running examples
@@ -310,43 +320,55 @@ fn build_test(
     // TODO: run all tests / is that possible?
 }
 
-const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
-
-fn add_test(
+fn build_test_e2e(
     b: *std.Build,
-    name: []const u8,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.Mode,
-    tardy_module: *std.Build.Module,
+    steps: struct {
+        test_e2e: *std.Build.Step,
+    },
+    options: struct {
+        async_backend: AsyncKind,
+        tardy_mod: *std.Build.Module,
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+    },
 ) void {
+    // create a private example module
+    const e2e_mod = b.createModule(.{
+        .root_source_file = b.path("test/e2e/main.zig"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+
+    e2e_mod.addImport("tardy", options.tardy_mod);
+
+    // need libc for windows sockets
+    if (options.target.result.os.tag == .windows) {
+        e2e_mod.link_libc = true;
+    }
+
+    // add needed options
+    const test_options = b.addOptions();
+    test_options.addOption(AsyncKind, "async_option", options.async_backend);
+
+    e2e_mod.addOptions("options", test_options);
+
+    // create executable
     const exe = b.addExecutable(.{
-        .name = b.fmt("{s}", .{name}),
-        .root_source_file = b.path(b.fmt("test/{s}/main.zig", .{name})),
-        .target = target,
-        .optimize = optimize,
+        .name = "e2e",
+        .root_module = e2e_mod,
         .strip = false,
     });
 
-    if (target.result.os.tag == .windows) exe.linkLibC();
+    // TODO: add description
 
-    const async_option = b.option(AsyncKind, "async", "What async backend you want to compile support for") orelse .auto;
-    const options = b.addOptions();
-    options.addOption(AsyncKind, "async_option", async_option);
-    exe.root_module.addOptions("options", options);
-
-    exe.root_module.addImport("tardy", tardy_module);
     const install_artifact = b.addInstallArtifact(exe, .{});
-    b.getInstallStep().dependOn(&install_artifact.step);
-
-    const build_step = b.step(b.fmt("{s}", .{name}), b.fmt("Build tardy test ({s})", .{name}));
-    build_step.dependOn(&install_artifact.step);
+    steps.test_e2e.dependOn(&install_artifact.step);
 
     const run_artifact = b.addRunArtifact(exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
     if (b.args) |args| run_artifact.addArgs(args);
 
-    const run_step = b.step(b.fmt("test_{s}", .{name}), b.fmt("Run tardy test ({s})", .{name}));
-    run_step.dependOn(&install_artifact.step);
-    run_step.dependOn(&run_artifact.step);
+    steps.test_e2e.dependOn(&install_artifact.step);
+    steps.test_e2e.dependOn(&run_artifact.step);
 }
