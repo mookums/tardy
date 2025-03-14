@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
         .static = b.step("static", "Build tardy as a static lib"),
         .@"test" = b.step("test", "Run all tests"), // TODO
         .test_unit = b.step("test_unit", "Run general unit tests"),
+        .test_fmt = b.step("test_fmt", "Run e2e tests"),
         .test_e2e = b.step("test_e2e", "Run e2e tests"),
     };
 
@@ -101,6 +102,7 @@ pub fn build(b: *std.Build) void {
     // build/run tests
     build_test(b, .{
         .test_unit = build_steps.test_unit,
+        .test_fmt = build_steps.test_fmt,
         .@"test" = build_steps.@"test",
     }, .{
         .tardy_mod = tardy,
@@ -295,6 +297,7 @@ fn build_test(
     b: *std.Build,
     steps: struct {
         test_unit: *std.Build.Step,
+        test_fmt: *std.Build.Step,
         @"test": *std.Build.Step,
     },
     options: struct {
@@ -317,7 +320,14 @@ fn build_test(
 
     steps.test_unit.dependOn(&run_unit_tests.step);
 
-    // TODO: run all tests / is that possible?
+    // zig build fmt
+    // check formatting
+    const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
+    steps.test_fmt.dependOn(&run_fmt.step);
+
+    // zig build test
+    steps.@"test".dependOn(&run_unit_tests.step);
+    steps.@"test".dependOn(steps.test_fmt);
 }
 
 fn build_test_e2e(
