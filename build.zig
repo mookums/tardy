@@ -225,7 +225,6 @@ fn build_example_exe(
     });
 
     const install_artifact = b.addInstallArtifact(example_exe, .{});
-    b.getInstallStep().dependOn(&install_artifact.step);
 
     // depend on build/install step
     steps.install.dependOn(&install_artifact.step);
