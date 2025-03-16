@@ -34,7 +34,7 @@ const tardy = b.dependency("tardy", .{
 exe_mod.addImport("tardy", tardy);
 ```
 
-## Building and running example folder
+## Building and Running Examples
 - NOTE: by default build/install step uses `-Dexample=none` , meaning it wont build any examples
 
 - List available examples
