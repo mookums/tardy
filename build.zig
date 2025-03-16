@@ -166,6 +166,8 @@ fn build_examples(
     // build .all example
     // run wont work for .all example
     if (options.example == .all) {
+        std.log.info("zig build run -Dexample=all will only build examples and will not run them", .{});
+
         inline for (std.meta.fields(Example)) |f| {
             // convert captured field value to field enum
             const field = @as(Example, @enumFromInt(f.value));
@@ -259,7 +261,6 @@ fn build_example_exe(
     steps.install.dependOn(&install_artifact.step);
 
     // Should not run all examples at the same time
-    std.log.info("zig build run -Dexample=all will only build examples and will not runt them", .{});
     if (options.all_examples) {
         return;
     }
