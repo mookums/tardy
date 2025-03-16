@@ -79,7 +79,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // (zig build and zig build run -Dexample= )
+    // build and run examples
+    // usage: zig [build/build run] -Dexample[example_name]
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
@@ -91,6 +92,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // build tardy as a static lib
+    // usage: zig build static
     build_static_lib(b, .{
         .static = build_steps.static,
     }, .{
@@ -99,7 +101,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // build/run tests
+    // build and run tests
+    // usage: refer to function declaration
     build_test(b, .{
         .test_unit = build_steps.test_unit,
         .test_fmt = build_steps.test_fmt,
@@ -111,6 +114,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // build and run e2e test
+    // usage: zig build test_e2e --Dasync=[async_backend] -- [u64 num]
     build_test_e2e(b, .{
         .test_e2e = build_steps.test_e2e,
     }, .{
@@ -122,7 +126,6 @@ pub fn build(b: *std.Build) void {
 }
 
 // used for building and running examples
-// usage: zig [build/build run] -Dexample=[basic/echo/..]
 fn build_examples(
     b: *std.Build,
     steps: struct {
@@ -151,9 +154,9 @@ fn build_examples(
             .{
                 .tardy_mod = options.tardy_mod,
                 .example = options.example,
+                .all_examples = false,
                 .optimize = options.optimize,
                 .target = options.target,
-                .allExamples = false,
             },
         );
 
@@ -164,9 +167,11 @@ fn build_examples(
     // run wont work for .all example
     if (options.example == .all) {
         inline for (std.meta.fields(Example)) |f| {
+            // convert captured field value to field enum
+            const field = @as(Example, @enumFromInt(f.value));
 
             // skip .none and .all for building step
-            if (f.value == 1 or f.value == 0) {
+            if (field == .none or field == .all) {
                 continue;
             }
 
@@ -178,10 +183,10 @@ fn build_examples(
                 },
                 .{
                     .tardy_mod = options.tardy_mod,
-                    .example = @as(Example, @enumFromInt(f.value)),
+                    .example = field,
+                    .all_examples = true,
                     .optimize = options.optimize,
                     .target = options.target,
-                    .allExamples = true,
                 },
             );
         }
@@ -228,7 +233,7 @@ fn build_example_exe(
     options: struct {
         tardy_mod: *std.Build.Module,
         example: Example,
-        allExamples: bool,
+        all_examples: bool,
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
     },
@@ -254,7 +259,8 @@ fn build_example_exe(
     steps.install.dependOn(&install_artifact.step);
 
     // Should not run all examples at the same time
-    if (options.allExamples) {
+    std.log.info("zig build run -Dexample=all will only build examples and will not runt them", .{});
+    if (options.all_examples) {
         return;
     }
 
@@ -320,13 +326,13 @@ fn build_test(
 
     steps.test_unit.dependOn(&run_unit_tests.step);
 
-    // zig build fmt
-    // check formatting
+    // Check formatting
+    // usage: zig build fmt
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
     steps.test_fmt.dependOn(&run_fmt.step);
 
-    // run all tests
-    // zig build test
+    // Run all tests
+    // usage: zig build test
     steps.@"test".dependOn(&run_unit_tests.step);
     steps.@"test".dependOn(steps.test_fmt);
 }
@@ -378,8 +384,7 @@ fn build_test_e2e(
     const run_artifact = b.addRunArtifact(exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
-    // you need to pass a u64 as an arg
-    // zig build test_e2e -- [u64 num]
+    // pass a u64 as an arg
     if (b.args) |args| run_artifact.addArgs(args);
 
     steps.test_e2e.dependOn(&install_artifact.step);
