@@ -31,10 +31,31 @@ const tardy = b.dependency("tardy", .{
     .optimize = optimize,
 }).module("tardy");
 
-exe.root_module.addImport(tardy);
+exe_mod.addImport("tardy", tardy);
 ```
 
-## Example
+## Building and Running Examples
+- NOTE: by default build/install step uses `-Dexample=none` , meaning it wont build any examples
+
+- List available examples
+```sh
+zig build --help
+```
+
+- Build/run a specific example
+```sh
+zig build -Dexample=[nameOfExample]
+```
+```sh
+zig build run -Dexample=[nameOfExample]
+```
+
+- Build all examples
+```sh
+zig build -Dexample=all
+```
+
+## TCP Example
 A basic multi-threaded TCP echo server.
 
 ```zig
